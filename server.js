@@ -16,9 +16,12 @@ const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
-const session = require('express-session');
-const bcrypt = require('bcryptjs');
-const Stripe = require('stripe');
+let Stripe = null;
+try {
+  Stripe = require('stripe');
+} catch (_err) {
+  Stripe = null;
+}
 
 const APP_DIR = __dirname;
 const DATA_DIR = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
@@ -33,7 +36,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
 
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+const stripe = Stripe && STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const requestDb = new AsyncLocalStorage();
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -144,6 +147,72 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(password), salt, 150000, 32, 'sha256').toString('hex');
+  return `pbkdf2$150000$${salt}$${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const parts = String(stored || '').split('$');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+  const iterations = Number(parts[1]);
+  const salt = parts[2];
+  const expected = parts[3];
+  const actual = crypto.pbkdf2Sync(String(password), salt, iterations, 32, 'sha256').toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+}
+
+function parseCookies(header) {
+  return String(header || '').split(';').reduce((acc, part) => {
+    const idx = part.indexOf('=');
+    if (idx > -1) acc[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    return acc;
+  }, {});
+}
+
+function signValue(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(String(value)).digest('hex');
+}
+
+function encodeSession(userId) {
+  const payload = Buffer.from(JSON.stringify({ userId, iat: Date.now() })).toString('base64url');
+  return `${payload}.${signValue(payload)}`;
+}
+
+function decodeSession(token) {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature || signValue(payload) !== signature) return {};
+  try {
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch (_err) {
+    return {};
+  }
+}
+
+function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+  };
+}
+
+function loadCookieSession(req, _res, next) {
+  const cookies = parseCookies(req.headers.cookie);
+  req.session = decodeSession(cookies['orcasmart.sid']);
+  next();
+}
+
+function setSession(res, userId) {
+  res.cookie('orcasmart.sid', encodeSession(userId), sessionCookieOptions());
+}
+
+function clearSession(res) {
+  res.clearCookie('orcasmart.sid', sessionCookieOptions());
+}
+
 function slugFromEmail(email) {
   return normalizeEmail(email).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || `tenant-${Date.now()}`;
 }
@@ -229,18 +298,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-app.use(session({
-  name: 'orcasmart.sid',
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 1000 * 60 * 60 * 24 * 7,
-  },
-}));
+app.use(loadCookieSession);
 
 app.use(express.static(APP_DIR, {
   index: false,
@@ -277,13 +335,13 @@ app.post('/api/auth/register', async (req, res) => {
     const tenant = await runMaster('INSERT INTO tenants (nome, slug, db_path) VALUES (?, ?, ?)', [nome, `${slugFromEmail(email)}-${Date.now()}`, 'pending']);
     const dbPath = createTenantDatabase(tenant.lastID);
     await runMaster('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [dbPath, tenant.lastID]);
-    const passwordHash = await bcrypt.hash(senha, 12);
+    const passwordHash = hashPassword(senha);
     const user = await runMaster(
       'INSERT INTO users (id_tenant, nome, email, password_hash, role) VALUES (?, ?, ?, ?, ?)',
       [tenant.lastID, nome, email, passwordHash, 'owner']
     );
     await runMaster('INSERT INTO subscriptions (id_user, status) VALUES (?, ?)', [user.lastID, 'trial']);
-    req.session.userId = user.lastID;
+    setSession(res, user.lastID);
     return res.status(201).json({ ok: true, user: { id_user: user.lastID, nome, email } });
   } catch (err) {
     return res.status(500).json({ erro: err.message });
@@ -295,10 +353,10 @@ app.post('/api/auth/login', async (req, res) => {
     const email = normalizeEmail(req.body.email);
     const senha = String(req.body.senha || req.body.password || '');
     const user = await getMaster('SELECT * FROM users WHERE email = ? AND status = ?', [email, 'ativo']);
-    if (!user || !(await bcrypt.compare(senha, user.password_hash))) {
+    if (!user || !verifyPassword(senha, user.password_hash)) {
       return res.status(401).json({ erro: 'E-mail ou senha inválidos.' });
     }
-    req.session.userId = user.id_user;
+    setSession(res, user.id_user);
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ erro: err.message });
@@ -306,7 +364,8 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  clearSession(res);
+  res.json({ ok: true });
 });
 
 app.get('/api/auth/me', async (req, res) => {
