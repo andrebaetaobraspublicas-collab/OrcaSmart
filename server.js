@@ -430,6 +430,102 @@ app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy));
 app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
 app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
+app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
+
+app.get('/api/grupos-insumos', (_req, res) => {
+  tenantDbProxy.all('SELECT * FROM grupos_insumos ORDER BY nome_grupo', [], (err, rows) => {
+    if (err) return res.status(500).json({ erro: err.message });
+    return res.json(rows || []);
+  });
+});
+
+app.post('/api/grupos-insumos', (req, res) => {
+  const d = req.body || {};
+  if (!String(d.nome_grupo || '').trim()) return res.status(400).json({ erro: 'Nome do grupo é obrigatório.' });
+  tenantDbProxy.run('INSERT INTO grupos_insumos (nome_grupo, descricao) VALUES (?, ?)',
+    [String(d.nome_grupo).trim(), d.descricao || null], function(err) {
+      if (err) return res.status(500).json({ erro: err.message });
+      tenantDbProxy.get('SELECT * FROM grupos_insumos WHERE id_grupo = ?', [this.lastID], (getErr, row) => {
+        if (getErr) return res.status(500).json({ erro: getErr.message });
+        return res.status(201).json(row);
+      });
+    });
+});
+
+app.put('/api/grupos-insumos/:id', (req, res) => {
+  const d = req.body || {};
+  tenantDbProxy.run('UPDATE grupos_insumos SET nome_grupo = ?, descricao = ? WHERE id_grupo = ?',
+    [String(d.nome_grupo || '').trim(), d.descricao || null, req.params.id], function(err) {
+      if (err) return res.status(500).json({ erro: err.message });
+      if (!this.changes) return res.status(404).json({ erro: 'Grupo não encontrado.' });
+      return res.json({ mensagem: 'Grupo atualizado.' });
+    });
+});
+
+app.delete('/api/grupos-insumos/:id', (req, res) => {
+  tenantDbProxy.run('DELETE FROM grupos_insumos WHERE id_grupo = ?', [req.params.id], function(err) {
+    if (err) return res.status(500).json({ erro: err.message });
+    if (!this.changes) return res.status(404).json({ erro: 'Grupo não encontrado.' });
+    return res.json({ mensagem: 'Grupo excluído.' });
+  });
+});
+
+function precoInsumoPayload(d) {
+  const toNum = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const cbs = toNum(d.cbs_percentual);
+  const ibs = toNum(d.ibs_percentual);
+  const isp = toNum(d.is_percentual);
+  const pref = toNum(d.preco_referencia);
+  const iva = Number((cbs + ibs + isp).toFixed(6));
+  const psem = iva > 0 && pref > 0 ? Number((pref / (1 + iva / 100)).toFixed(6)) : pref;
+  return { cbs, ibs, isp, pref, iva, psem };
+}
+
+app.put('/api/precos-insumos/:id', (req, res) => {
+  const d = req.body || {};
+  const p = precoInsumoPayload(d);
+  tenantDbProxy.run(`
+    UPDATE precos_insumos SET
+      id_data_base=?, id_fonte=?, uf_referencia=?,
+      preco_desonerado=?, preco_nao_desonerado=?, preco_referencia=?,
+      cbs_percentual=?, ibs_percentual=?, is_percentual=?, iva_equivalente=?,
+      preco_sem_tributos=?, encargos_sociais_percentual=?, data_coleta=?, observacoes=?
+    WHERE id_preco=?`, [
+    d.id_data_base || null, d.id_fonte || null, d.uf_referencia || null,
+    Number(d.preco_desonerado || 0), Number(d.preco_nao_desonerado || 0), p.pref,
+    p.cbs, p.ibs, p.isp, p.iva, p.psem,
+    d.encargos_sociais_percentual === null || d.encargos_sociais_percentual === undefined || d.encargos_sociais_percentual === ''
+      ? null : Number(d.encargos_sociais_percentual || 0),
+    d.data_coleta || null, d.observacoes || null, req.params.id,
+  ], function(err) {
+    if (err) return res.status(500).json({ erro: err.message });
+    if (!this.changes) return res.status(404).json({ erro: 'Preço não encontrado.' });
+    tenantDbProxy.get(`
+      SELECT p.*, db2.mes, db2.ano, db2.descricao AS desc_data_base,
+             fr.nome_fonte, um.sigla AS sigla_unidade
+      FROM precos_insumos p
+      LEFT JOIN datas_base db2 ON p.id_data_base = db2.id_data_base
+      LEFT JOIN fontes_referencia fr ON p.id_fonte = fr.id_fonte
+      LEFT JOIN insumos i ON p.id_insumo = i.id_insumo
+      LEFT JOIN unidades_medida um ON i.id_unidade = um.id_unidade
+      WHERE p.id_preco = ?`, [req.params.id], (getErr, row) => {
+      if (getErr) return res.status(500).json({ erro: getErr.message });
+      return res.json(row);
+    });
+  });
+});
+
+app.delete('/api/precos-insumos/:id', (req, res) => {
+  tenantDbProxy.run('DELETE FROM precos_insumos WHERE id_preco = ?', [req.params.id], function(err) {
+    if (err) return res.status(500).json({ erro: err.message });
+    if (!this.changes) return res.status(404).json({ erro: 'Preço não encontrado.' });
+    return res.json({ mensagem: 'Preço excluído.' });
+  });
+});
 
 app.delete('/api/precos-equipamentos/:id', (req, res) => {
   tenantDbProxy.run('DELETE FROM precos_equipamentos WHERE id_preco_eq = ?', [req.params.id], function(err) {
