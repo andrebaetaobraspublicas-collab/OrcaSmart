@@ -41,9 +41,9 @@ Secrets necessarios no GitHub:
 
 ```text
 HOSTINGER_FTP_SERVER=82.180.153.142
-HOSTINGER_FTP_USERNAME=u296746636.calculoobra.com.br
+HOSTINGER_FTP_USERNAME=u296746636.orcasmartdeploy
 HOSTINGER_FTP_PASSWORD=<senha FTP>
-HOSTINGER_TARGET_DIR=/public_html/SistemaOrcamentoObras/
+HOSTINGER_TARGET_DIR=/
 ```
 
 Crie preferencialmente uma conta FTP dedicada somente para deploy.
