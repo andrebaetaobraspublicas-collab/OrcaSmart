@@ -1,0 +1,25 @@
+/* ═══════════════════════════════════════════ css/responsive.css */
+
+@media (max-width: 1024px) {
+  .form-grid-3 { grid-template-columns: 1fr 1fr; }
+  .form-group.span-3 { grid-column: span 2; }
+}
+
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.mobile-open { transform: translateX(0); }
+  .main-wrapper { margin-left: 0 !important; }
+  .page-content { padding: 16px; }
+  .cards-grid { grid-template-columns: 1fr 1fr; }
+  .form-grid-2, .form-grid-3 { grid-template-columns: 1fr; }
+  .form-group.span-2, .form-group.span-3 { grid-column: span 1; }
+  .toolbar { gap: 8px; }
+  .search-box { max-width: 100%; }
+  .topbar { padding: 0 16px; }
+  .modal { margin: 0; border-radius: var(--radius); }
+}
+
+@media (max-width: 480px) {
+  .cards-grid { grid-template-columns: 1fr; }
+  .page-header { flex-direction: column; }
+}

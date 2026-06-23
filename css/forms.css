@@ -1,0 +1,39 @@
+/* ═══════════════════════════════════════════ css/forms.css */
+
+.form-grid { display: grid; gap: 16px; }
+.form-grid-2 { grid-template-columns: 1fr 1fr; }
+.form-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group.span-2 { grid-column: span 2; }
+.form-group.span-3 { grid-column: span 3; }
+
+.form-label {
+  font-size: .8rem; font-weight: 600; color: var(--c-text-2);
+  letter-spacing: .02em;
+}
+.form-label .req { color: var(--c-danger); margin-left: 2px; }
+
+.form-control {
+  padding: 8px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  font-size: .875rem; color: var(--c-text);
+  background: var(--c-surface);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  width: 100%;
+}
+.form-control:focus {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.form-control:disabled {
+  background: var(--c-bg); color: var(--c-text-3); cursor: not-allowed;
+}
+.form-control.error { border-color: var(--c-danger); }
+.form-hint { font-size: .76rem; color: var(--c-text-3); }
+.form-error-msg { font-size: .76rem; color: var(--c-danger); }
+
+select.form-control { cursor: pointer; }
+textarea.form-control { resize: vertical; min-height: 80px; }

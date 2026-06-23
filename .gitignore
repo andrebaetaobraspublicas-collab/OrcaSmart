@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+env/
+.env
+
+# Bancos e dados de clientes nao devem ir para o GitHub
+*.db
+*.sqlite
+*.sqlite3
+database/*.db
+database/*.sqlite*
+tenant_dbs/*
+!tenant_dbs/.gitkeep
+
+# Arquivos gerados
+exports/
+*.log
+*.zip
+tmp_*
+
+# Sistema operacional / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

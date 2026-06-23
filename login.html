@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrcaSmart - Acesso</title>
+  <style>
+    :root { --bg:#eef2f7; --surface:#fff; --text:#172033; --muted:#65748b; --primary:#2563eb; --border:#dbe3ef; --danger:#dc2626; --ok:#047857; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:Segoe UI,Arial,sans-serif; color:var(--text); background:linear-gradient(135deg,#f8fafc,#e9f0fb); display:grid; place-items:center; padding:24px; }
+    .shell { width:min(1040px,100%); display:grid; grid-template-columns:1.05fr .95fr; gap:28px; align-items:center; }
+    .brand h1 { font-size:44px; line-height:1.04; margin:0 0 14px; letter-spacing:0; }
+    .brand p { font-size:17px; color:var(--muted); margin:0; max-width:580px; }
+    .brand ul { margin:26px 0 0; padding:0; list-style:none; display:grid; gap:10px; color:#334155; }
+    .brand li::before { content:""; display:inline-block; width:8px; height:8px; background:var(--primary); border-radius:50%; margin-right:10px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 18px 60px rgba(15,23,42,.12); padding:24px; }
+    .tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:18px; }
+    .tab { border:1px solid var(--border); background:#f8fafc; border-radius:7px; padding:10px; font-weight:700; cursor:pointer; }
+    .tab.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+    label { display:block; font-size:13px; font-weight:700; color:#475569; margin-top:12px; }
+    input { width:100%; margin-top:5px; border:1px solid var(--border); border-radius:7px; padding:11px 12px; font:inherit; }
+    button.primary { width:100%; margin-top:18px; border:0; border-radius:7px; padding:12px 14px; background:var(--primary); color:#fff; font-weight:800; cursor:pointer; }
+    button.secondary { width:100%; margin-top:10px; border:1px solid var(--border); border-radius:7px; padding:11px; background:#fff; color:#172033; font-weight:700; cursor:pointer; }
+    .msg { margin-top:14px; padding:10px 12px; border-radius:7px; font-size:13px; display:none; }
+    .msg.error { display:block; border:1px solid #fecaca; background:#fef2f2; color:var(--danger); }
+    .msg.ok { display:block; border:1px solid #bbf7d0; background:#f0fdf4; color:var(--ok); }
+    .hint { margin-top:12px; color:var(--muted); font-size:12px; line-height:1.5; }
+    @media (max-width:860px) { .shell { grid-template-columns:1fr; } .brand h1 { font-size:34px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="brand">
+      <h1>OrcaSmart para calculoobras.com.br</h1>
+      <p>Sistema web para orcamentacao de obras com bases referenciais, orcamentos sinteticos, composicoes, BDI, encargos e controle por usuario.</p>
+      <ul>
+        <li>Banco de dados individual para cada usuario</li>
+        <li>Acesso liberado por assinatura Stripe</li>
+        <li>Ambiente preparado para hospedagem em dominio proprio</li>
+      </ul>
+    </section>
+    <section class="card">
+      <div class="tabs">
+        <button class="tab active" id="tabLogin">Entrar</button>
+        <button class="tab" id="tabRegister">Criar conta</button>
+      </div>
+      <form id="loginForm">
+        <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required></label>
+        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Acessar sistema</button>
+      </form>
+      <form id="registerForm" style="display:none">
+        <label>Nome ou empresa<input id="regName" autocomplete="organization" required></label>
+        <label>E-mail<input id="regEmail" type="email" autocomplete="email" required></label>
+        <label>Senha<input id="regPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button class="primary" type="submit">Criar conta e assinar</button>
+      </form>
+      <button class="secondary" id="billingButton" type="button" style="display:none">Ir para pagamento Stripe</button>
+      <div class="msg" id="msg"></div>
+      <p class="hint">As chaves Stripe e o preco mensal devem ser configurados no servidor. Nenhuma chave secreta fica no navegador.</p>
+    </section>
+  </main>
+  <script>
+    const msg = document.getElementById('msg');
+    const billingButton = document.getElementById('billingButton');
+    let pendingCheckoutUrl = '';
+
+    function show(type, text) {
+      msg.className = 'msg ' + type;
+      msg.textContent = text;
+    }
+
+    function activate(mode) {
+      document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
+      document.getElementById('tabRegister').classList.toggle('active', mode === 'register');
+      document.getElementById('loginForm').style.display = mode === 'login' ? '' : 'none';
+      document.getElementById('registerForm').style.display = mode === 'register' ? '' : 'none';
+      msg.className = 'msg';
+      billingButton.style.display = 'none';
+    }
+
+    async function api(path, body) {
+      const res = await fetch('/api' + path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 402) throw new Error(data.erro || 'Erro no servidor.');
+      return { status: res.status, data };
+    }
+
+    document.getElementById('tabLogin').onclick = () => activate('login');
+    document.getElementById('tabRegister').onclick = () => activate('register');
+    billingButton.onclick = () => {
+      if (pendingCheckoutUrl) location.href = pendingCheckoutUrl;
+    };
+
+    document.getElementById('loginForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      try {
+        const {status, data} = await api('/auth/login', {
+          email: loginEmail.value,
+          password: loginPassword.value,
+        });
+        if (status === 402 || data.subscription_required) {
+          const chk = await api('/billing/create-checkout-session', {});
+          pendingCheckoutUrl = chk.data.url || '';
+          if (pendingCheckoutUrl) {
+            billingButton.style.display = '';
+            show('ok', 'Sua conta existe, mas a assinatura ainda precisa ser ativada.');
+          } else {
+            show('error', 'Assinatura pendente e Stripe ainda nao configurado.');
+          }
+          return;
+        }
+        location.href = '/';
+      } catch(e) {
+        show('error', e.message);
+      }
+    };
+
+    document.getElementById('registerForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      try {
+        const {data} = await api('/auth/register', {
+          nome: regName.value,
+          email: regEmail.value,
+          password: regPassword.value,
+        });
+        if (data.checkout_url) {
+          location.href = data.checkout_url;
+        } else {
+          show('ok', 'Conta criada. Configure Stripe no servidor ou ative o usuario pelo painel admin.');
+        }
+      } catch(e) {
+        show('error', e.message);
+      }
+    };
+
+    if (new URLSearchParams(location.search).get('checkout') === 'success') {
+      show('ok', 'Pagamento processado. Faça login para acessar.');
+    }
+    if (new URLSearchParams(location.search).get('subscription') === 'required') {
+      show('error', 'Sua assinatura precisa estar ativa para acessar o sistema.');
+    }
+  </script>
+</body>
+</html>

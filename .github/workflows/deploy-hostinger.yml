@@ -1,0 +1,33 @@
+name: Deploy Hostinger
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_SERVER }}
+          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: ${{ secrets.HOSTINGER_TARGET_DIR }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/__pycache__/**
+            **/*.pyc
+            **/.env
+            **/*.db
+            **/*.sqlite
+            **/*.sqlite3
+            **/tenant_dbs/**
+            **/exports/**

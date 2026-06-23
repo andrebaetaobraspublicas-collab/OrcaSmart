@@ -1,0 +1,25 @@
+{
+  "name": "sistema-orcamento-obras",
+  "version": "1.0.0",
+  "description": "Sistema de Orçamentação de Obras - Módulo 1",
+  "main": "server.py",
+  "scripts": {
+    "start": "python server.py",
+    "dev": "python server.py",
+    "audit-db": "python database/auditar_integridade.py",
+    "init-db": "python database/init.py",
+    "start:node": "node server.js",
+    "init-db:node": "node database/init.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.7",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": ["orcamento", "obras", "engenharia", "custos"],
+  "author": "",
+  "license": "ISC"
+}
