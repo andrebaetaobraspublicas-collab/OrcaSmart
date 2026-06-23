@@ -430,6 +430,13 @@ app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy));
 app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
 
+app.get('/api/bdi/perfis', (_req, res) => {
+  tenantDbProxy.all('SELECT * FROM perfis_bdi ORDER BY nome_perfil', [], (err, rows) => {
+    if (err) return res.status(500).json({ erro: err.message });
+    return res.json(rows || []);
+  });
+});
+
 app.get('/api/dashboard', (req, res) => {
   const queries = {
     totalObras: 'SELECT COUNT(*) AS total FROM obras',
