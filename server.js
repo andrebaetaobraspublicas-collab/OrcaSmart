@@ -258,7 +258,7 @@ function runTenantMethod(method, sql, params, cb) {
   return db[method](sql, params || [], function onDbResult(err, result) {
     const context = this;
     db.close(() => {
-      if (cb) cb.call(context, err, result);
+      if (cb) requestDb.run({ dbPath }, () => cb.call(context, err, result));
     });
   });
 }
@@ -429,11 +429,30 @@ app.use('/api/orcamentos', require('./routes/orcamentosRoutes')(tenantDbProxy));
 app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy));
 app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
+app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
 
-app.get('/api/bdi/perfis', (_req, res) => {
-  tenantDbProxy.all('SELECT * FROM perfis_bdi ORDER BY nome_perfil', [], (err, rows) => {
+app.delete('/api/precos-equipamentos/:id', (req, res) => {
+  tenantDbProxy.run('DELETE FROM precos_equipamentos WHERE id_preco_eq = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ erro: err.message });
-    return res.json(rows || []);
+    if (!this.changes) return res.status(404).json({ erro: 'Registro não encontrado.' });
+    return res.json({ mensagem: 'Preço excluído.' });
+  });
+});
+
+app.get('/api/bdi/perfis', (req, res) => {
+  const { tipo, regime, ano, quartil, faixa_simples, q } = req.query || {};
+  tenantDbProxy.all('SELECT * FROM perfis_bdi ORDER BY tipo_obra, nome_perfil', [], (err, rows) => {
+    if (err) return res.status(500).json({ erro: err.message });
+    const filtered = (rows || []).filter((row) => {
+      if (tipo && row.tipo_obra !== tipo) return false;
+      if (regime && row.regime_tributario !== regime) return false;
+      if (ano && String(row.ano_orcamento || '') !== String(ano)) return false;
+      if (quartil && row.quartil !== quartil) return false;
+      if (faixa_simples && row.simples_faixa !== faixa_simples && row.faixa_simples !== faixa_simples) return false;
+      if (q && !String(row.nome_perfil || '').toLowerCase().includes(String(q).toLowerCase())) return false;
+      return true;
+    });
+    return res.json(filtered);
   });
 });
 
