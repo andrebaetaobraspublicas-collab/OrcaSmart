@@ -21,7 +21,7 @@ O hPanel atual nao exibiu conexao direta com GitHub no app existente. O caminho 
 
 ```text
 HOSTINGER_FTP_SERVER=82.180.153.142
-HOSTINGER_FTP_USERNAME=u296746636.orcasmartdeploy
+HOSTINGER_FTP_USERNAME=u296746636.orcasmartnode
 HOSTINGER_FTP_PASSWORD=<senha FTP>
 HOSTINGER_TARGET_DIR=/
 ```

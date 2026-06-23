@@ -41,12 +41,12 @@ Secrets necessarios no GitHub:
 
 ```text
 HOSTINGER_FTP_SERVER=82.180.153.142
-HOSTINGER_FTP_USERNAME=u296746636.orcasmartdeploy
+HOSTINGER_FTP_USERNAME=u296746636.orcasmartnode
 HOSTINGER_FTP_PASSWORD=<senha FTP>
 HOSTINGER_TARGET_DIR=/
 ```
 
-Crie preferencialmente uma conta FTP dedicada somente para deploy.
+Foi criada uma conta FTP dedicada somente para deploy, restrita ao diretorio Node.js do site.
 
 ## Stripe
 
