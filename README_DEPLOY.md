@@ -1,54 +1,63 @@
-# OrçaSmart SaaS
+# OrçaSmart SaaS - Hostinger Node.js
 
-Versao SaaS isolada para `www.calculoobras.com.br`.
+Versao SaaS isolada para publicacao no app Node.js/Express do Hostinger.
 
-## Deploy via GitHub + Hostinger
+## Runtime alvo
 
-1. Crie um repositorio no GitHub, por exemplo `orcasmart-saas`.
-2. Suba somente o conteudo desta pasta `saas/`.
-3. No Hostinger hPanel, crie uma aplicacao Python apontando para este repositorio ou conecte o Git deploy da Hostinger.
-4. Configure a entrada WSGI:
+- Site no hPanel: `calculoobra.com.br`
+- Framework: Express
+- Node: 22.x
+- Entry file: `server.js`
+- Publicacao atual do hPanel: upload manual de `.zip`, `.tar.gz` ou `.tgz`
+- Alternativa automatica: GitHub Actions via FTP para `public_html`
+
+## Variaveis de ambiente
+
+Configure no hPanel em `Environment variables`:
+
+```env
+NODE_ENV=production
+PUBLIC_DOMAIN=https://calculoobra.com.br
+SESSION_SECRET=gere-uma-chave-longa
+STRIPE_SECRET_KEY=sk_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_ID=price_xxx
+ORCASMART_DATA_DIR=
+```
+
+## Bancos SQLite
+
+Os arquivos `.db` nao entram no GitHub.
+
+- `saas_master.db`: criado automaticamente no primeiro start, no diretorio do app ou em `ORCASMART_DATA_DIR`.
+- `tenant_dbs/`: bancos individuais dos usuarios, no mesmo diretorio de dados.
+- `database/orcamento_obras_template.db`: template usado para criar novos tenants.
+
+Envie o template uma vez pelo File Manager/FTP. Se o app ja tiver `database/orcamento_obras.db`, ele tambem pode ser usado como template inicial.
+
+## GitHub Actions por FTP
+
+Secrets necessarios no GitHub:
 
 ```text
-passenger_wsgi.py
+HOSTINGER_FTP_SERVER=82.180.153.142
+HOSTINGER_FTP_USERNAME=u296746636.calculoobra.com.br
+HOSTINGER_FTP_PASSWORD=<senha FTP>
+HOSTINGER_TARGET_DIR=/public_html/SistemaOrcamentoObras/
 ```
 
-5. Configure variaveis de ambiente com base em `.env.example`.
-6. Instale dependencias:
-
-```bash
-pip install -r requirements.txt
-```
-
-7. Envie manualmente o banco-template pesado para:
-
-```text
-database/orcamento_obras_template.db
-```
-
-Esse arquivo nao vai para o GitHub porque ultrapassa o limite recomendado de tamanho e contem dados referenciais pesados.
+Crie preferencialmente uma conta FTP dedicada somente para deploy.
 
 ## Stripe
 
-Configure no Stripe:
-
-- Produto mensal.
-- Price ID em `STRIPE_PRICE_ID`.
-- Webhook para `https://www.calculoobras.com.br/api/stripe/webhook`.
-- Eventos: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
-
-## Bancos por usuario
-
-Cada novo usuario cria um arquivo SQLite individual em:
+Webhook:
 
 ```text
-tenant_dbs/
+https://calculoobra.com.br/api/stripe/webhook
 ```
 
-Faça backup frequente de:
+Eventos recomendados:
 
-```text
-saas_master.db
-tenant_dbs/
-database/orcamento_obras_template.db
-```
+- `checkout.session.completed`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`

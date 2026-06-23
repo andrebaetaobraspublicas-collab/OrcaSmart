@@ -5,6 +5,7 @@ __pycache__/
 venv/
 env/
 .env
+node_modules/
 
 # Bancos e dados de clientes nao devem ir para o GitHub
 *.db
