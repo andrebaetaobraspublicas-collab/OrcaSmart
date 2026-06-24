@@ -316,7 +316,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.0-saas-node',
+  version: '1.0.1-saas-node',
+  build: 'support-routes-dashboard-counts',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));
@@ -557,6 +558,12 @@ app.get('/api/dashboard', (req, res) => {
   const queries = {
     totalObras: 'SELECT COUNT(*) AS total FROM obras',
     totalOrcamentos: 'SELECT COUNT(*) AS total FROM orcamentos',
+    totalInsumos: 'SELECT COUNT(*) AS total FROM insumos',
+    totalComposicoes: 'SELECT COUNT(*) AS total FROM composicoes',
+    totalCompSINAPI: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SINAPI'",
+    totalCompSICRO: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SICRO'",
+    totalCompUsuario: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'USUARIO'",
+    totalEventogramas: 'SELECT COUNT(*) AS total FROM eventogramas',
     totalUnidades: 'SELECT COUNT(*) AS total FROM unidades_medida',
     totalFontes: 'SELECT COUNT(*) AS total FROM fontes_referencia',
     ultimosOrcamentos: `
