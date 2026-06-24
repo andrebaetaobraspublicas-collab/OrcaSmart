@@ -316,8 +316,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.4-saas-node',
-  build: 'pesquisa-mercado-routes',
+  version: '1.0.5-saas-node',
+  build: 'pesquisa-mercado-ia',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));
