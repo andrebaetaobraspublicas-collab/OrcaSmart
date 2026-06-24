@@ -587,6 +587,24 @@ app.get('/api/admin/users', requireAdmin, async (_req, res) => {
   res.json(users);
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    erro: `Rota de API nao implementada no backend Node: ${req.method} ${req.originalUrl}`,
+    rota: req.originalUrl,
+    metodo: req.method,
+  });
+});
+
+app.use((err, req, res, next) => {
+  if (!req.path.startsWith('/api')) return next(err);
+  console.error('Erro em rota API:', err);
+  res.status(err.status || 500).json({
+    erro: err.message || 'Erro interno do servidor.',
+    tipo: err.name || 'Error',
+    rota: req.originalUrl,
+  });
+});
+
 app.get('*', (req, res) => {
   if (!req.session.userId) return res.redirect('/login.html');
   return res.sendFile(path.join(APP_DIR, 'index.html'));
