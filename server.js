@@ -431,6 +431,7 @@ app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
 app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
 app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
+app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
 
 app.get('/api/grupos-insumos', (_req, res) => {
   tenantDbProxy.all('SELECT * FROM grupos_insumos ORDER BY nome_grupo', [], (err, rows) => {
