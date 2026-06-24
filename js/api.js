@@ -10,7 +10,14 @@ const API = {
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(this.BASE + path, opts);
-    const data = await res.json().catch(() => ({ erro: 'Resposta inválida do servidor.' }));
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (_) {
+      const resumo = text ? text.replace(/\s+/g, ' ').slice(0, 240) : 'sem corpo de resposta';
+      throw new Error(`Resposta inválida do servidor (${res.status}). ${resumo}`);
+    }
     if (res.status === 401) {
       window.location.href = '/login.html';
       throw new Error(data.erro || 'Autenticação necessária.');
@@ -19,7 +26,7 @@ const API = {
       window.location.href = '/login.html?subscription=required';
       throw new Error(data.erro || 'Assinatura inativa.');
     }
-    if (!res.ok) throw new Error(data.erro || `Erro ${res.status}`);
+    if (!res.ok) throw new Error(data.erro || data.error || data.message || `Erro HTTP ${res.status}`);
     return data;
   },
 

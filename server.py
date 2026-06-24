@@ -15,6 +15,8 @@ from flask_cors import CORS
 from datetime import date
 import json as _json
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
+import traceback
 
 try:
     import stripe
@@ -75,6 +77,20 @@ def get_db():
 
 def rows_to_list(rows):
     return [dict(r) for r in rows]
+
+def _table_exists(db, table_name):
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        [table_name]
+    ).fetchone() is not None
+
+def _ensure_columns(db, table_name, columns):
+    if not _table_exists(db, table_name):
+        return
+    existentes = {r['name'] for r in db.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    for nome, ddl in columns.items():
+        if nome not in existentes:
+            db.execute(f"ALTER TABLE {table_name} ADD COLUMN {nome} {ddl}")
 
 def get_master_db():
     conn = sqlite3.connect(MASTER_DB_PATH, timeout=60)
@@ -229,7 +245,149 @@ def ensure_orcamento_sintetico_bdi_linha(db):
     if 'bdi_percentual_linha' not in cols:
         db.execute("ALTER TABLE orcamento_sintetico ADD COLUMN bdi_percentual_linha REAL")
 
+def ensure_eventograma_schema(db):
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS eventogramas (
+            id_eventograma   INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_orcamento     INTEGER NOT NULL REFERENCES orcamentos(id_orcamento) ON DELETE CASCADE,
+            nome             TEXT    NOT NULL,
+            descricao        TEXT,
+            modo_geracao     TEXT    DEFAULT 'manual',
+            status           TEXT    DEFAULT 'Rascunho',
+            valor_total_ref  REAL    DEFAULT 0,
+            observacoes      TEXT,
+            data_criacao     TEXT    DEFAULT (date('now')),
+            data_atualizacao TEXT    DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS ev_eventos (
+            id_evento        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_eventograma   INTEGER NOT NULL REFERENCES eventogramas(id_eventograma) ON DELETE CASCADE,
+            id_evento_pai    INTEGER REFERENCES ev_eventos(id_evento) ON DELETE CASCADE,
+            numero_evento    TEXT    NOT NULL,
+            descricao        TEXT    NOT NULL,
+            grupo            TEXT,
+            criterio_medicao TEXT,
+            condicao_pagamento TEXT,
+            prazo_marco      TEXT,
+            docs_comprobatorios TEXT,
+            observacoes      TEXT,
+            valor_calculado  REAL    DEFAULT 0,
+            ordem            INTEGER DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ev_eventos_evgrama ON ev_eventos(id_eventograma);
+        CREATE INDEX IF NOT EXISTS idx_ev_eventos_pai     ON ev_eventos(id_evento_pai);
+
+        CREATE TABLE IF NOT EXISTS ev_evento_itens (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_evento INTEGER NOT NULL REFERENCES ev_eventos(id_evento) ON DELETE CASCADE,
+            id_item   INTEGER NOT NULL REFERENCES orcamento_sintetico(id_item) ON DELETE CASCADE,
+            UNIQUE(id_evento, id_item)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ev_itens_evento ON ev_evento_itens(id_evento);
+        CREATE INDEX IF NOT EXISTS idx_ev_itens_item   ON ev_evento_itens(id_item);
+    """)
+    _ensure_columns(db, 'eventogramas', {
+        'descricao': 'TEXT',
+        'modo_geracao': "TEXT DEFAULT 'manual'",
+        'status': "TEXT DEFAULT 'Rascunho'",
+        'valor_total_ref': 'REAL DEFAULT 0',
+        'observacoes': 'TEXT',
+        'data_criacao': "TEXT DEFAULT (date('now'))",
+        'data_atualizacao': "TEXT DEFAULT (datetime('now'))",
+    })
+    _ensure_columns(db, 'ev_eventos', {
+        'id_evento_pai': 'INTEGER REFERENCES ev_eventos(id_evento) ON DELETE CASCADE',
+        'grupo': 'TEXT',
+        'criterio_medicao': 'TEXT',
+        'condicao_pagamento': 'TEXT',
+        'prazo_marco': 'TEXT',
+        'docs_comprobatorios': 'TEXT',
+        'observacoes': 'TEXT',
+        'valor_calculado': 'REAL DEFAULT 0',
+        'ordem': 'INTEGER DEFAULT 0',
+    })
+
+def ensure_pem_schema(db):
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS pem_servicos (
+            id_pem          INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo          TEXT NOT NULL UNIQUE,
+            servico         TEXT NOT NULL,
+            producao_equipe REAL,
+            unidade         TEXT,
+            observacoes     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pem_codigo ON pem_servicos(codigo);
+
+        CREATE TABLE IF NOT EXISTS pem_equipamentos (
+            id_pem_equip           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_pem                 INTEGER NOT NULL REFERENCES pem_servicos(id_pem) ON DELETE CASCADE,
+            codigo_equip           TEXT,
+            descricao_equip        TEXT,
+            formula                TEXT,
+            producao_horaria       REAL,
+            num_unidades           REAL DEFAULT 1.0,
+            utilizacao_operativa   REAL DEFAULT 1.0,
+            utilizacao_improdutiva REAL DEFAULT 0.0,
+            ordem                  INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_pem_eq_pem ON pem_equipamentos(id_pem);
+
+        CREATE TABLE IF NOT EXISTS pem_variaveis (
+            id_var        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_pem_equip  INTEGER NOT NULL REFERENCES pem_equipamentos(id_pem_equip) ON DELETE CASCADE,
+            letra         TEXT NOT NULL,
+            nome_variavel TEXT NOT NULL,
+            unidade       TEXT,
+            valor         REAL,
+            UNIQUE(id_pem_equip, letra)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pem_var_equip ON pem_variaveis(id_pem_equip);
+    """)
+
 def ensure_encargos_schema(db):
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS perfis_encargos (
+            id_perfil          INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_perfil        TEXT NOT NULL,
+            categoria          TEXT NOT NULL DEFAULT 'Horista',
+            regime             TEXT NOT NULL DEFAULT 'Normal',
+            uf_referencia      TEXT,
+            id_data_base       INTEGER REFERENCES datas_base(id_data_base),
+            descricao          TEXT,
+            total_grupo_a      REAL DEFAULT 0,
+            total_grupo_b      REAL DEFAULT 0,
+            total_grupo_c      REAL DEFAULT 0,
+            total_grupo_d      REAL DEFAULT 0,
+            encargo_total      REAL DEFAULT 0,
+            observacoes        TEXT,
+            situacao           TEXT DEFAULT 'Ativo'
+        );
+
+        CREATE TABLE IF NOT EXISTS grupos_encargos (
+            id_grupo_enc    INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_perfil       INTEGER NOT NULL REFERENCES perfis_encargos(id_perfil) ON DELETE CASCADE,
+            letra           TEXT NOT NULL,
+            descricao       TEXT,
+            total_grupo     REAL DEFAULT 0,
+            UNIQUE(id_perfil, letra)
+        );
+
+        CREATE TABLE IF NOT EXISTS itens_encargo (
+            id_item         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_grupo_enc    INTEGER NOT NULL REFERENCES grupos_encargos(id_grupo_enc) ON DELETE CASCADE,
+            descricao       TEXT NOT NULL,
+            base_legal      TEXT,
+            percentual      REAL NOT NULL DEFAULT 0,
+            observacoes     TEXT,
+            ordem           INTEGER DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_itens_grupo ON itens_encargo(id_grupo_enc);
+    """)
     cols = {r['name'] for r in db.execute("PRAGMA table_info(perfis_encargos)").fetchall()}
     if 'fonte_referencia' not in cols:
         db.execute("ALTER TABLE perfis_encargos ADD COLUMN fonte_referencia TEXT NOT NULL DEFAULT 'SINAPI'")
@@ -513,6 +671,40 @@ app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '1
 CORS(app, supports_credentials=True)
 init_saas_master()
 
+@app.errorhandler(Exception)
+def api_exception_handler(exc):
+    if request.path.startswith('/api/'):
+        if isinstance(exc, HTTPException):
+            return jsonify({
+                'erro': exc.description,
+                'tipo': exc.__class__.__name__,
+                'rota': request.path,
+            }), exc.code
+        app.logger.exception("Erro na API %s %s", request.method, request.path)
+        detalhe = traceback.format_exc(limit=8)
+        return jsonify({
+            'erro': str(exc) or exc.__class__.__name__,
+            'tipo': exc.__class__.__name__,
+            'rota': request.path,
+            'detalhe': detalhe[-1600:],
+        }), 500
+    raise exc
+
+def inicializar_schemas_tenant_runtime():
+    db = get_db()
+    try:
+        ensure_municipio_aliquotas_table(db)
+        ensure_obras_reforma_fields(db)
+        ensure_orcamentos_reforma_fields(db)
+        ensure_orcamento_sintetico_bdi_linha(db)
+        ensure_encargos_schema(db)
+        ensure_insumos_encargos_schema(db)
+        ensure_eventograma_schema(db)
+        ensure_pem_schema(db)
+        db.commit()
+    finally:
+        db.close()
+
 @app.before_request
 def saas_auth_gate():
     public_api_prefixes = (
@@ -539,6 +731,7 @@ def saas_auth_gate():
         if not subscription_allows_access(user):
             return jsonify({'erro': 'Assinatura inativa.', 'code': 'subscription_required'}), 402
         request.tenant_db_path = user['db_path']
+        inicializar_schemas_tenant_runtime()
     return None
 
 @app.after_request
