@@ -316,8 +316,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.2-saas-node',
-  build: 'project-analysis-routes',
+  version: '1.0.3-saas-node',
+  build: 'compras-gov-routes',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));
@@ -432,6 +432,7 @@ app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
 app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
 app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
+app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
 
