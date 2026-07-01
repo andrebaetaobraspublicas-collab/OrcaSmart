@@ -316,8 +316,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.5-saas-node',
-  build: 'pesquisa-mercado-ia',
+  version: '1.0.6-saas-node',
+  build: 'composicoes-bdi-routes',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));
@@ -435,6 +435,7 @@ app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
+app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
 
 app.get('/api/grupos-insumos', (_req, res) => {

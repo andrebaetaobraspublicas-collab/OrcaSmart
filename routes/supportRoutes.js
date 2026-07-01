@@ -272,7 +272,7 @@ module.exports = function(db) {
   router.get('/composicoes/:id', asyncHandler(async (req, res) => {
     const comp = await one('SELECT * FROM composicoes WHERE id_composicao=?', [req.params.id]);
     if (!comp) return res.status(404).json({ erro: 'Composição não encontrada.' });
-    comp.itens = await all('SELECT * FROM itens_composicao WHERE id_composicao=? ORDER BY ordem, id_item_comp', [req.params.id]);
+    comp.itens = await all('SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_composicao=? ORDER BY ordem, id_item', [req.params.id]);
     comp.secoes = await all('SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY letra_secao', [req.params.id]);
     res.json(comp);
   }));
@@ -298,16 +298,16 @@ module.exports = function(db) {
     const d = req.body || {};
     const r = await run('INSERT INTO itens_composicao (id_composicao,codigo_item,descricao,unidade,coeficiente,preco_unitario,custo_parcial,tipo_item,ordem) VALUES (?,?,?,?,?,?,?,?,?)',
       [req.params.id, d.codigo_item || null, d.descricao || '', d.unidade || null, toNum(d.coeficiente), toNum(d.preco_unitario), toNum(d.custo_parcial), d.tipo_item || 'INSUMO', d.ordem || 0]);
-    res.status(201).json(await one('SELECT * FROM itens_composicao WHERE id_item_comp=?', [r.lastID]));
+    res.status(201).json(await one('SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_item=?', [r.lastID]));
   }));
   router.put('/composicoes/itens/:id', asyncHandler(async (req, res) => {
     const d = req.body || {};
-    await run('UPDATE itens_composicao SET codigo_item=?,descricao=?,unidade=?,coeficiente=?,preco_unitario=?,custo_parcial=?,tipo_item=?,ordem=? WHERE id_item_comp=?',
+    await run('UPDATE itens_composicao SET codigo_item=?,descricao=?,unidade=?,coeficiente=?,preco_unitario=?,custo_parcial=?,tipo_item=?,ordem=? WHERE id_item=?',
       [d.codigo_item || null, d.descricao || '', d.unidade || null, toNum(d.coeficiente), toNum(d.preco_unitario), toNum(d.custo_parcial), d.tipo_item || 'INSUMO', d.ordem || 0, req.params.id]);
-    res.json(await one('SELECT * FROM itens_composicao WHERE id_item_comp=?', [req.params.id]));
+    res.json(await one('SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_item=?', [req.params.id]));
   }));
   router.delete('/composicoes/itens/:id', asyncHandler(async (req, res) => {
-    await run('DELETE FROM itens_composicao WHERE id_item_comp=?', [req.params.id]);
+    await run('DELETE FROM itens_composicao WHERE id_item=?', [req.params.id]);
     res.json({ mensagem: 'Item excluído.' });
   }));
   router.get('/composicoes/:id/uso-orcamentos', asyncHandler(async (req, res) => {
