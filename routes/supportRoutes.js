@@ -273,7 +273,10 @@ module.exports = function(db) {
     const comp = await one('SELECT * FROM composicoes WHERE id_composicao=?', [req.params.id]);
     if (!comp) return res.status(404).json({ erro: 'Composição não encontrada.' });
     comp.itens = await all('SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_composicao=? ORDER BY ordem, id_item', [req.params.id]);
-    comp.secoes = await all('SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY letra_secao', [req.params.id]);
+    comp.secoes = await all('SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY ordem, letra_secao', [req.params.id]);
+    for (const sec of comp.secoes) {
+      sec.itens = await all('SELECT * FROM composicoes_secao_itens WHERE id_secao=? ORDER BY ordem, id_item_secao', [sec.id_secao]);
+    }
     res.json(comp);
   }));
 

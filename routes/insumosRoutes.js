@@ -55,14 +55,34 @@ module.exports = function(db) {
         db.all('PRAGMA table_info(precos_insumos)', [], (priceErr, priceCols) => {
           if (priceErr) return cb(priceErr);
           const pCols = new Set((priceCols || []).map(c => c.name));
-          if (pCols.has('encargos_sociais_percentual')) return cb();
+          if (pCols.has('encargos_sociais_percentual')) return ensureIndexes(cb);
           db.run('ALTER TABLE precos_insumos ADD COLUMN encargos_sociais_percentual REAL', [], (e) => {
             if (e && !String(e.message || '').includes('duplicate column')) return cb(e);
-            cb();
+            ensureIndexes(cb);
           });
         });
       });
     });
+  }
+
+  function ensureIndexes(cb) {
+    const stmts = [
+      'CREATE INDEX IF NOT EXISTS idx_precos_insumos_latest ON precos_insumos(id_insumo, id_preco DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_precos_insumos_data_uf ON precos_insumos(uf_referencia, id_data_base, id_insumo)',
+      'CREATE INDEX IF NOT EXISTS idx_insumos_tipo_desc ON insumos(tipo_insumo, descricao)',
+      'CREATE INDEX IF NOT EXISTS idx_insumos_origem_desc ON insumos(origem, descricao)',
+      'CREATE INDEX IF NOT EXISTS idx_insumos_codigo ON insumos(codigo_insumo)',
+    ];
+    let i = 0;
+    const next = () => {
+      if (i >= stmts.length) return cb();
+      db.run(stmts[i], [], (err) => {
+        if (err) return cb(err);
+        i += 1;
+        next();
+      });
+    };
+    next();
   }
 
   function buildSelectWithPriceFilters({ uf, mes, ano, regime }) {

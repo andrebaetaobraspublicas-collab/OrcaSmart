@@ -56,7 +56,7 @@ Router.register('insumos', async () => {
 
   /* ── Estado ──────────────────────────────────────────────────────────────── */
   let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {};
-  const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'' };
+  const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:300 };
   let pesquisaMercadoResultados = [];
   let pesquisaMercadoSelecionado = null;
   let comprasGovResultados = [];
@@ -96,7 +96,7 @@ Router.register('insumos', async () => {
       <div class="page-header">
         <div class="page-header-left">
           <h1>Insumos</h1>
-          <p>${insumos.length} insumo(s) encontrado(s)</p>
+          <p>${insumos.length.toLocaleString('pt-BR')} de ${(stats.total||insumos.length).toLocaleString('pt-BR')} insumo(s) exibido(s)</p>
         </div>
         <div class="d-flex gap-1" style="flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-sm" id="btnExcluirInsumosLote"
@@ -258,7 +258,7 @@ Router.register('insumos', async () => {
               </tbody>
             </table>
           </div>
-          <div class="table-info">${insumos.length} insumo(s) | ${stats.com_preco||0} com preço cadastrado${filtros.regime ? ` | Regime: ${filtros.regime === 'onerado' ? 'Onerado' : 'Desonerado'}` : ''}</div>
+          <div class="table-info">${insumos.length.toLocaleString('pt-BR')} exibido(s) de ${(stats.total||insumos.length).toLocaleString('pt-BR')} | ${stats.com_preco||0} com preço cadastrado${filtros.regime ? ` | Regime: ${filtros.regime === 'onerado' ? 'Onerado' : 'Desonerado'}` : ''}</div>
         `}
       </div>
     `;

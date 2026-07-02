@@ -159,20 +159,22 @@ module.exports = function(db) {
 
   router.post('/:id/sintetico/reordenar', (req, res) => {
     const items = Array.isArray(req.body) ? req.body : [];
-    let pending = items.length;
-    if (!pending) return res.json({ mensagem: 'Reordenado.' });
-    let failed = false;
-    items.forEach(it => {
+    if (!items.length) return res.json({ mensagem: 'Reordenado.' });
+    let idx = 0;
+    const updateNext = () => {
+      const it = items[idx];
       db.run(
         'UPDATE orcamento_sintetico SET ordem=?, item_num=?, profundidade=? WHERE id_item=? AND id_orcamento=?',
         [it.ordem, it.item_num, it.profundidade, it.id_item, req.params.id],
         (err) => {
-          if (failed) return;
-          if (err) { failed = true; return res.status(500).json({ erro: err.message }); }
-          if (--pending === 0) res.json({ mensagem: 'Reordenado.' });
+          if (err) return res.status(500).json({ erro: err.message });
+          idx += 1;
+          if (idx >= items.length) return res.json({ mensagem: 'Reordenado.' });
+          return updateNext();
         }
       );
-    });
+    };
+    updateNext();
   });
 
   router.put('/:id/sintetico/restaurar', (req, res) => {

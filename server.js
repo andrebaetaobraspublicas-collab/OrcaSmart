@@ -50,7 +50,9 @@ function dbFileTemplate() {
 
 function openSqlite(filePath) {
   const db = new sqlite3.Database(filePath);
+  db.configure('busyTimeout', 10000);
   db.run('PRAGMA foreign_keys = ON');
+  db.run('PRAGMA busy_timeout = 10000');
   db.run('PRAGMA journal_mode = WAL');
   db.run('PRAGMA synchronous = NORMAL');
   return db;
@@ -316,8 +318,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.6-saas-node',
-  build: 'composicoes-bdi-routes',
+  version: '1.0.7-saas-node',
+  build: 'orcamento-insumos-composicoes',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));
