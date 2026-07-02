@@ -423,6 +423,74 @@ module.exports = function(db) {
     updateNext();
   });
 
+  router.post('/:id/recalcular-custos', (req, res) => {
+    const sqlCustoComp = `
+      SELECT COALESCE(SUM(
+        COALESCE(ic.coeficiente,0) * COALESCE(
+          CASE WHEN UPPER(COALESCE(ic.tipo_item,'')) IN ('COMPOSICAO','COMPOSIÇÃO') THEN (
+            SELECT c.custo_unitario FROM composicoes c
+            WHERE c.codigo = ic.codigo_item
+               OR c.codigo = 'SINAPI.' || ic.codigo_item
+               OR c.codigo = 'SICRO.' || ic.codigo_item
+            ORDER BY c.id_composicao DESC
+            LIMIT 1
+          ) END,
+          (
+            SELECT COALESCE(
+              NULLIF(p.preco_desonerado,0),
+              NULLIF(p.preco_nao_desonerado,0),
+              NULLIF(p.preco_referencia,0),
+              0
+            )
+            FROM precos_insumos p
+            JOIN insumos i ON i.id_insumo = p.id_insumo
+            LEFT JOIN datas_base db2 ON db2.id_data_base = p.id_data_base
+            WHERE i.codigo_insumo = ic.codigo_item
+               OR i.codigo_insumo = REPLACE(ic.codigo_item,'SINAPI.','')
+               OR i.codigo_insumo = REPLACE(ic.codigo_item,'SICRO.','')
+            ORDER BY COALESCE(db2.ano,0) DESC, COALESCE(db2.mes,0) DESC, p.id_preco DESC
+            LIMIT 1
+          ),
+          ic.preco_unitario,
+          CASE WHEN COALESCE(ic.coeficiente,0) <> 0 THEN ic.custo_parcial / ic.coeficiente END,
+          0
+        )
+      ),0) AS custo_calc
+      FROM itens_composicao ic
+      WHERE ic.id_composicao = ?`;
+
+    db.all(`
+      SELECT id_item, id_composicao, custo_unitario
+      FROM orcamento_sintetico
+      WHERE id_orcamento=? AND tipo_linha='item' AND id_composicao IS NOT NULL`, [req.params.id], (err, itens) => {
+      if (err) return res.status(500).json({ erro: err.message });
+      let idx = 0;
+      let atualizados = 0;
+      const next = () => {
+        if (idx >= (itens || []).length) {
+          return db.all('SELECT * FROM orcamento_sintetico WHERE id_orcamento=? ORDER BY ordem, id_item', [req.params.id], (listErr, rows) => {
+            if (listErr) return res.status(500).json({ erro: listErr.message });
+            res.json({ atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] });
+          });
+        }
+        const item = itens[idx++];
+        db.get(sqlCustoComp, [item.id_composicao], (calcErr, row) => {
+          if (calcErr) return res.status(500).json({ erro: calcErr.message });
+          const custo = Number((row?.custo_calc || 0).toFixed ? row.custo_calc.toFixed(4) : Number(row?.custo_calc || 0).toFixed(4));
+          if (Number.isFinite(custo) && custo > 0 && Math.abs(custo - toNum(item.custo_unitario, 0)) > 0.0001) {
+            return db.run('UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [custo, item.id_item], (updErr) => {
+              if (updErr) return res.status(500).json({ erro: updErr.message });
+              atualizados += 1;
+              next();
+            });
+          }
+          return next();
+        });
+      };
+      next();
+    });
+  });
+
   router.post('/:id/importar-sintetico-excel', express.raw({ type: () => true, limit: '30mb' }), (req, res) => {
     let uploadData;
     try {

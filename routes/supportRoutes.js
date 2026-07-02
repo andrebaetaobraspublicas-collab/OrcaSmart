@@ -1,4 +1,5 @@
 const express = require('express');
+const zlib = require('zlib');
 
 module.exports = function(db) {
   const router = express.Router();
@@ -22,6 +23,125 @@ module.exports = function(db) {
     return (req, res) => fn(req, res).catch(err => res.status(500).json({ erro: err.message }));
   }
 
+  function decodeXml(value) {
+    return String(value || '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+  }
+
+  function normalizeText(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+  function parseMultipart(buffer, contentType) {
+    if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer || '');
+    const boundary = String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[1]
+      || String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[2];
+    if (!boundary) throw new Error('Upload multipart sem boundary.');
+    const marker = Buffer.from(`--${boundary}`);
+    const fields = {};
+    let file = null;
+    let pos = buffer.indexOf(marker);
+    while (pos >= 0) {
+      const next = buffer.indexOf(marker, pos + marker.length);
+      if (next < 0) break;
+      let part = buffer.slice(pos + marker.length, next);
+      if (part.slice(0, 2).toString() === '\r\n') part = part.slice(2);
+      if (part.slice(-2).toString() === '\r\n') part = part.slice(0, -2);
+      const split = part.indexOf(Buffer.from('\r\n\r\n'));
+      if (split > -1) {
+        const headers = part.slice(0, split).toString('utf8');
+        const body = part.slice(split + 4);
+        const name = headers.match(/name="([^"]+)"/)?.[1];
+        const filename = headers.match(/filename="([^"]*)"/)?.[1];
+        if (name && filename !== undefined) file = { fieldname: name, originalname: filename, buffer: body };
+        else if (name) fields[name] = body.toString('utf8').trim();
+      }
+      pos = next;
+    }
+    return { fields, file };
+  }
+
+  function unzipXlsx(buffer) {
+    const files = {};
+    let eocd = -1;
+    for (let i = buffer.length - 22; i >= 0; i--) {
+      if (buffer.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('Arquivo XLSX inválido: diretório ZIP não encontrado.');
+    const total = buffer.readUInt16LE(eocd + 10);
+    const centralOffset = buffer.readUInt32LE(eocd + 16);
+    let ptr = centralOffset;
+    for (let i = 0; i < total; i++) {
+      if (buffer.readUInt32LE(ptr) !== 0x02014b50) break;
+      const method = buffer.readUInt16LE(ptr + 10);
+      const compSize = buffer.readUInt32LE(ptr + 20);
+      const nameLen = buffer.readUInt16LE(ptr + 28);
+      const extraLen = buffer.readUInt16LE(ptr + 30);
+      const commentLen = buffer.readUInt16LE(ptr + 32);
+      const localOffset = buffer.readUInt32LE(ptr + 42);
+      const name = buffer.slice(ptr + 46, ptr + 46 + nameLen).toString('utf8');
+      const localNameLen = buffer.readUInt16LE(localOffset + 26);
+      const localExtraLen = buffer.readUInt16LE(localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const data = buffer.slice(dataStart, dataStart + compSize);
+      if (method === 0) files[name] = data.toString('utf8');
+      else if (method === 8) files[name] = zlib.inflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).toString('utf8');
+      ptr += 46 + nameLen + extraLen + commentLen;
+    }
+    return files;
+  }
+
+  function getWorkbookSheets(files) {
+    const workbook = files['xl/workbook.xml'];
+    const rels = files['xl/_rels/workbook.xml.rels'] || '';
+    if (!workbook) return [{ name: 'Planilha1', path: 'xl/worksheets/sheet1.xml' }];
+    const relMap = new Map();
+    for (const m of rels.matchAll(/<Relationship\b([^>]*)\/?>/g)) {
+      const attrs = m[1] || '';
+      const id = attrs.match(/\bId="([^"]+)"/)?.[1];
+      const target = attrs.match(/\bTarget="([^"]+)"/)?.[1];
+      if (id && target) relMap.set(id, target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\.\//, '')}`);
+    }
+    const sheets = [];
+    for (const m of workbook.matchAll(/<sheet\b([^>]*)\/?>/g)) {
+      const attrs = m[1] || '';
+      const name = decodeXml(attrs.match(/\bname="([^"]+)"/)?.[1] || '');
+      const relId = attrs.match(/\br:id="([^"]+)"/)?.[1];
+      const path = relMap.get(relId) || `xl/worksheets/sheet${sheets.length + 1}.xml`;
+      sheets.push({ name: name || `Planilha${sheets.length + 1}`, path });
+    }
+    return sheets;
+  }
+
+  function countSheetRows(xml) {
+    if (!xml) return 0;
+    const matches = xml.match(/<row\b/g);
+    return matches ? matches.length : 0;
+  }
+
+  function detectSinapiDate(fileName, files) {
+    const read = (text) => {
+      let m = String(text || '').match(/(?:^|[^0-9])(20\d{2})[._\-\s/]*(0?[1-9]|1[0-2])(?:$|[^0-9])/);
+      if (m) return { ano: Number(m[1]), mes: Number(m[2]) };
+      m = String(text || '').match(/(?:^|[^0-9])(0?[1-9]|1[0-2])[._\-\s/]*(20\d{2})(?:$|[^0-9])/);
+      if (m) return { ano: Number(m[2]), mes: Number(m[1]) };
+      return null;
+    };
+    const fromName = read(fileName);
+    if (fromName) return fromName;
+    const fromMetadata = read(`${files['xl/workbook.xml'] || ''} ${files['docProps/core.xml'] || ''}`);
+    if (fromMetadata) return fromMetadata;
+    return { ano: null, mes: null };
+  }
+
   function placeholders(values) {
     return values.map(() => '?').join(',');
   }
@@ -30,6 +150,76 @@ module.exports = function(db) {
     const bdiLinha = item.bdi_percentual_linha == null || item.bdi_percentual_linha === '' ? bdi : toNum(item.bdi_percentual_linha, bdi);
     return toNum(item.quantidade) * toNum(item.custo_unitario) * (1 + bdiLinha / 100);
   }
+
+  router.post('/sinapi/analisar', express.raw({ type: () => true, limit: '120mb' }), asyncHandler(async (req, res) => {
+    const upload = parseMultipart(req.body, req.headers['content-type']);
+    const file = upload.file;
+    if (!file?.buffer) return res.status(400).json({ erro: 'Arquivo não enviado.' });
+    if (!/\.(xlsx|xlsm)$/i.test(file.originalname || '')) {
+      return res.status(400).json({ erro: 'No SaaS, use arquivo SINAPI Referência em formato .xlsx ou .xlsm.' });
+    }
+
+    const files = unzipXlsx(file.buffer);
+    const sheets = getWorkbookSheets(files);
+    const byName = new Map(sheets.map(s => [normalizeText(s.name), s]));
+    const getSheet = (...names) => {
+      for (const name of names) {
+        const found = byName.get(normalizeText(name));
+        if (found) return found;
+      }
+      return sheets.find(s => names.some(name => normalizeText(s.name).includes(normalizeText(name))));
+    };
+
+    const isd = getSheet('ISD');
+    const icd = getSheet('ICD');
+    const analitico = getSheet('Analítico', 'Analitico');
+    const { mes, ano } = detectSinapiDate(file.originalname, files);
+
+    const qtdIsd = isd ? Math.max(0, countSheetRows(files[isd.path]) - 10) : 0;
+    const qtdIcd = icd ? Math.max(0, countSheetRows(files[icd.path]) - 10) : 0;
+    const qtdAnal = analitico ? Math.max(0, countSheetRows(files[analitico.path]) - 10) : 0;
+
+    const sobreposicao = {};
+    if (mes && ano) {
+      const dbRow = await one('SELECT id_data_base FROM datas_base WHERE mes=? AND ano=?', [mes, ano]);
+      if (dbRow) {
+        const cntIns = await one(`
+          SELECT COUNT(*) AS total
+          FROM precos_insumos pi
+          JOIN insumos i ON i.id_insumo=pi.id_insumo
+          WHERE pi.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [dbRow.id_data_base]);
+        const cntComp = await one(`
+          SELECT COUNT(*) AS total
+          FROM composicoes
+          WHERE mes_referencia=? AND UPPER(COALESCE(fonte,''))='SINAPI'`, [`${String(mes).padStart(2, '0')}/${ano}`]);
+        if ((cntIns?.total || 0) > 0 || (cntComp?.total || 0) > 0) {
+          sobreposicao.insumos = Number(cntIns?.total || 0);
+          sobreposicao.composicoes = Number(cntComp?.total || 0);
+          sobreposicao.id_data_base = dbRow.id_data_base;
+        }
+      }
+    }
+
+    res.json({
+      mes,
+      ano,
+      abas: sheets.map(s => s.name),
+      tem_isd: !!isd,
+      tem_icd: !!icd,
+      tem_analitico: !!analitico,
+      qtd_insumos_isd: qtdIsd,
+      qtd_insumos_icd: qtdIcd,
+      qtd_composicoes: qtdAnal,
+      sobreposicao,
+      observacao: 'Análise executada no backend Node SaaS.',
+    });
+  }));
+
+  router.post('/sinapi/importar', express.raw({ type: () => true, limit: '120mb' }), asyncHandler(async (_req, res) => {
+    res.status(501).json({
+      erro: 'A análise do arquivo SINAPI já está disponível no SaaS Node. A importação completa das abas ISD, ICD e Analítico ainda precisa ser portada do servidor Python para Node antes de gravar no banco.',
+    });
+  }));
 
   async function getEventosTree(idEventograma) {
     const eventos = await all(`
