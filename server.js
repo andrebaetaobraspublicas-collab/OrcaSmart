@@ -318,8 +318,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.7-saas-node',
-  build: 'orcamento-insumos-composicoes',
+  version: '1.0.8-saas-node',
+  build: 'importar-sintetico-excel',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));

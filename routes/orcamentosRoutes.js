@@ -2,9 +2,15 @@
  * routes/orcamentosRoutes.js
  */
 const express = require('express');
+const multer = require('multer');
+const XLSX = require('xlsx');
 
 module.exports = function(db) {
   const router = express.Router();
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
 
   const SELECT_BASE = `
     SELECT o.*, ob.nome_obra, ob.uf AS obra_uf,
@@ -29,8 +35,121 @@ module.exports = function(db) {
 
   function toNum(v, def = 0) {
     if (v === null || v === undefined || v === '') return def;
-    const n = Number(v);
+    if (typeof v === 'number') return Number.isFinite(v) ? v : def;
+    let s = String(v).trim();
+    if (!s) return def;
+    s = s.replace(/\s/g, '').replace(/R\$/gi, '').replace(/%/g, '');
+    if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(',', '.');
+    const n = Number(s);
     return Number.isFinite(n) ? n : def;
+  }
+
+  function normalizeHeader(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  function findCol(headers, candidates) {
+    const normalized = headers.map(normalizeHeader);
+    for (const cand of candidates) {
+      const c = normalizeHeader(cand);
+      const idx = normalized.findIndex(h => h === c || h.includes(c));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  }
+
+  function findDescriptionCol(headers) {
+    const normalized = headers.map(normalizeHeader);
+    let idx = normalized.findIndex(h => h === 'descricao' || h.includes('descricao') || h.startsWith('descr') || h.includes('servico') || h.startsWith('serv'));
+    if (idx >= 0) return idx;
+    idx = normalized.findIndex(h => h.includes('discrimin') || h.includes('objeto'));
+    return idx;
+  }
+
+  function cellText(value) {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+
+  function parseExcelRows(buffer) {
+    const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false, raw: false });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) return [];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+    if (!rows.length) return [];
+
+    let headerIndex = -1;
+    let map = null;
+    const headerCandidates = rows.slice(0, Math.min(rows.length, 30));
+    for (let i = 0; i < headerCandidates.length; i++) {
+      const headers = headerCandidates[i].map(cellText);
+      let desc = findCol(headers, ['descrição', 'descricao', 'serviço', 'servico', 'discriminação', 'discriminacao']);
+      if (desc < 0) desc = findCol(headers, ['item']);
+      const qtd = findCol(headers, ['quantidade', 'qtd', 'qtde']);
+      const custo = findCol(headers, ['custo unit', 'preço unit', 'preco unit', 'valor unit', 'unitário', 'unitario']);
+      if (desc >= 0 && (qtd >= 0 || custo >= 0)) {
+        headerIndex = i;
+        map = {
+          codigo: findCol(headers, ['código', 'codigo', 'cod']),
+          fonte: findCol(headers, ['fonte', 'base']),
+          descricao: desc,
+          unidade: findCol(headers, ['unidade', 'unid', 'und']),
+          quantidade: qtd,
+          custo: custo,
+          itemNum: findCol(headers, ['item', 'nº', 'n°', 'num']),
+        };
+        break;
+      }
+    }
+
+    if (map && map.descricao === map.itemNum && rows[headerIndex] && rows[headerIndex].length > 2) {
+      map.descricao = 2;
+    }
+
+    if (headerIndex < 0) {
+      map = { itemNum: 0, codigo: 1, fonte: -1, descricao: 2, unidade: 3, quantidade: 4, custo: 5 };
+      headerIndex = -1;
+    }
+
+    return rows.slice(headerIndex + 1).map(row => {
+      const get = idx => idx >= 0 ? row[idx] : '';
+      const descricao = cellText(get(map.descricao));
+      const quantidade = toNum(get(map.quantidade), 0);
+      const custo = toNum(get(map.custo), 0);
+      const codigo = cellText(get(map.codigo));
+      const unidade = cellText(get(map.unidade));
+      const itemNum = cellText(get(map.itemNum));
+      const fonte = cellText(get(map.fonte));
+      const nonEmpty = row.map(cellText).filter(Boolean);
+      if (!descricao && !codigo && !nonEmpty.length) return null;
+      const looksSection = descricao && !quantidade && !custo && !unidade
+        && (!codigo || /^[0-9]+\.?$/.test(codigo))
+        && descricao.length > 2;
+      return {
+        item_num: itemNum,
+        codigo,
+        fonte,
+        descricao: descricao || nonEmpty.join(' - '),
+        unidade,
+        quantidade,
+        custo_unitario: custo,
+        tipo_linha: looksSection ? 'section' : 'item',
+      };
+    }).filter(Boolean);
+  }
+
+  function nextItemNum(index, row, currentSection) {
+    const raw = String(row.item_num || '').trim();
+    if (raw && /^[0-9]+(\.[0-9]+)*$/.test(raw.replace(/\.$/, ''))) return raw.replace(/\.$/, '');
+    if (row.tipo_linha === 'section') return String(currentSection + 1);
+    return `${Math.max(1, currentSection)}.${index}`;
   }
 
   // GET /api/orcamentos
@@ -175,6 +294,102 @@ module.exports = function(db) {
       );
     };
     updateNext();
+  });
+
+  router.post('/:id/importar-sintetico-excel', upload.single('arquivo'), (req, res) => {
+    const modo = String(req.body?.modo_merge || 'substituir');
+    if (!req.file?.buffer) return res.status(400).json({ erro: 'Arquivo Excel não enviado.' });
+    let parsed;
+    try {
+      parsed = parseExcelRows(req.file.buffer);
+    } catch (err) {
+      return res.status(400).json({ erro: `Falha ao ler a planilha: ${err.message}` });
+    }
+    if (!parsed.length) return res.status(400).json({ erro: 'Nenhuma linha de orçamento foi identificada na planilha.' });
+
+    const itensNormalizados = [];
+    let section = 0;
+    let itemInSection = 0;
+    parsed.forEach((row) => {
+      if (row.tipo_linha === 'section') {
+        section += 1;
+        itemInSection = 0;
+        itensNormalizados.push({
+          ...row,
+          item_num: nextItemNum(0, row, section - 1),
+          profundidade: 0,
+          tipo_item: null,
+          quantidade: 0,
+          custo_unitario: 0,
+        });
+      } else {
+        if (!section) section = 1;
+        itemInSection += 1;
+        itensNormalizados.push({
+          ...row,
+          item_num: nextItemNum(itemInSection, row, section),
+          profundidade: 1,
+          tipo_item: 'composicao',
+        });
+      }
+    });
+
+    ensureBdiLinha((e) => {
+      if (e) return res.status(500).json({ erro: e.message });
+      const insertAll = () => {
+        db.get('SELECT COALESCE(MAX(ordem),0) AS max_ord FROM orcamento_sintetico WHERE id_orcamento=?', [req.params.id], (maxErr, maxRow) => {
+          if (maxErr) return res.status(500).json({ erro: maxErr.message });
+          let idx = 0;
+          const base = modo === 'adicionar' ? (maxRow?.max_ord || 0) : 0;
+          const insertNext = () => {
+            if (idx >= itensNormalizados.length) {
+              return db.all('SELECT * FROM orcamento_sintetico WHERE id_orcamento=? ORDER BY ordem, id_item', [req.params.id], (listErr, rows) => {
+                if (listErr) return res.status(500).json({ erro: listErr.message });
+                return res.json({
+                  mensagem: `${itensNormalizados.length} linha(s) importada(s) do Excel.`,
+                  itens: rows || [],
+                  titulo_detectado: req.file.originalname,
+                  extracao: 'Importação direta de Excel sem uso de IA.',
+                });
+              });
+            }
+            const it = itensNormalizados[idx];
+            db.run(`
+              INSERT INTO orcamento_sintetico
+                (id_orcamento,item_num,tipo_linha,profundidade,ordem,tipo_item,codigo,fonte,descricao,unidade,quantidade,custo_unitario,bdi_percentual_linha)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+              req.params.id,
+              it.item_num,
+              it.tipo_linha,
+              it.profundidade,
+              base + idx + 1,
+              it.tipo_item,
+              it.codigo || '',
+              it.fonte || '',
+              it.descricao || '',
+              it.unidade || '',
+              toNum(it.quantidade, 0),
+              toNum(it.custo_unitario, 0),
+              null,
+            ], (insErr) => {
+              if (insErr) return res.status(500).json({ erro: insErr.message });
+              idx += 1;
+              return insertNext();
+            });
+          };
+          insertNext();
+        });
+      };
+
+      if (modo === 'substituir') {
+        db.run('DELETE FROM orcamento_sintetico WHERE id_orcamento=?', [req.params.id], (delErr) => {
+          if (delErr) return res.status(500).json({ erro: delErr.message });
+          return insertAll();
+        });
+      } else {
+        insertAll();
+      }
+    });
   });
 
   router.put('/:id/sintetico/restaurar', (req, res) => {
