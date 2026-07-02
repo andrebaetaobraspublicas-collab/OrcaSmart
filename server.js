@@ -242,6 +242,19 @@ const tenantDbProxy = {
   get(sql, params, cb) { return runTenantMethod('get', sql, params, cb); },
   all(sql, params, cb) { return runTenantMethod('all', sql, params, cb); },
   run(sql, params, cb) { return runTenantMethod('run', sql, params, cb); },
+  async withConnection(task) {
+    const store = requestDb.getStore();
+    const dbPath = store && store.dbPath;
+    if (!dbPath || !path.resolve(dbPath).startsWith(path.resolve(TENANT_DB_DIR))) {
+      throw new Error('Tenant nao definido para esta requisicao.');
+    }
+    const tenantDb = openSqlite(dbPath);
+    try {
+      return await task(tenantDb);
+    } finally {
+      await new Promise(resolve => tenantDb.close(resolve));
+    }
+  },
 };
 
 function runTenantMethod(method, sql, params, cb) {
@@ -318,8 +331,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.11-saas-node',
-  build: 'sinapi-importacao-sem-upload-longo',
+  version: '1.0.12-saas-node',
+  build: 'sinapi-importacao-node',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));

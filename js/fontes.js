@@ -898,6 +898,7 @@ Router.register('fontes', async () => {
 
   // ─── Etapa 3: Progresso + resultado ──────────────────────────────────────
   async function renderEtapa3(cfg) {
+    /*
     Modal.open({
       title: 'Importar SINAPI',
       size: 'modal-lg',
@@ -916,7 +917,7 @@ Router.register('fontes', async () => {
         </div>`,
       footer: `<button class="btn btn-primary" onclick="Modal.close()">Entendi</button>`
     });
-    return;
+    */
 
     Modal.open({
       title: '⚙ Importar SINAPI — (3/3) Processando',
