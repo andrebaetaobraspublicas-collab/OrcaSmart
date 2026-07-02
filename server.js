@@ -318,8 +318,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.10-saas-node',
-  build: 'sinapi-analise-recalcular-custos',
+  version: '1.0.11-saas-node',
+  build: 'sinapi-importacao-sem-upload-longo',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
 }));

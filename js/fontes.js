@@ -899,6 +899,26 @@ Router.register('fontes', async () => {
   // ─── Etapa 3: Progresso + resultado ──────────────────────────────────────
   async function renderEtapa3(cfg) {
     Modal.open({
+      title: 'Importar SINAPI',
+      size: 'modal-lg',
+      body: `
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius);padding:16px 18px;color:#713f12;line-height:1.55">
+          <div style="font-size:1rem;font-weight:800;margin-bottom:8px">Importacao completa em implantacao no SaaS</div>
+          <div style="font-size:.86rem">
+            A analise do arquivo foi concluida, mas a gravacao completa das abas ISD, ICD e Analitico ainda esta sendo portada
+            para o backend Node usado no Hostinger. Para evitar espera longa, o sistema nao reenviou o arquivo grande ao servidor.
+          </div>
+          <div style="margin-top:12px;font-size:.82rem;color:#854d0e">
+            Data-base selecionada: <strong>${String(cfg.mes).padStart(2,'0')}/${cfg.ano}</strong><br>
+            UF: <strong>${Utils.esc(cfg.uf || 'TODAS')}</strong><br>
+            Abas detectadas: ${_sinapiAnalise?.tem_isd ? '<strong>ISD</strong> ' : ''}${_sinapiAnalise?.tem_icd ? '<strong>ICD</strong> ' : ''}${_sinapiAnalise?.tem_analitico ? '<strong>Analitico</strong>' : ''}
+          </div>
+        </div>`,
+      footer: `<button class="btn btn-primary" onclick="Modal.close()">Entendi</button>`
+    });
+    return;
+
+    Modal.open({
       title: '⚙ Importar SINAPI — (3/3) Processando',
       size: 'modal-lg',
       body: `

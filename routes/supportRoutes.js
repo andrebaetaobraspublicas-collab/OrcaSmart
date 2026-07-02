@@ -215,7 +215,7 @@ module.exports = function(db) {
     });
   }));
 
-  router.post('/sinapi/importar', express.raw({ type: () => true, limit: '120mb' }), asyncHandler(async (_req, res) => {
+  router.post('/sinapi/importar', asyncHandler(async (_req, res) => {
     res.status(501).json({
       erro: 'A análise do arquivo SINAPI já está disponível no SaaS Node. A importação completa das abas ISD, ICD e Analítico ainda precisa ser portada do servidor Python para Node antes de gravar no banco.',
     });
