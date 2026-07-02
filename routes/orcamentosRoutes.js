@@ -50,20 +50,20 @@ module.exports = function(db) {
   }
 
   function findCol(headers, candidates) {
-    const normalized = headers.map(normalizeHeader);
+    const normalized = (headers || []).map(h => normalizeHeader(h));
     for (const cand of candidates) {
       const c = normalizeHeader(cand);
-      const idx = normalized.findIndex(h => h === c || h.includes(c));
+      const idx = normalized.findIndex(h => h && c && (h === c || h.includes(c)));
       if (idx >= 0) return idx;
     }
     return -1;
   }
 
   function findDescriptionCol(headers) {
-    const normalized = headers.map(normalizeHeader);
-    let idx = normalized.findIndex(h => h === 'descricao' || h.includes('descricao') || h.startsWith('descr') || h.includes('servico') || h.startsWith('serv'));
+    const normalized = (headers || []).map(h => normalizeHeader(h));
+    let idx = normalized.findIndex(h => h && (h === 'descricao' || h.includes('descricao') || h.startsWith('descr') || h.includes('servico') || h.startsWith('serv')));
     if (idx >= 0) return idx;
-    idx = normalized.findIndex(h => h.includes('discrimin') || h.includes('objeto'));
+    idx = normalized.findIndex(h => h && (h.includes('discrimin') || h.includes('objeto')));
     return idx;
   }
 
@@ -157,8 +157,8 @@ module.exports = function(db) {
       const row = [];
       let cellMatch;
       while ((cellMatch = cellRe.exec(rowMatch[1]))) {
-        const attrs = cellMatch[1];
-        const body = cellMatch[2];
+        const attrs = cellMatch[1] || '';
+        const body = cellMatch[2] || '';
         const ref = attrs.match(/\sr="([^"]+)"/)?.[1] || '';
         const type = attrs.match(/\st="([^"]+)"/)?.[1] || '';
         const idx = columnIndex(ref);
@@ -211,7 +211,7 @@ module.exports = function(db) {
     const headerCandidates = rows.slice(0, Math.min(rows.length, 30));
     for (let i = 0; i < headerCandidates.length; i++) {
       const headers = headerCandidates[i].map(cellText);
-      let desc = findCol(headers, ['descrição', 'descricao', 'serviço', 'servico', 'discriminação', 'discriminacao']);
+      let desc = findDescriptionCol(headers);
       if (desc < 0) desc = findCol(headers, ['item']);
       const qtd = findCol(headers, ['quantidade', 'qtd', 'qtde']);
       const custo = findCol(headers, ['custo unit', 'preço unit', 'preco unit', 'valor unit', 'unitário', 'unitario']);
@@ -253,8 +253,11 @@ module.exports = function(db) {
         descricao = nonEmpty[1];
       }
       if (!descricao && !codigo && !nonEmpty.length) return null;
-      const looksSection = descricao && !quantidade && !custo && !unidade
-        && (!codigo || /^[0-9]+\.?$/.test(codigo))
+      const hasQuantity = Math.abs(Number(quantidade) || 0) > 0;
+      const hasCost = Math.abs(Number(custo) || 0) > 0;
+      const sectionRef = itemNum || codigo;
+      const looksSection = descricao && !hasQuantity && !hasCost && !unidade
+        && /^[0-9]+\.?$/.test(sectionRef)
         && descricao.length > 2;
       return {
         item_num: itemNum,
