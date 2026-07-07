@@ -16,6 +16,7 @@ const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
+const { apiNotFound, apiErrorHandler } = require('./middleware/apiErrors');
 let Stripe = null;
 try {
   Stripe = require('stripe');
@@ -27,6 +28,8 @@ const APP_DIR = __dirname;
 const DATA_DIR = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
+const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
+const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
@@ -331,7 +334,8 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
-  version: '1.0.12-saas-node',
+  app: APP_NAME,
+  version: APP_VERSION,
   build: 'sinapi-importacao-node',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
@@ -614,23 +618,9 @@ app.get('/api/admin/users', requireAdmin, async (_req, res) => {
   res.json(users);
 });
 
-app.use('/api', (req, res) => {
-  res.status(404).json({
-    erro: `Rota de API nao implementada no backend Node: ${req.method} ${req.originalUrl}`,
-    rota: req.originalUrl,
-    metodo: req.method,
-  });
-});
+app.use('/api', apiNotFound);
 
-app.use((err, req, res, next) => {
-  if (!req.path.startsWith('/api')) return next(err);
-  console.error('Erro em rota API:', err);
-  res.status(err.status || 500).json({
-    erro: err.message || 'Erro interno do servidor.',
-    tipo: err.name || 'Error',
-    rota: req.originalUrl,
-  });
-});
+app.use(apiErrorHandler);
 
 app.get('*', (req, res) => {
   if (!req.session.userId) return res.redirect('/login.html');
