@@ -103,6 +103,9 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: terceira fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidados recalculo de custos, curva ABC de servicos e curva ABC de insumos.
   - importacao Excel permanece no arquivo de rota para fatiamento posterior.
+- 2026-07-07: quarta fatia do modulo Orcamentos consolidada em camadas Node:
+  - consolidada a importacao Excel do orcamento sintetico, incluindo leitura multipart, parser XLSX sem dependencia externa, normalizacao de secoes/itens e gravacao no repositorio.
+  - as rotas antigas do modulo ainda permanecem no arquivo como compatibilidade temporaria, mas os endpoints principais ja respondem pelas camadas service/repository.
 
 ## Regras de compatibilidade
 

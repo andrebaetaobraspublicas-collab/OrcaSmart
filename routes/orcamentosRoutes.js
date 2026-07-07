@@ -356,6 +356,10 @@ module.exports = function(db) {
     res.json(await orcamentosService.curvaAbcInsumos(db, req.params.id));
   }));
 
+  router.post('/:id/importar-sintetico-excel', express.raw({ type: () => true, limit: '30mb' }), asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.importarSinteticoExcel(db, req.params.id, req.body, req.headers['content-type']));
+  }));
+
   // GET /api/orcamentos
   router.get('/', (req, res) => {
     const { id_obra, status, q } = req.query;

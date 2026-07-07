@@ -347,6 +347,79 @@ function abcResumo(itens, valueField) {
   }, {});
 }
 
+function nextItemNum(index, row, currentSection) {
+  const raw = String(row.item_num || '').trim();
+  if (raw && /^[0-9]+(\.[0-9]+)*$/.test(raw.replace(/\.$/, ''))) return raw.replace(/\.$/, '');
+  if (row.tipo_linha === 'section') return String(currentSection + 1);
+  return `${Math.max(1, currentSection)}.${index}`;
+}
+
+async function importarSinteticoRows(db, idOrcamento, parsedRows = [], modo = 'substituir', originalname = '') {
+  await ensureBdiLinha(db);
+
+  const itensNormalizados = [];
+  let section = 0;
+  let itemInSection = 0;
+  parsedRows.forEach((row) => {
+    if (row.tipo_linha === 'section') {
+      section += 1;
+      itemInSection = 0;
+      itensNormalizados.push({
+        ...row,
+        item_num: nextItemNum(0, row, section - 1),
+        profundidade: 0,
+        tipo_item: null,
+        quantidade: 0,
+        custo_unitario: 0,
+      });
+    } else {
+      if (!section) section = 1;
+      itemInSection += 1;
+      itensNormalizados.push({
+        ...row,
+        item_num: nextItemNum(itemInSection, row, section),
+        profundidade: 1,
+        tipo_item: 'composicao',
+      });
+    }
+  });
+
+  if (modo === 'substituir') {
+    await run(db, 'DELETE FROM orcamento_sintetico WHERE id_orcamento=?', [idOrcamento]);
+  }
+
+  const base = modo === 'adicionar' ? await maxOrdemSintetico(db, idOrcamento) : 0;
+  for (let idx = 0; idx < itensNormalizados.length; idx += 1) {
+    const it = itensNormalizados[idx];
+    await run(db, `
+      INSERT INTO orcamento_sintetico
+        (id_orcamento,item_num,tipo_linha,profundidade,ordem,tipo_item,codigo,fonte,descricao,unidade,quantidade,custo_unitario,bdi_percentual_linha)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      idOrcamento,
+      it.item_num,
+      it.tipo_linha,
+      it.profundidade,
+      base + idx + 1,
+      it.tipo_item,
+      it.codigo || '',
+      it.fonte || '',
+      it.descricao || '',
+      it.unidade || '',
+      toNum(it.quantidade, 0),
+      toNum(it.custo_unitario, 0),
+      null,
+    ]);
+  }
+
+  const itens = await listSintetico(db, idOrcamento);
+  return {
+    mensagem: `${itensNormalizados.length} linha(s) importada(s) do Excel.`,
+    itens: itens || [],
+    titulo_detectado: originalname,
+    extracao: 'Importacao direta de Excel sem uso de IA.',
+  };
+}
+
 async function curvaAbcServicos(db, idOrcamento) {
   await ensureBdiLinha(db);
   const orcamento = await one(db, `
@@ -555,6 +628,7 @@ module.exports = {
   reordenarSintetico,
   restoreSintetico,
   recalcularCustos,
+  importarSinteticoRows,
   curvaAbcServicos,
   curvaAbcInsumos,
 };
