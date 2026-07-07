@@ -118,6 +118,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/pesquisaMercadoService.js`
   - `repositories/pesquisaMercadoRepository.js`
   - chamadas de IA, fallback manual, parametros fiscais e importacao de cotacoes foram movidos da rota para service/repository.
+- 2026-07-07: modulo Analise de Projetos consolidado em camadas Node:
+  - `routes/analiseProjetosRoutes.js`
+  - `services/analiseProjetosService.js`
+  - `repositories/analiseProjetosRepository.js`
+  - fila de analise, validacao de uploads, sugestoes heuristicas e criacao de orcamento IA foram movidas da rota para service/repository.
 
 ## Regras de compatibilidade
 
