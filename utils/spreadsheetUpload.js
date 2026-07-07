@@ -133,8 +133,43 @@ function parseMultipart(buffer, contentType) {
   return { fields, file };
 }
 
+function parseMultipartAll(buffer, contentType) {
+  const boundary = String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[1]
+    || String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[2];
+  if (!boundary) throw new Error('Upload multipart sem boundary.');
+  const marker = Buffer.from(`--${boundary}`);
+  const fields = {};
+  const files = {};
+  let pos = buffer.indexOf(marker);
+  while (pos >= 0) {
+    const next = buffer.indexOf(marker, pos + marker.length);
+    if (next < 0) break;
+    let part = buffer.slice(pos + marker.length, next);
+    if (part.slice(0, 2).toString() === '\r\n') part = part.slice(2);
+    if (part.slice(-2).toString() === '\r\n') part = part.slice(0, -2);
+    const split = part.indexOf(Buffer.from('\r\n\r\n'));
+    if (split > -1) {
+      const headers = part.slice(0, split).toString('utf8');
+      const body = part.slice(split + 4);
+      const name = headers.match(/name="([^"]+)"/)?.[1];
+      const filename = headers.match(/filename="([^"]*)"/)?.[1];
+      if (name && filename !== undefined) {
+        const file = { fieldname: name, originalname: filename, buffer: body };
+        if (!files[name]) files[name] = file;
+        else if (Array.isArray(files[name])) files[name].push(file);
+        else files[name] = [files[name], file];
+      } else if (name) {
+        fields[name] = body.toString('utf8').trim();
+      }
+    }
+    pos = next;
+  }
+  return { fields, files, file: Object.values(files)[0] || null };
+}
+
 module.exports = {
   decodeXml,
   parseMultipart,
+  parseMultipartAll,
   parseXlsxBuffer,
 };

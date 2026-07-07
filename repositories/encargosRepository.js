@@ -21,6 +21,7 @@ function run(db, sql, params = []) {
 
 function toNum(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
   const n = Number(String(value).replace(/\./g, '').replace(',', '.'));
   return Number.isFinite(n) ? n : fallback;
 }
@@ -421,6 +422,130 @@ async function deleteItem(db, idItem) {
   return result;
 }
 
+async function findPerfil(db, data = {}) {
+  await ensureSchema(db);
+  return one(db, `
+    SELECT *
+    FROM perfis_encargos
+    WHERE fonte_referencia = ?
+      AND COALESCE(uf_referencia, '') = COALESCE(?, '')
+      AND categoria = ?
+      AND regime = ?
+      AND COALESCE(vigencia_inicio, '') = COALESCE(?, '')
+      AND COALESCE(vigencia_fim, '') = COALESCE(?, '')
+    ORDER BY id_perfil DESC
+    LIMIT 1`, [
+    normFonte(data.fonte_referencia || 'SINAPI'),
+    data.uf_referencia || null,
+    data.categoria || 'Horista',
+    data.regime || 'Normal',
+    data.vigencia_inicio || null,
+    data.vigencia_fim || null,
+  ]);
+}
+
+async function replacePerfilTotais(db, idPerfil, totais = {}) {
+  await ensureSchema(db);
+  const grupos = await all(db, 'SELECT * FROM grupos_encargos WHERE id_perfil = ?', [idPerfil]);
+  for (const grupo of grupos) {
+    await run(db, 'DELETE FROM itens_encargo WHERE id_grupo_enc = ?', [grupo.id_grupo_enc]);
+    const valor = toNum(totais[grupo.letra]);
+    if (valor) {
+      await run(db, `
+        INSERT INTO itens_encargo (id_grupo_enc, descricao, base_legal, percentual, observacoes, ordem)
+        VALUES (?, ?, ?, ?, ?, ?)`, [
+        grupo.id_grupo_enc,
+        `Grupo ${grupo.letra} - total importado`,
+        'Tabela referencial de encargos sociais',
+        valor,
+        'Importado pelo backend Node SaaS.',
+        1,
+      ]);
+    }
+  }
+  await calcEncargos(db, idPerfil);
+  return getPerfil(db, idPerfil);
+}
+
+async function upsertPerfilComTotais(db, data = {}, totais = {}) {
+  await ensureSchema(db);
+  const perfilExistente = await findPerfil(db, data);
+  const payload = {
+    nome_perfil: data.nome_perfil,
+    categoria: data.categoria || 'Horista',
+    regime: data.regime || 'Normal',
+    uf_referencia: data.uf_referencia || null,
+    id_data_base: data.id_data_base || null,
+    descricao: data.descricao || null,
+    observacoes: data.observacoes || null,
+    situacao: data.situacao || 'Ativo',
+    fonte_referencia: normFonte(data.fonte_referencia || 'SINAPI'),
+    vigencia: data.vigencia || null,
+    vigencia_inicio: data.vigencia_inicio || null,
+    vigencia_fim: data.vigencia_fim || null,
+    encargo_original_percentual: data.encargo_original_percentual,
+  };
+  const perfil = perfilExistente
+    ? await updatePerfil(db, perfilExistente.id_perfil, payload)
+    : await createPerfil(db, payload);
+  return replacePerfilTotais(db, perfil.id_perfil, totais);
+}
+
+async function replaceProfissionais(db, table, idPerfil, profissionais = []) {
+  await ensureSchema(db);
+  if (!['encargos_sicro_profissionais', 'encargos_goinfra_profissionais'].includes(table)) {
+    throw new Error('Tabela analitica de encargos invalida.');
+  }
+  await run(db, `DELETE FROM ${table} WHERE id_perfil = ?`, [idPerfil]);
+  let inseridos = 0;
+  for (const p of profissionais) {
+    const codigo = String(p.codigo_profissional || '').trim();
+    const descricao = String(p.descricao || '').trim();
+    if (!codigo || !descricao) continue;
+    await run(db, `
+      INSERT INTO ${table}
+        (id_perfil, codigo_profissional, descricao, unidade, total_grupo_a, total_grupo_b,
+         total_grupo_c, total_grupo_d, encargo_total, parcelas_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      idPerfil,
+      codigo,
+      descricao,
+      p.unidade || null,
+      toNum(p.total_grupo_a),
+      toNum(p.total_grupo_b),
+      toNum(p.total_grupo_c),
+      toNum(p.total_grupo_d),
+      toNum(p.encargo_total),
+      JSON.stringify(p.parcelas || []),
+    ]);
+    inseridos += 1;
+  }
+  return inseridos;
+}
+
+async function syncEncargosInsumosMaoObra(db, fonte, uf, profissionais = []) {
+  await ensureSchema(db);
+  const fonteNorm = normFonte(fonte);
+  void uf;
+  let atualizados = 0;
+  for (const p of profissionais) {
+    const codigo = String(p.codigo_profissional || '').trim();
+    if (!codigo) continue;
+    const result = await run(db, `
+      UPDATE insumos
+      SET encargos_sociais_percentual = ?
+      WHERE UPPER(COALESCE(origem, '')) = ?
+        AND codigo_insumo = ?
+        AND LOWER(COALESCE(tipo_insumo, '')) LIKE '%obra%'`, [
+      toNum(p.encargo_total),
+      fonteNorm,
+      codigo,
+    ]);
+    atualizados += result.changes || 0;
+  }
+  return atualizados;
+}
+
 async function listProfissionais(db, table, query = {}) {
   await ensureSchema(db);
   const where = ['1=1'];
@@ -683,6 +808,10 @@ module.exports = {
   createItem,
   updateItem,
   deleteItem,
+  findPerfil,
+  upsertPerfilComTotais,
+  replaceProfissionais,
+  syncEncargosInsumosMaoObra,
   listProfissionais,
   aplicarAoOrcamento,
 };

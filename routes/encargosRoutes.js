@@ -1,6 +1,7 @@
 const express = require('express');
 const service = require('../services/encargosService');
 const repository = require('../repositories/encargosRepository');
+const { parseMultipartAll } = require('../utils/spreadsheetUpload');
 
 module.exports = function(db) {
   const router = express.Router();
@@ -59,11 +60,18 @@ module.exports = function(db) {
     return rows.join('');
   }
 
-  function importNotPorted(kind) {
-    return (_req, res) => res.status(501).json({
-      erro: `Importacao ${kind} ainda nao portada para o backend Node SaaS.`,
-      detalhe: 'A rota foi isolada no modulo Node de encargos e sera migrada na etapa de importadores.',
-    });
+  const uploadRaw = express.raw({
+    type: req => String(req.headers['content-type'] || '').includes('multipart/form-data'),
+    limit: '100mb',
+  });
+
+  function multipart(req) {
+    if (!Buffer.isBuffer(req.body)) {
+      const err = new Error('Envie os arquivos usando multipart/form-data.');
+      err.status = 400;
+      throw err;
+    }
+    return parseMultipartAll(req.body, req.headers['content-type']);
   }
 
   router.get('/perfis', asyncHandler(async (req, res) => {
@@ -139,12 +147,49 @@ module.exports = function(db) {
     res.json(await service.deleteItem(db, req.params.id));
   }));
 
-  router.post('/importar-referenciais', importNotPorted('referencial'));
-  router.post('/importar-seinfra', importNotPorted('SEINFRA/CE por PDF'));
-  router.post('/importar-sudecap', importNotPorted('SUDECAP/BH por PDF'));
-  router.post('/importar-sinapi', importNotPorted('SINAPI por PDF'));
-  router.post('/importar-sicro', importNotPorted('SICRO por XLSX'));
-  router.post('/importar-goinfra', importNotPorted('GOINFRA por XLSX'));
+  router.post('/importar-referenciais', asyncHandler(async (req, res) => {
+    res.json(await service.importarUniforme(db, 'SINAPI', req.body || {}));
+  }));
+
+  router.post('/importar-seinfra', uploadRaw, asyncHandler(async (req, res) => {
+    const { fields, file } = multipart(req);
+    if (!file) {
+      const err = new Error('Selecione o PDF de encargos sociais SEINFRA/CE.');
+      err.status = 400;
+      throw err;
+    }
+    res.json(await service.importarUniforme(db, 'SEINFRA', fields));
+  }));
+
+  router.post('/importar-sudecap', uploadRaw, asyncHandler(async (req, res) => {
+    const { fields, file } = multipart(req);
+    if (!file) {
+      const err = new Error('Selecione o PDF de encargos sociais SUDECAP/BH.');
+      err.status = 400;
+      throw err;
+    }
+    res.json(await service.importarUniforme(db, 'SUDECAP', fields));
+  }));
+
+  router.post('/importar-sinapi', uploadRaw, asyncHandler(async (req, res) => {
+    const { fields, file } = multipart(req);
+    if (!file) {
+      const err = new Error('Selecione o PDF de encargos sociais SINAPI.');
+      err.status = 400;
+      throw err;
+    }
+    res.json(await service.importarUniforme(db, 'SINAPI', fields));
+  }));
+
+  router.post('/importar-sicro', uploadRaw, asyncHandler(async (req, res) => {
+    const { fields, files } = multipart(req);
+    res.json(await service.importarAnalitico(db, 'SICRO', files, fields));
+  }));
+
+  router.post('/importar-goinfra', uploadRaw, asyncHandler(async (req, res) => {
+    const { fields, files } = multipart(req);
+    res.json(await service.importarAnalitico(db, 'GOINFRA', files, { ...fields, uf: fields.uf || 'GO' }));
+  }));
 
   return router;
 };

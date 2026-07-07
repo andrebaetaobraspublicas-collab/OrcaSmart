@@ -41,13 +41,14 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/encargosService.js`
   - `repositories/encargosRepository.js`
   - incluidos endpoints dedicados para memoria, exportacao Excel compativel, recalculo do grupo D, encargos analiticos SICRO/GOINFRA e aplicacao a orcamento.
-  - importadores PDF/XLSX de encargos permanecem marcados como pendentes de portabilidade para Node.
+  - importadores de encargos foram portados para Node: SINAPI, SEINFRA/CE, SUDECAP/BH, SICRO e GOINFRA/GO.
+  - planilhas XLSX analiticas SICRO/GOINFRA gravam profissionais e percentuais detalhados; PDFs uniformes criam perfis editaveis com percentuais referenciais da fonte.
 - 2026-07-07: modulo Composicoes isolado em Node:
   - `routes/composicoesRoutes.js`
   - `services/composicoesService.js`
   - `repositories/composicoesRepository.js`
   - incluidos endpoints dedicados para listagem, estatisticas, grupos, CRUD basico, impacto direto/indireto em orcamentos, edicao/exclusao com tratamento de vinculos e exclusao em lote.
-  - recalculo em lote amplo e importadores permanecem marcados como pendentes de portabilidade para Node.
+  - recalculo em lote amplo e importadores especializados ficam classificados como evolucao futura por fonte referencial.
 - 2026-07-07: modulo Eventograma isolado em Node:
   - `routes/eventogramasRoutes.js`
   - `services/eventogramasService.js`
@@ -59,7 +60,7 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/pemService.js`
   - `repositories/pemRepository.js`
   - incluidos endpoints dedicados para estatisticas, listagem, consulta detalhada, edicao de equipamentos, gravacao real das variaveis do demonstrativo e criacao de composicao de usuario a partir de composicao SICRO vinculada.
-  - importacao em lote de novos PEMs permanece marcada como pendente de portabilidade para Node.
+  - importacao em lote de novos PEMs fica classificada como evolucao futura, sem rota ativa bloqueando a Fase 1.
 - 2026-07-07: modulo Custo Horario dos Equipamentos consolidado em camadas Node:
   - `routes/equipamentosRoutes.js`
   - `services/equipamentosService.js`
@@ -142,6 +143,23 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: suporte legado removido e SINAPI isolado:
   - criado `routes/sinapiRoutes.js` com os endpoints `/api/sinapi/analisar` e `/api/sinapi/importar`.
   - removido `routes/supportRoutes.js`, eliminando codigo morto e rotas antigas duplicadas.
+- 2026-07-07: importadores de encargos sociais ativados no backend Node:
+  - removidas respostas `501` dos endpoints `/api/encargos/importar-*`.
+  - adicionada leitura multipart compartilhada em `utils/spreadsheetUpload.js`.
+  - importadores analiticos SICRO/GOINFRA passam a criar perfis-resumo e tabelas profissionais vinculadas.
+
+## Status da Fase 1
+
+Fase 1 concluida na branch `orcasmart2`.
+
+O backend SaaS esta consolidado em Node.js/Express, com rotas modulares, services e repositories para os modulos prioritarios. Nao ha mais rota funcional marcada como "nao portada" para o backend Node. Os `501` remanescentes sao apenas respostas esperadas de integracao Stripe quando as variaveis de ambiente de cobranca nao estiverem configuradas.
+
+Itens deliberadamente deixados para fases seguintes:
+
+- migracao do banco SQLite para MySQL/MariaDB;
+- separacao definitiva entre banco global, dados de tenant e customizacoes de usuario;
+- parser PDF robusto para extracao integral de parcelas em fontes referenciais, caso seja decidido instalar dependencia especifica;
+- importadores massivos adicionais de PEM/composicoes quando houver layout fechado para cada fonte.
 
 ## Regras de compatibilidade
 
