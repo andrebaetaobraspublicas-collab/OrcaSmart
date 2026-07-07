@@ -113,6 +113,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/comprasGovService.js`
   - `repositories/comprasGovRepository.js`
   - a rota passou a delegar consulta externa, normalizacao, validacoes e importacao de insumos para service/repository.
+- 2026-07-07: modulo Pesquisa de Mercado consolidado em camadas Node:
+  - `routes/pesquisaMercadoRoutes.js`
+  - `services/pesquisaMercadoService.js`
+  - `repositories/pesquisaMercadoRepository.js`
+  - chamadas de IA, fallback manual, parametros fiscais e importacao de cotacoes foram movidos da rota para service/repository.
 
 ## Regras de compatibilidade
 
