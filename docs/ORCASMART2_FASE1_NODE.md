@@ -66,6 +66,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/equipamentosRepository.js`
   - mantidos endpoints de familias, CRUD, calculo CHP/CHI, impacto, aplicacao de custo e historico de precos.
   - regras de calculo e consultas de impacto foram movidas da rota para repository/service.
+- 2026-07-07: modulo BDI consolidado em camadas Node:
+  - `routes/bdiRoutes.js`
+  - `services/bdiService.js`
+  - `repositories/bdiRepository.js`
+  - mantidos endpoints de perfis, componentes, duplicacao e memoria de calculo.
+  - regras de CPRB, IVAeq, Simples Nacional e formulas por ano foram movidas da rota para repository/service.
 
 ## Regras de compatibilidade
 
