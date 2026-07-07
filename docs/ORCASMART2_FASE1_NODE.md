@@ -78,6 +78,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/insumosRepository.js`
   - mantidos endpoints de grupos, estatisticas, CRUD, precos, impacto e exclusao em lote.
   - regras de preservacao historica por criacao de revisao, inativacao de insumo vinculado e calculo de preco sem tributos foram movidas para repository/service.
+- 2026-07-07: modulo Obras consolidado em camadas Node:
+  - `routes/obrasRoutes.js`
+  - `services/obrasService.js`
+  - `repositories/obrasRepository.js`
+  - mantidos endpoints de listagem, CRUD, duplicacao e consulta de orcamentos vinculados.
 
 ## Regras de compatibilidade
 
