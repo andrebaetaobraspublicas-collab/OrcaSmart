@@ -92,6 +92,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `routes/datasBaseRoutes.js`, `services/datasBaseService.js`, `repositories/datasBaseRepository.js`
   - `routes/unidadesRoutes.js`, `services/unidadesService.js`, `repositories/unidadesRepository.js`
   - mantidos endpoints de listagem e CRUD, com validacoes e bloqueio de exclusao de datas-base vinculadas a orcamentos.
+- 2026-07-07: primeira fatia do modulo Orcamentos consolidada em camadas Node:
+  - `services/orcamentosService.js`
+  - `repositories/orcamentosRepository.js`
+  - consolidados listagem, consulta, criacao, edicao, exclusao, duplicacao, aplicacao de BDI e atualizacao de totais.
+  - itens do orcamento sintetico, importacao Excel e curvas ABC permanecem no arquivo de rota para fatiamento posterior.
 
 ## Regras de compatibilidade
 
