@@ -1,0 +1,57 @@
+name: Deploy Hostinger - OrcaSmart2 Teste
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-orcasmart2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "orcasmart2" ]; then
+            echo "Este workflow de homologacao deve ser executado somente pela branch orcasmart2."
+            echo "Branch recebida: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Validar diretorio de homologacao
+        run: |
+          if [ -z "${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}" ]; then
+            echo "Configure a secret HOSTINGER_ORCASMART2_TARGET_DIR antes de executar o deploy de homologacao."
+            exit 1
+          fi
+          if [ "${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}" = "${{ secrets.HOSTINGER_TARGET_DIR }}" ]; then
+            echo "HOSTINGER_ORCASMART2_TARGET_DIR nao pode ser igual ao diretorio de producao HOSTINGER_TARGET_DIR."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: orcasmart2
+
+      - name: Signal Node restart
+        run: |
+          mkdir -p tmp
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > tmp/restart.txt
+
+      - name: Deploy via FTP para homologacao
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOSTINGER_FTP_SERVER }}
+          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: ${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/__pycache__/**
+            **/*.pyc
+            **/.env
+            **/*.db
+            **/*.sqlite
+            **/*.sqlite3
+            **/tenant_dbs/**
+            **/exports/**
