@@ -129,6 +129,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: rotas historicas de grupos e precos movidas para compatibilidade:
   - criado `routes/compatRoutes.js` para manter `/api/grupos-insumos`, `/api/precos-insumos` e `/api/precos-equipamentos`.
   - removidos handlers equivalentes do `server.js`, delegando a operacao aos services de insumos e equipamentos.
+- 2026-07-07: dashboard consolidado em camadas Node:
+  - `routes/dashboardRoutes.js`
+  - `services/dashboardService.js`
+  - `repositories/dashboardRepository.js`
+  - removida consulta SQL direta do `server.js`, mantendo o mesmo contrato JSON da tela inicial.
 
 ## Regras de compatibilidade
 

@@ -456,42 +456,13 @@ app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy));
 app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy));
 app.use('/api/eventogramas', require('./routes/eventogramasRoutes')(tenantDbProxy));
 app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy));
+app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
-
-app.get('/api/dashboard', (req, res) => {
-  const queries = {
-    totalObras: 'SELECT COUNT(*) AS total FROM obras',
-    totalOrcamentos: 'SELECT COUNT(*) AS total FROM orcamentos',
-    totalInsumos: 'SELECT COUNT(*) AS total FROM insumos',
-    totalComposicoes: 'SELECT COUNT(*) AS total FROM composicoes',
-    totalCompSINAPI: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SINAPI'",
-    totalCompSICRO: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SICRO'",
-    totalCompUsuario: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'USUARIO'",
-    totalEventogramas: 'SELECT COUNT(*) AS total FROM eventogramas',
-    totalUnidades: 'SELECT COUNT(*) AS total FROM unidades_medida',
-    totalFontes: 'SELECT COUNT(*) AS total FROM fontes_referencia',
-    ultimosOrcamentos: `
-      SELECT o.id_orcamento, o.nome_orcamento, o.status, o.data_criacao,
-             o.valor_total, ob.nome_obra
-      FROM orcamentos o
-      LEFT JOIN obras ob ON ob.id_obra = o.id_obra
-      ORDER BY o.data_criacao DESC LIMIT 5`,
-  };
-  const result = {};
-  let pending = Object.keys(queries).length;
-  for (const [key, sql] of Object.entries(queries)) {
-    const method = key === 'ultimosOrcamentos' ? 'all' : 'get';
-    tenantDbProxy[method](sql, [], (err, rows) => {
-      result[key] = err ? null : (method === 'all' ? rows : rows.total);
-      if (--pending === 0) res.json(result);
-    });
-  }
-});
 
 app.get('/api/admin/users', requireAdmin, async (_req, res) => {
   const users = await allMaster(`
