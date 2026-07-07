@@ -1,0 +1,68 @@
+const express = require('express');
+const service = require('../services/eventogramasService');
+
+module.exports = function eventogramasRoutes(db) {
+  const router = express.Router();
+
+  const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
+    res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
+  });
+
+  router.get('/', asyncHandler(async (req, res) => {
+    res.json(await service.listEventogramas(db, req.query || {}));
+  }));
+
+  router.post('/', asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createEventograma(db, req.body || {}));
+  }));
+
+  router.get('/:id', asyncHandler(async (req, res) => {
+    res.json(await service.getEventograma(db, req.params.id));
+  }));
+
+  router.post('/:id/gerar', asyncHandler(async (req, res) => {
+    res.json(await service.gerar(db, req.params.id, req.body || {}));
+  }));
+
+  router.get('/:id/validar', asyncHandler(async (req, res) => {
+    res.json(await service.validar(db, req.params.id));
+  }));
+
+  router.post('/:id/eventos', asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createEvento(db, req.params.id, req.body || {}));
+  }));
+
+  router.put('/:eid/eventos/:id', asyncHandler(async (req, res) => {
+    res.json(await service.updateEvento(db, req.params.eid, req.params.id, req.body || {}));
+  }));
+
+  router.delete('/:eid/eventos/:id', asyncHandler(async (req, res) => {
+    res.json(await service.deleteEvento(db, req.params.eid, req.params.id));
+  }));
+
+  router.post('/:eid/eventos/:id/itens', asyncHandler(async (req, res) => {
+    res.json(await service.addItensEvento(db, req.params.id, req.body || {}));
+  }));
+
+  router.delete('/:eid/eventos/:id/itens/:item_id', asyncHandler(async (req, res) => {
+    res.json(await service.removeItemEvento(db, req.params.id, req.params.item_id));
+  }));
+
+  router.post('/:eid/eventos/:id/itens/mover', asyncHandler(async (req, res) => {
+    res.json(await service.moveItensEvento(db, req.params.id, req.body || {}));
+  }));
+
+  router.post('/:id/reordenar', asyncHandler(async (req, res) => {
+    res.json(await service.reordenarEventos(db, req.params.id, Array.isArray(req.body) ? req.body : []));
+  }));
+
+  router.get('/:id/exportar/json', asyncHandler(async (req, res) => {
+    res.json(await service.exportJson(db, req.params.id));
+  }));
+
+  router.get('/:id/exportar/excel', asyncHandler(async (_req, res) => {
+    res.status(501).json({ erro: 'Exportacao Excel ainda nao portada para o servidor Node SaaS.' });
+  }));
+
+  return router;
+};

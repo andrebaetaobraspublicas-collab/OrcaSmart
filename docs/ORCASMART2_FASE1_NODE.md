@@ -48,6 +48,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/composicoesRepository.js`
   - incluidos endpoints dedicados para listagem, estatisticas, grupos, CRUD basico, impacto direto/indireto em orcamentos, edicao/exclusao com tratamento de vinculos e exclusao em lote.
   - recalculo em lote amplo e importadores permanecem marcados como pendentes de portabilidade para Node.
+- 2026-07-07: modulo Eventograma isolado em Node:
+  - `routes/eventogramasRoutes.js`
+  - `services/eventogramasService.js`
+  - `repositories/eventogramasRepository.js`
+  - incluidos endpoints dedicados para listagem, criacao, consulta detalhada, geracao automatica, validacao, eventos, vinculacao/movimentacao de itens e exportacao JSON.
+  - exportacao Excel permanece marcada como pendente de portabilidade para Node.
 
 ## Regras de compatibilidade
 
