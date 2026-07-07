@@ -60,8 +60,11 @@ module.exports = function eventogramasRoutes(db) {
     res.json(await service.exportJson(db, req.params.id));
   }));
 
-  router.get('/:id/exportar/excel', asyncHandler(async (_req, res) => {
-    res.status(501).json({ erro: 'Exportacao Excel ainda nao portada para o servidor Node SaaS.' });
+  router.get('/:id/exportar/excel', asyncHandler(async (req, res) => {
+    const file = await service.exportExcel(db, req.params.id);
+    res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.content);
   }));
 
   return router;

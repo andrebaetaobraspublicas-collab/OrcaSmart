@@ -53,7 +53,7 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/eventogramasService.js`
   - `repositories/eventogramasRepository.js`
   - incluidos endpoints dedicados para listagem, criacao, consulta detalhada, geracao automatica, validacao, eventos, vinculacao/movimentacao de itens e exportacao JSON.
-  - exportacao Excel permanece marcada como pendente de portabilidade para Node.
+  - exportacao Excel portada para Node em formato `.xls` compativel com Excel.
 - 2026-07-07: modulo Producoes Horarias/PEM isolado em Node:
   - `routes/pemRoutes.js`
   - `services/pemService.js`
