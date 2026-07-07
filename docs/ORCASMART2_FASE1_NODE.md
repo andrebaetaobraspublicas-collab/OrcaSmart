@@ -106,6 +106,9 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: quarta fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidada a importacao Excel do orcamento sintetico, incluindo leitura multipart, parser XLSX sem dependencia externa, normalizacao de secoes/itens e gravacao no repositorio.
   - as rotas antigas do modulo ainda permanecem no arquivo como compatibilidade temporaria, mas os endpoints principais ja respondem pelas camadas service/repository.
+- 2026-07-07: limpeza final do arquivo de rotas do modulo Orcamentos:
+  - removidos os handlers legados duplicados de `routes/orcamentosRoutes.js`.
+  - o arquivo passou a conter apenas a camada HTTP fina, delegando regras para `services/orcamentosService.js` e persistencia para `repositories/orcamentosRepository.js`.
 
 ## Regras de compatibilidade
 
