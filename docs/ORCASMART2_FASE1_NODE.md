@@ -54,6 +54,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/eventogramasRepository.js`
   - incluidos endpoints dedicados para listagem, criacao, consulta detalhada, geracao automatica, validacao, eventos, vinculacao/movimentacao de itens e exportacao JSON.
   - exportacao Excel permanece marcada como pendente de portabilidade para Node.
+- 2026-07-07: modulo Producoes Horarias/PEM isolado em Node:
+  - `routes/pemRoutes.js`
+  - `services/pemService.js`
+  - `repositories/pemRepository.js`
+  - incluidos endpoints dedicados para estatisticas, listagem, consulta detalhada, edicao de equipamentos, gravacao real das variaveis do demonstrativo e criacao de composicao de usuario a partir de composicao SICRO vinculada.
+  - importacao em lote de novos PEMs permanece marcada como pendente de portabilidade para Node.
 
 ## Regras de compatibilidade
 
