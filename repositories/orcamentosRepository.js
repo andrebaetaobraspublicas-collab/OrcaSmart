@@ -21,7 +21,13 @@ function run(db, sql, params = []) {
 
 function toNum(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
-  const n = Number(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  let s = String(value).trim();
+  if (!s) return fallback;
+  s = s.replace(/\s/g, '').replace(/R\$/gi, '').replace(/%/g, '');
+  if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+  else s = s.replace(',', '.');
+  const n = Number(s);
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -142,6 +148,134 @@ async function updateTotais(db, id, data = {}) {
   );
 }
 
+async function ensureBdiLinha(db) {
+  const cols = await all(db, 'PRAGMA table_info(orcamento_sintetico)');
+  const has = cols.some(c => c.name === 'bdi_percentual_linha');
+  if (!has) await run(db, 'ALTER TABLE orcamento_sintetico ADD COLUMN bdi_percentual_linha REAL');
+}
+
+async function listSintetico(db, idOrcamento) {
+  await ensureBdiLinha(db);
+  return all(db, `
+    SELECT *
+    FROM orcamento_sintetico
+    WHERE id_orcamento = ?
+    ORDER BY ordem, id_item`, [idOrcamento]);
+}
+
+async function maxOrdemSintetico(db, idOrcamento) {
+  const row = await one(db, 'SELECT COALESCE(MAX(ordem),0) AS max_ord FROM orcamento_sintetico WHERE id_orcamento=?', [idOrcamento]);
+  return row?.max_ord || 0;
+}
+
+function sinteticoInsertParams(idOrcamento, data = {}, ordem) {
+  return [
+    idOrcamento,
+    data.item_num || '',
+    data.tipo_linha || 'item',
+    toNum(data.profundidade, 1),
+    data.ordem || ordem,
+    data.tipo_item || null,
+    data.id_composicao || null,
+    data.id_insumo || null,
+    data.codigo || '',
+    data.fonte || '',
+    data.descricao || '',
+    data.unidade || '',
+    toNum(data.quantidade, 0),
+    toNum(data.custo_unitario, 0),
+    data.bdi_percentual_linha ?? null,
+  ];
+}
+
+async function createSinteticoItem(db, idOrcamento, data = {}) {
+  await ensureBdiLinha(db);
+  const payload = { ...data };
+  if (!String(payload.descricao || '').trim() && payload.tipo_linha === 'item') payload.descricao = 'Novo item';
+  const maxOrd = await maxOrdemSintetico(db, idOrcamento);
+  const result = await run(db, `
+    INSERT INTO orcamento_sintetico
+      (id_orcamento, item_num, tipo_linha, profundidade, ordem, tipo_item,
+       id_composicao, id_insumo, codigo, fonte, descricao, unidade, quantidade,
+       custo_unitario, bdi_percentual_linha)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, sinteticoInsertParams(idOrcamento, payload, maxOrd + 1));
+  return one(db, 'SELECT * FROM orcamento_sintetico WHERE id_item=?', [result.lastID]);
+}
+
+async function updateSinteticoItem(db, idItem, data = {}) {
+  await ensureBdiLinha(db);
+  const campos = [
+    'item_num',
+    'tipo_linha',
+    'profundidade',
+    'ordem',
+    'tipo_item',
+    'id_composicao',
+    'id_insumo',
+    'codigo',
+    'fonte',
+    'descricao',
+    'unidade',
+    'quantidade',
+    'custo_unitario',
+    'bdi_percentual_linha',
+  ];
+  const sets = [];
+  const vals = [];
+  for (const campo of campos) {
+    if (Object.prototype.hasOwnProperty.call(data, campo)) {
+      sets.push(`${campo}=?`);
+      vals.push(data[campo]);
+    }
+  }
+  if (!sets.length) return { noFields: true };
+  await run(db, `UPDATE orcamento_sintetico SET ${sets.join(',')} WHERE id_item=?`, [...vals, idItem]);
+  return one(db, 'SELECT * FROM orcamento_sintetico WHERE id_item=?', [idItem]);
+}
+
+async function deleteSinteticoItem(db, idItem) {
+  const row = await one(db, 'SELECT * FROM orcamento_sintetico WHERE id_item=?', [idItem]);
+  if (!row) return null;
+  if (row.tipo_linha === 'section' && row.item_num) {
+    await run(
+      db,
+      'DELETE FROM orcamento_sintetico WHERE id_orcamento=? AND (id_item=? OR item_num LIKE ?)',
+      [row.id_orcamento, idItem, `${row.item_num}.%`],
+    );
+  } else {
+    await run(db, 'DELETE FROM orcamento_sintetico WHERE id_item=?', [idItem]);
+  }
+  return row;
+}
+
+async function reordenarSintetico(db, idOrcamento, items = []) {
+  for (const item of items) {
+    await run(
+      db,
+      'UPDATE orcamento_sintetico SET ordem=?, item_num=?, profundidade=? WHERE id_item=? AND id_orcamento=?',
+      [item.ordem, item.item_num, item.profundidade, item.id_item, idOrcamento],
+    );
+  }
+}
+
+async function restoreSintetico(db, idOrcamento, data = {}) {
+  await ensureBdiLinha(db);
+  let items = data.itens || [];
+  if (items && !Array.isArray(items) && Array.isArray(items.value)) items = items.value;
+  await run(db, 'DELETE FROM orcamento_sintetico WHERE id_orcamento=?', [idOrcamento]);
+  for (let idx = 0; idx < items.length; idx += 1) {
+    const item = items[idx] || {};
+    await run(db, `
+      INSERT INTO orcamento_sintetico
+        (id_orcamento, item_num, tipo_linha, profundidade, ordem, tipo_item,
+         id_composicao, id_insumo, codigo, fonte, descricao, unidade, quantidade,
+         custo_unitario, bdi_percentual_linha)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, sinteticoInsertParams(idOrcamento, item, idx + 1));
+  }
+  await updateBdi(db, idOrcamento, data);
+  return listSintetico(db, idOrcamento);
+}
+
 module.exports = {
   toNum,
   selectBase,
@@ -154,4 +288,11 @@ module.exports = {
   duplicarOrcamento,
   updateBdi,
   updateTotais,
+  ensureBdiLinha,
+  listSintetico,
+  createSinteticoItem,
+  updateSinteticoItem,
+  deleteSinteticoItem,
+  reordenarSintetico,
+  restoreSintetico,
 };

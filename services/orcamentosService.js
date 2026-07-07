@@ -57,6 +57,38 @@ async function updateTotais(db, id, data) {
   return { mensagem: 'Totais atualizados.' };
 }
 
+async function createSinteticoItem(db, idOrcamento, data = {}) {
+  return repo.createSinteticoItem(db, idOrcamento, data);
+}
+
+async function updateSinteticoItem(db, idItem, data = {}) {
+  const row = await repo.updateSinteticoItem(db, idItem, data);
+  if (row?.noFields) throw httpError(400, 'Nenhum campo para atualizar.');
+  if (!row) throw httpError(404, 'Item não encontrado.');
+  return row;
+}
+
+async function deleteSinteticoItem(db, idItem) {
+  const row = await repo.deleteSinteticoItem(db, idItem);
+  if (!row) throw httpError(404, 'Item não encontrado.');
+  return { mensagem: 'Item excluído.' };
+}
+
+async function reordenarSintetico(db, idOrcamento, items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return { mensagem: 'Reordenado.' };
+  await repo.reordenarSintetico(db, idOrcamento, rows);
+  return { mensagem: 'Reordenado.' };
+}
+
+async function restoreSintetico(db, idOrcamento, data = {}) {
+  let items = data.itens || [];
+  if (items && !Array.isArray(items) && Array.isArray(items.value)) items = items.value;
+  if (!Array.isArray(items)) throw httpError(400, 'Lista de itens inválida.');
+  const rows = await repo.restoreSintetico(db, idOrcamento, data);
+  return { mensagem: 'Orçamento restaurado.', itens: rows || [] };
+}
+
 module.exports = {
   listOrcamentos: repo.listOrcamentos,
   getOrcamento,
@@ -66,4 +98,10 @@ module.exports = {
   duplicarOrcamento,
   updateBdi,
   updateTotais,
+  listSintetico: repo.listSintetico,
+  createSinteticoItem,
+  updateSinteticoItem,
+  deleteSinteticoItem,
+  reordenarSintetico,
+  restoreSintetico,
 };

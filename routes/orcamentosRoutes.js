@@ -320,6 +320,30 @@ module.exports = function(db) {
     res.status(201).json(await orcamentosService.duplicarOrcamento(db, req.params.id));
   }));
 
+  router.get('/:id/sintetico', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.listSintetico(db, req.params.id));
+  }));
+
+  router.post('/:id/sintetico', asyncHandler(async (req, res) => {
+    res.status(201).json(await orcamentosService.createSinteticoItem(db, req.params.id, req.body || {}));
+  }));
+
+  router.put('/sintetico/:id_item', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.updateSinteticoItem(db, req.params.id_item, req.body || {}));
+  }));
+
+  router.delete('/sintetico/:id_item', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.deleteSinteticoItem(db, req.params.id_item));
+  }));
+
+  router.post('/:id/sintetico/reordenar', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.reordenarSintetico(db, req.params.id, req.body));
+  }));
+
+  router.put('/:id/sintetico/restaurar', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.restoreSintetico(db, req.params.id, req.body || {}));
+  }));
+
   // GET /api/orcamentos
   router.get('/', (req, res) => {
     const { id_obra, status, q } = req.query;
