@@ -60,6 +60,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/pemRepository.js`
   - incluidos endpoints dedicados para estatisticas, listagem, consulta detalhada, edicao de equipamentos, gravacao real das variaveis do demonstrativo e criacao de composicao de usuario a partir de composicao SICRO vinculada.
   - importacao em lote de novos PEMs permanece marcada como pendente de portabilidade para Node.
+- 2026-07-07: modulo Custo Horario dos Equipamentos consolidado em camadas Node:
+  - `routes/equipamentosRoutes.js`
+  - `services/equipamentosService.js`
+  - `repositories/equipamentosRepository.js`
+  - mantidos endpoints de familias, CRUD, calculo CHP/CHI, impacto, aplicacao de custo e historico de precos.
+  - regras de calculo e consultas de impacto foram movidas da rota para repository/service.
 
 ## Regras de compatibilidade
 
