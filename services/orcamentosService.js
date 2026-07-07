@@ -89,6 +89,18 @@ async function restoreSintetico(db, idOrcamento, data = {}) {
   return { mensagem: 'Orçamento restaurado.', itens: rows || [] };
 }
 
+async function curvaAbcServicos(db, idOrcamento) {
+  const result = await repo.curvaAbcServicos(db, idOrcamento);
+  if (!result) throw httpError(404, 'Orçamento não encontrado.');
+  return result;
+}
+
+async function curvaAbcInsumos(db, idOrcamento) {
+  const result = await repo.curvaAbcInsumos(db, idOrcamento);
+  if (!result) throw httpError(404, 'Orçamento não encontrado.');
+  return result;
+}
+
 module.exports = {
   listOrcamentos: repo.listOrcamentos,
   getOrcamento,
@@ -104,4 +116,7 @@ module.exports = {
   deleteSinteticoItem,
   reordenarSintetico,
   restoreSintetico,
+  recalcularCustos: repo.recalcularCustos,
+  curvaAbcServicos,
+  curvaAbcInsumos,
 };

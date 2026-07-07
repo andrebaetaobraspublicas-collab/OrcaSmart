@@ -344,6 +344,18 @@ module.exports = function(db) {
     res.json(await orcamentosService.restoreSintetico(db, req.params.id, req.body || {}));
   }));
 
+  router.post('/:id/recalcular-custos', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.recalcularCustos(db, req.params.id));
+  }));
+
+  router.get('/:id/curva-abc-servicos', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.curvaAbcServicos(db, req.params.id));
+  }));
+
+  router.get('/:id/curva-abc-insumos', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.curvaAbcInsumos(db, req.params.id));
+  }));
+
   // GET /api/orcamentos
   router.get('/', (req, res) => {
     const { id_obra, status, q } = req.query;

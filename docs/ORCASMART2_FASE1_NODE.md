@@ -100,6 +100,9 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: segunda fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidadas listagem, inclusao, edicao, exclusao, reordenacao e restauracao dos itens do orcamento sintetico.
   - importacao Excel, recalculo de custos e curvas ABC permanecem no arquivo de rota para fatiamento posterior.
+- 2026-07-07: terceira fatia do modulo Orcamentos consolidada em camadas Node:
+  - consolidados recalculo de custos, curva ABC de servicos e curva ABC de insumos.
+  - importacao Excel permanece no arquivo de rota para fatiamento posterior.
 
 ## Regras de compatibilidade
 

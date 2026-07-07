@@ -276,6 +276,265 @@ async function restoreSintetico(db, idOrcamento, data = {}) {
   return listSintetico(db, idOrcamento);
 }
 
+async function recalcularCustos(db, idOrcamento) {
+  const sqlCustoComp = `
+    SELECT COALESCE(SUM(
+      COALESCE(ic.coeficiente,0) * COALESCE(
+        CASE WHEN UPPER(COALESCE(ic.tipo_item,'')) IN ('COMPOSICAO','COMPOSIÇÃO') THEN (
+          SELECT c.custo_unitario FROM composicoes c
+          WHERE c.codigo = ic.codigo_item
+             OR c.codigo = 'SINAPI.' || ic.codigo_item
+             OR c.codigo = 'SICRO.' || ic.codigo_item
+          ORDER BY c.id_composicao DESC
+          LIMIT 1
+        ) END,
+        (
+          SELECT COALESCE(
+            NULLIF(p.preco_desonerado,0),
+            NULLIF(p.preco_nao_desonerado,0),
+            NULLIF(p.preco_referencia,0),
+            0
+          )
+          FROM precos_insumos p
+          JOIN insumos i ON i.id_insumo = p.id_insumo
+          LEFT JOIN datas_base db2 ON db2.id_data_base = p.id_data_base
+          WHERE i.codigo_insumo = ic.codigo_item
+             OR i.codigo_insumo = REPLACE(ic.codigo_item,'SINAPI.','')
+             OR i.codigo_insumo = REPLACE(ic.codigo_item,'SICRO.','')
+          ORDER BY COALESCE(db2.ano,0) DESC, COALESCE(db2.mes,0) DESC, p.id_preco DESC
+          LIMIT 1
+        ),
+        ic.preco_unitario,
+        CASE WHEN COALESCE(ic.coeficiente,0) <> 0 THEN ic.custo_parcial / ic.coeficiente END,
+        0
+      )
+    ),0) AS custo_calc
+    FROM itens_composicao ic
+    WHERE ic.id_composicao = ?`;
+
+  const itens = await all(db, `
+    SELECT id_item, id_composicao, custo_unitario
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item' AND id_composicao IS NOT NULL`, [idOrcamento]);
+  let atualizados = 0;
+  for (const item of itens) {
+    const row = await one(db, sqlCustoComp, [item.id_composicao]);
+    const custo = Number(Number(row?.custo_calc || 0).toFixed(4));
+    if (Number.isFinite(custo) && custo > 0 && Math.abs(custo - toNum(item.custo_unitario, 0)) > 0.0001) {
+      await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [custo, item.id_item]);
+      atualizados += 1;
+    }
+  }
+  const rows = await listSintetico(db, idOrcamento);
+  return { atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] };
+}
+
+function abcClasse(acumulado) {
+  if (acumulado <= 50) return 'A';
+  if (acumulado <= 80) return 'B';
+  return 'C';
+}
+
+function abcResumo(itens, valueField) {
+  return ['A', 'B', 'C'].reduce((acc, cls) => {
+    const subset = itens.filter(it => it.classe === cls);
+    acc[cls] = {
+      qtd: subset.length,
+      valor: Number(subset.reduce((sum, it) => sum + toNum(it[valueField]), 0).toFixed(2)),
+      pct: Number(subset.reduce((sum, it) => sum + toNum(it.percentual), 0).toFixed(2)),
+    };
+    return acc;
+  }, {});
+}
+
+async function curvaAbcServicos(db, idOrcamento) {
+  await ensureBdiLinha(db);
+  const orcamento = await one(db, `
+    SELECT o.bdi_percentual, o.nome_orcamento, o.versao, o.status,
+           ob.nome_obra
+    FROM orcamentos o
+    LEFT JOIN obras ob ON o.id_obra = ob.id_obra
+    WHERE o.id_orcamento = ?`, [idOrcamento]);
+  if (!orcamento) return null;
+
+  const bdiPadrao = toNum(orcamento.bdi_percentual);
+  const rows = await all(db, `
+    SELECT id_item, item_num, descricao, unidade, quantidade,
+           custo_unitario, bdi_percentual_linha, codigo, fonte, tipo_item, id_composicao
+    FROM orcamento_sintetico
+    WHERE id_orcamento = ? AND tipo_linha = 'item'
+    ORDER BY ordem, id_item`, [idOrcamento]);
+
+  const grouped = new Map();
+  for (const row of rows) {
+    const codigo = String(row.codigo || '').trim();
+    const key = codigo.toUpperCase() || String(row.descricao || '').trim().toUpperCase();
+    if (!key) continue;
+    const qtd = toNum(row.quantidade);
+    const custo = toNum(row.custo_unitario);
+    const bdiLinha = row.bdi_percentual_linha === null || row.bdi_percentual_linha === undefined || row.bdi_percentual_linha === ''
+      ? bdiPadrao
+      : toNum(row.bdi_percentual_linha, bdiPadrao);
+    const precoComBdi = custo * (1 + bdiLinha / 100);
+    const valor = precoComBdi * qtd;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        codigo,
+        descricao: row.descricao || '',
+        unidade: row.unidade || '',
+        fonte: row.fonte || '',
+        tipo_item: row.tipo_item || '',
+        id_composicao: row.id_composicao,
+        soma_qtd: 0,
+        soma_custo_direto: 0,
+        soma_bdi_ponderado: 0,
+        valor_total: 0,
+        ocorrencias: [],
+      });
+    }
+    const item = grouped.get(key);
+    item.soma_qtd += qtd;
+    item.soma_custo_direto += custo * qtd;
+    item.soma_bdi_ponderado += bdiLinha * (custo * qtd);
+    item.valor_total += valor;
+    item.ocorrencias.push({
+      item_num: row.item_num || '',
+      quantidade: qtd,
+      custo_unitario: custo,
+      bdi_percentual: bdiLinha,
+      preco_bdi: Number(precoComBdi.toFixed(4)),
+      valor: Number(valor.toFixed(2)),
+    });
+  }
+
+  const itens = Array.from(grouped.values()).map(item => {
+    const custoMedio = item.soma_qtd > 0 ? item.soma_custo_direto / item.soma_qtd : 0;
+    const precoMedioBdi = item.soma_qtd > 0 ? item.valor_total / item.soma_qtd : 0;
+    const bdiMedio = item.soma_custo_direto > 0 ? item.soma_bdi_ponderado / item.soma_custo_direto : bdiPadrao;
+    return {
+      codigo: item.codigo,
+      descricao: item.descricao,
+      unidade: item.unidade,
+      fonte: item.fonte,
+      tipo_item: item.tipo_item,
+      id_composicao: item.id_composicao,
+      bdi_percentual: Number(bdiMedio.toFixed(4)),
+      quantidade: Number(item.soma_qtd.toFixed(4)),
+      custo_unitario: Number(custoMedio.toFixed(4)),
+      preco_unitario_com_bdi: Number(precoMedioBdi.toFixed(4)),
+      valor_total: Number(item.valor_total.toFixed(2)),
+      ocorrencias: item.ocorrencias,
+      consolidado: item.ocorrencias.length > 1,
+    };
+  }).sort((a, b) => b.valor_total - a.valor_total);
+
+  const total = itens.reduce((sum, it) => sum + it.valor_total, 0);
+  let acumulado = 0;
+  itens.forEach((it, idx) => {
+    const pct = total ? it.valor_total / total * 100 : 0;
+    acumulado += pct;
+    it.rank = idx + 1;
+    it.percentual = Number(pct.toFixed(4));
+    it.percentual_acumulado = Number(acumulado.toFixed(4));
+    it.classe = abcClasse(acumulado);
+  });
+
+  return {
+    orcamento,
+    itens,
+    total_geral: Number(total.toFixed(2)),
+    bdi_percentual: bdiPadrao,
+    resumo: abcResumo(itens, 'valor_total'),
+  };
+}
+
+async function curvaAbcInsumos(db, idOrcamento) {
+  const orcamento = await one(db, `
+    SELECT o.bdi_percentual, o.nome_orcamento, o.versao, o.status,
+           ob.nome_obra
+    FROM orcamentos o
+    LEFT JOIN obras ob ON o.id_obra = ob.id_obra
+    WHERE o.id_orcamento = ?`, [idOrcamento]);
+  if (!orcamento) return null;
+
+  const rows = await all(db, `
+    SELECT os.id_item, os.item_num, os.descricao AS servico_descricao, os.quantidade AS qtd_servico,
+           ic.codigo_item AS codigo, ic.descricao, ic.unidade, ic.coeficiente,
+           ic.tipo_item, ic.preco_unitario
+    FROM orcamento_sintetico os
+    JOIN itens_composicao ic ON ic.id_composicao = os.id_composicao
+    WHERE os.id_orcamento = ? AND os.tipo_linha = 'item' AND os.id_composicao IS NOT NULL
+    ORDER BY os.ordem, ic.ordem`, [idOrcamento]);
+
+  const grouped = new Map();
+  for (const row of rows) {
+    const codigo = String(row.codigo || '').trim();
+    const key = codigo.toUpperCase() || String(row.descricao || '').trim().toUpperCase();
+    if (!key) continue;
+    const qtdServico = toNum(row.qtd_servico);
+    const coef = toNum(row.coeficiente);
+    const qtdInsumo = qtdServico * coef;
+    const preco = toNum(row.preco_unitario);
+    const custo = qtdInsumo * preco;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        codigo,
+        descricao: row.descricao || '',
+        unidade: row.unidade || '',
+        tipo_item: row.tipo_item || 'INSUMO',
+        quantidade_total: 0,
+        custo_total: 0,
+        ocorrencias: [],
+      });
+    }
+    const item = grouped.get(key);
+    item.quantidade_total += qtdInsumo;
+    item.custo_total += custo;
+    item.ocorrencias.push({
+      item_num: row.item_num || '',
+      servico: row.servico_descricao || '',
+      qtd_servico: qtdServico,
+      coeficiente: coef,
+      qtd_insumo: Number(qtdInsumo.toFixed(6)),
+      preco: Number(preco.toFixed(4)),
+      custo: Number(custo.toFixed(2)),
+    });
+  }
+
+  const itens = Array.from(grouped.values()).map(item => ({
+    codigo: item.codigo,
+    descricao: item.descricao,
+    unidade: item.unidade,
+    tipo_item: item.tipo_item,
+    quantidade_total: Number(item.quantidade_total.toFixed(4)),
+    custo_unitario: item.quantidade_total > 0 ? Number((item.custo_total / item.quantidade_total).toFixed(4)) : 0,
+    custo_total: Number(item.custo_total.toFixed(2)),
+    valor_ibs: 0,
+    valor_cbs: 0,
+    ocorrencias: item.ocorrencias,
+  })).sort((a, b) => b.custo_total - a.custo_total);
+
+  const total = itens.reduce((sum, it) => sum + it.custo_total, 0);
+  let acumulado = 0;
+  itens.forEach((it, idx) => {
+    const pct = total ? it.custo_total / total * 100 : 0;
+    acumulado += pct;
+    it.rank = idx + 1;
+    it.percentual = Number(pct.toFixed(4));
+    it.percentual_acumulado = Number(acumulado.toFixed(4));
+    it.classe = abcClasse(acumulado);
+  });
+
+  return {
+    orcamento,
+    itens,
+    total_geral: Number(total.toFixed(2)),
+    total_ibs: 0,
+    total_cbs: 0,
+    resumo: abcResumo(itens, 'custo_total'),
+  };
+}
+
 module.exports = {
   toNum,
   selectBase,
@@ -295,4 +554,7 @@ module.exports = {
   deleteSinteticoItem,
   reordenarSintetico,
   restoreSintetico,
+  recalcularCustos,
+  curvaAbcServicos,
+  curvaAbcInsumos,
 };
