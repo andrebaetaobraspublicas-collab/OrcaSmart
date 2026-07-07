@@ -83,6 +83,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/obrasService.js`
   - `repositories/obrasRepository.js`
   - mantidos endpoints de listagem, CRUD, duplicacao e consulta de orcamentos vinculados.
+- 2026-07-07: modulo Fontes Referenciais consolidado em camadas Node:
+  - `routes/fontesRoutes.js`
+  - `services/fontesService.js`
+  - `repositories/fontesRepository.js`
+  - mantidos endpoints de listagem e CRUD basico das fontes.
 
 ## Regras de compatibilidade
 
