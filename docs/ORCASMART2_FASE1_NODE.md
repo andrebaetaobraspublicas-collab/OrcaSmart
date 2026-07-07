@@ -139,6 +139,9 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/adminService.js`
   - `repositories/adminRepository.js`
   - listagem de usuarios do banco master saiu do `server.js`, mantendo protecao por `requireAdmin`.
+- 2026-07-07: suporte legado removido e SINAPI isolado:
+  - criado `routes/sinapiRoutes.js` com os endpoints `/api/sinapi/analisar` e `/api/sinapi/importar`.
+  - removido `routes/supportRoutes.js`, eliminando codigo morto e rotas antigas duplicadas.
 
 ## Regras de compatibilidade
 

@@ -457,12 +457,12 @@ app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy)
 app.use('/api/eventogramas', require('./routes/eventogramasRoutes')(tenantDbProxy));
 app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy));
 app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
+app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
-app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
 app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')({ all: allMaster }));
 
 app.use('/api', apiNotFound);
