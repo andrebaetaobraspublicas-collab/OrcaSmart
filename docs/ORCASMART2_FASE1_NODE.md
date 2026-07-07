@@ -96,19 +96,18 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/orcamentosService.js`
   - `repositories/orcamentosRepository.js`
   - consolidados listagem, consulta, criacao, edicao, exclusao, duplicacao, aplicacao de BDI e atualizacao de totais.
-  - itens do orcamento sintetico, importacao Excel e curvas ABC permanecem no arquivo de rota para fatiamento posterior.
 - 2026-07-07: segunda fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidadas listagem, inclusao, edicao, exclusao, reordenacao e restauracao dos itens do orcamento sintetico.
-  - importacao Excel, recalculo de custos e curvas ABC permanecem no arquivo de rota para fatiamento posterior.
 - 2026-07-07: terceira fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidados recalculo de custos, curva ABC de servicos e curva ABC de insumos.
-  - importacao Excel permanece no arquivo de rota para fatiamento posterior.
 - 2026-07-07: quarta fatia do modulo Orcamentos consolidada em camadas Node:
   - consolidada a importacao Excel do orcamento sintetico, incluindo leitura multipart, parser XLSX sem dependencia externa, normalizacao de secoes/itens e gravacao no repositorio.
-  - as rotas antigas do modulo ainda permanecem no arquivo como compatibilidade temporaria, mas os endpoints principais ja respondem pelas camadas service/repository.
 - 2026-07-07: limpeza final do arquivo de rotas do modulo Orcamentos:
   - removidos os handlers legados duplicados de `routes/orcamentosRoutes.js`.
   - o arquivo passou a conter apenas a camada HTTP fina, delegando regras para `services/orcamentosService.js` e persistencia para `repositories/orcamentosRepository.js`.
+- 2026-07-07: extraido utilitario comum de upload/planilhas:
+  - criado `utils/spreadsheetUpload.js` com leitura multipart e parser XLSX sem dependencia externa.
+  - `Orcamentos` e `Municipios` passaram a reutilizar o mesmo utilitario.
 
 ## Regras de compatibilidade
 
