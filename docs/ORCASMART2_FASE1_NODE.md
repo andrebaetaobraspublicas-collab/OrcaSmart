@@ -28,6 +28,15 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 5. Producoes horarias/PEM.
 6. Custos horarios de equipamentos e vinculos com insumos/composicoes.
 
+## Progresso
+
+- 2026-07-06: criada a branch `orcasmart2`, com backup da versao Hostinger em `backup-hostinger-20260706`.
+- 2026-07-06: criada a base modular `middleware/`, `services/` e `repositories/`.
+- 2026-07-06: modulo Municipios/ISS-IBS-CBS isolado em Node:
+  - `routes/municipiosRoutes.js`
+  - `services/municipiosService.js`
+  - `repositories/municipiosRepository.js`
+
 ## Regras de compatibilidade
 
 - Manter SQLite durante a Fase 1.
