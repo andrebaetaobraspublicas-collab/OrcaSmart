@@ -27,6 +27,7 @@ try {
 const APP_DIR = __dirname;
 const DATA_DIR = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
@@ -498,8 +499,8 @@ async function handleStripeEvent(event) {
 
 initMasterDb()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`OrçaSmart SaaS Node iniciado em http://localhost:${PORT}`);
+    app.listen(PORT, HOST, () => {
+      console.log(`OrçaSmart SaaS Node iniciado em http://${HOST}:${PORT}`);
     });
   })
   .catch((err) => {
