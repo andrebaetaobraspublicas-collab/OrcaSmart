@@ -108,6 +108,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
 - 2026-07-07: extraido utilitario comum de upload/planilhas:
   - criado `utils/spreadsheetUpload.js` com leitura multipart e parser XLSX sem dependencia externa.
   - `Orcamentos` e `Municipios` passaram a reutilizar o mesmo utilitario.
+- 2026-07-07: modulo Pesquisa em Compras Governamentais consolidado em camadas Node:
+  - `routes/comprasGovRoutes.js`
+  - `services/comprasGovService.js`
+  - `repositories/comprasGovRepository.js`
+  - a rota passou a delegar consulta externa, normalizacao, validacoes e importacao de insumos para service/repository.
 
 ## Regras de compatibilidade
 
