@@ -36,6 +36,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `routes/municipiosRoutes.js`
   - `services/municipiosService.js`
   - `repositories/municipiosRepository.js`
+- 2026-07-06: modulo Encargos Sociais isolado em Node:
+  - `routes/encargosRoutes.js`
+  - `services/encargosService.js`
+  - `repositories/encargosRepository.js`
+  - incluidos endpoints dedicados para memoria, exportacao Excel compativel, recalculo do grupo D, encargos analiticos SICRO/GOINFRA e aplicacao a orcamento.
+  - importadores PDF/XLSX de encargos permanecem marcados como pendentes de portabilidade para Node.
 
 ## Regras de compatibilidade
 
