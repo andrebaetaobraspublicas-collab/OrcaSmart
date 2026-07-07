@@ -567,6 +567,10 @@ module.exports = function(db) {
     res.json(resultado);
   }));
 
+  // Legacy fallback routes below this point were superseded by dedicated modules
+  // registered in server.js. Keep supportRoutes scoped to the SINAPI importer.
+  return router;
+
   router.post('/sinapi/importar', asyncHandler(async (_req, res) => {
     res.status(501).json({
       erro: 'A análise do arquivo SINAPI já está disponível no SaaS Node. A importação completa das abas ISD, ICD e Analítico ainda precisa ser portada do servidor Python para Node antes de gravar no banco.',
