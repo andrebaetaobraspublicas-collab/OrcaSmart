@@ -463,17 +463,7 @@ app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/supportRoutes')(tenantDbProxy));
-
-app.get('/api/admin/users', requireAdmin, async (_req, res) => {
-  const users = await allMaster(`
-    SELECT u.id_user, u.nome, u.email, u.role, u.status, t.nome AS tenant,
-           s.status AS subscription_status
-    FROM users u
-    JOIN tenants t ON t.id_tenant = u.id_tenant
-    LEFT JOIN subscriptions s ON s.id_user = u.id_user
-    ORDER BY u.created_at DESC`);
-  res.json(users);
-});
+app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')({ all: allMaster }));
 
 app.use('/api', apiNotFound);
 

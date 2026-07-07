@@ -134,6 +134,11 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/dashboardService.js`
   - `repositories/dashboardRepository.js`
   - removida consulta SQL direta do `server.js`, mantendo o mesmo contrato JSON da tela inicial.
+- 2026-07-07: rotas administrativas consolidadas em camadas Node:
+  - `routes/adminRoutes.js`
+  - `services/adminService.js`
+  - `repositories/adminRepository.js`
+  - listagem de usuarios do banco master saiu do `server.js`, mantendo protecao por `requireAdmin`.
 
 ## Regras de compatibilidade
 
