@@ -88,6 +88,10 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `services/fontesService.js`
   - `repositories/fontesRepository.js`
   - mantidos endpoints de listagem e CRUD basico das fontes.
+- 2026-07-07: modulos Datas-base e Unidades de Medida consolidados em camadas Node:
+  - `routes/datasBaseRoutes.js`, `services/datasBaseService.js`, `repositories/datasBaseRepository.js`
+  - `routes/unidadesRoutes.js`, `services/unidadesService.js`, `repositories/unidadesRepository.js`
+  - mantidos endpoints de listagem e CRUD, com validacoes e bloqueio de exclusao de datas-base vinculadas a orcamentos.
 
 ## Regras de compatibilidade
 
