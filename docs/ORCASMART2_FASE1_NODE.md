@@ -72,6 +72,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/bdiRepository.js`
   - mantidos endpoints de perfis, componentes, duplicacao e memoria de calculo.
   - regras de CPRB, IVAeq, Simples Nacional e formulas por ano foram movidas da rota para repository/service.
+- 2026-07-07: modulo Insumos consolidado em camadas Node:
+  - `routes/insumosRoutes.js`
+  - `services/insumosService.js`
+  - `repositories/insumosRepository.js`
+  - mantidos endpoints de grupos, estatisticas, CRUD, precos, impacto e exclusao em lote.
+  - regras de preservacao historica por criacao de revisao, inativacao de insumo vinculado e calculo de preco sem tributos foram movidas para repository/service.
 
 ## Regras de compatibilidade
 
