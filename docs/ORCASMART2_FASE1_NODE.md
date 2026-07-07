@@ -42,6 +42,12 @@ Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas 
   - `repositories/encargosRepository.js`
   - incluidos endpoints dedicados para memoria, exportacao Excel compativel, recalculo do grupo D, encargos analiticos SICRO/GOINFRA e aplicacao a orcamento.
   - importadores PDF/XLSX de encargos permanecem marcados como pendentes de portabilidade para Node.
+- 2026-07-07: modulo Composicoes isolado em Node:
+  - `routes/composicoesRoutes.js`
+  - `services/composicoesService.js`
+  - `repositories/composicoesRepository.js`
+  - incluidos endpoints dedicados para listagem, estatisticas, grupos, CRUD basico, impacto direto/indireto em orcamentos, edicao/exclusao com tratamento de vinculos e exclusao em lote.
+  - recalculo em lote amplo e importadores permanecem marcados como pendentes de portabilidade para Node.
 
 ## Regras de compatibilidade
 

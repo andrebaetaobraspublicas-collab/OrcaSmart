@@ -453,6 +453,7 @@ app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProx
 app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy));
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy));
+app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
