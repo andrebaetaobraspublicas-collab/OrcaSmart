@@ -25,6 +25,76 @@ function toNum(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function scopedInsumoId(id) {
+  const value = String(id || '').trim();
+  if (value.startsWith('tenant:')) {
+    return { scope: 'tenant', value: Number(value.slice(7)) };
+  }
+  return { scope: 'catalog', value };
+}
+
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+async function tableExists(db, table, schema = 'main') {
+  const row = await one(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type = 'table' AND name = ? LIMIT 1`,
+    [table],
+  ).catch(() => null);
+  return !!row;
+}
+
+async function hasTenantInsumoOverrides(db) {
+  return tableExists(db, 'tenant_insumos');
+}
+
+async function hasCatalogInsumos(db) {
+  return tableExists(db, 'insumos', 'catalog');
+}
+
+async function useTenantCatalogRead(db) {
+  return (await hasTenantInsumoOverrides(db)) && (await hasCatalogInsumos(db));
+}
+
+function insumoColumns(idExpr, scopeExpr, catalogIdExpr = 'NULL') {
+  return `
+    ${idExpr} AS id_insumo,
+    i.codigo_insumo,
+    i.descricao,
+    i.tipo_insumo,
+    i.id_unidade,
+    i.id_grupo,
+    i.origem,
+    i.encargos_aplicaveis,
+    i.situacao,
+    i.observacoes,
+    i.encargos_sociais_percentual,
+    um.sigla AS sigla_unidade,
+    um.descricao AS desc_unidade,
+    gi.nome_grupo AS nome_grupo,
+    p.id_preco,
+    p.id_data_base AS preco_id_data_base,
+    p.preco_referencia,
+    p.preco_desonerado,
+    p.preco_nao_desonerado,
+    p.preco_referencia AS preco_regime,
+    p.uf_referencia AS preco_uf,
+    p.iva_equivalente,
+    p.cbs_percentual,
+    p.ibs_percentual,
+    p.is_percentual,
+    p.preco_sem_tributos,
+    p.encargos_sociais_percentual AS preco_encargos_sociais_percentual,
+    COALESCE(p.encargos_sociais_percentual, i.encargos_sociais_percentual) AS encargos_sociais_calculado,
+    db2.mes AS preco_mes,
+    db2.ano AS preco_ano,
+    fr.nome_fonte AS nome_fonte,
+    ${scopeExpr} AS _tenant_scope,
+    ${catalogIdExpr} AS _catalog_id`;
+}
+
 const selectInsumo = `
   SELECT i.*,
          um.sigla AS sigla_unidade,
@@ -60,24 +130,36 @@ const selectPreco = `
   LEFT JOIN unidades_medida um ON i.id_unidade = um.id_unidade`;
 
 async function ensureSchema(db) {
-  const insCols = new Set((await all(db, 'PRAGMA table_info(insumos)')).map(c => c.name));
-  if (!insCols.has('encargos_sociais_percentual')) {
-    await run(db, 'ALTER TABLE insumos ADD COLUMN encargos_sociais_percentual REAL');
+  const hasMainInsumos = await tableExists(db, 'insumos');
+  if (hasMainInsumos) {
+    const insCols = new Set((await all(db, 'PRAGMA table_info(insumos)')).map(c => c.name));
+    if (!insCols.has('encargos_sociais_percentual')) {
+      await run(db, 'ALTER TABLE insumos ADD COLUMN encargos_sociais_percentual REAL');
+    }
   }
 
-  const priceCols = new Set((await all(db, 'PRAGMA table_info(precos_insumos)')).map(c => c.name));
-  if (!priceCols.has('encargos_sociais_percentual')) {
-    await run(db, 'ALTER TABLE precos_insumos ADD COLUMN encargos_sociais_percentual REAL');
+  const hasMainPrecos = await tableExists(db, 'precos_insumos');
+  if (hasMainPrecos) {
+    const priceCols = new Set((await all(db, 'PRAGMA table_info(precos_insumos)')).map(c => c.name));
+    if (!priceCols.has('encargos_sociais_percentual')) {
+      await run(db, 'ALTER TABLE precos_insumos ADD COLUMN encargos_sociais_percentual REAL');
+    }
+
+    const indexes = [
+      'CREATE INDEX IF NOT EXISTS idx_precos_insumos_latest ON precos_insumos(id_insumo, id_preco DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_precos_insumos_data_uf ON precos_insumos(uf_referencia, id_data_base, id_insumo)',
+    ];
+    for (const sql of indexes) await run(db, sql);
   }
 
-  const indexes = [
-    'CREATE INDEX IF NOT EXISTS idx_precos_insumos_latest ON precos_insumos(id_insumo, id_preco DESC)',
-    'CREATE INDEX IF NOT EXISTS idx_precos_insumos_data_uf ON precos_insumos(uf_referencia, id_data_base, id_insumo)',
-    'CREATE INDEX IF NOT EXISTS idx_insumos_tipo_desc ON insumos(tipo_insumo, descricao)',
-    'CREATE INDEX IF NOT EXISTS idx_insumos_origem_desc ON insumos(origem, descricao)',
-    'CREATE INDEX IF NOT EXISTS idx_insumos_codigo ON insumos(codigo_insumo)',
-  ];
-  for (const sql of indexes) await run(db, sql);
+  if (hasMainInsumos) {
+    const indexes = [
+      'CREATE INDEX IF NOT EXISTS idx_insumos_tipo_desc ON insumos(tipo_insumo, descricao)',
+      'CREATE INDEX IF NOT EXISTS idx_insumos_origem_desc ON insumos(origem, descricao)',
+      'CREATE INDEX IF NOT EXISTS idx_insumos_codigo ON insumos(codigo_insumo)',
+    ];
+    for (const sql of indexes) await run(db, sql);
+  }
 }
 
 function priceSelect(query = {}) {
@@ -155,6 +237,42 @@ async function deleteGrupo(db, id) {
 
 async function stats(db) {
   await ensureSchema(db);
+  if (await useTenantCatalogRead(db)) {
+    const visibleCatalog = `
+      NOT EXISTS (
+        SELECT 1 FROM tenant_referential_overrides r
+        WHERE r.domain='insumos' AND r.catalog_table='insumos'
+          AND r.catalog_id=i.id_insumo AND r.status='active'
+          AND r.action IN ('update','delete')
+      )`;
+    const queries = {
+      total: `
+        SELECT COUNT(*) AS total FROM (
+          SELECT i.id_insumo
+          FROM catalog.insumos i
+          WHERE ${visibleCatalog}
+          UNION ALL
+          SELECT rowid FROM tenant_insumos WHERE tenant_override_status='active'
+        )`,
+      material: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Material' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Material')`,
+      mao_de_obra: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra'))`,
+      equipamento: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Equipamento' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Equipamento')`,
+      servico_auxiliar: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar'))`,
+      com_preco: `
+        SELECT COUNT(DISTINCT id_insumo) AS total FROM (
+          SELECT id_insumo FROM catalog.precos_insumos
+          UNION ALL
+          SELECT 'tenant:' || id_insumo FROM tenant_precos_insumos WHERE tenant_override_status='active'
+        )`,
+    };
+    const result = {};
+    for (const [key, sql] of Object.entries(queries)) {
+      const row = await one(db, sql);
+      result[key] = row?.total || 0;
+    }
+    return result;
+  }
+
   const queries = {
     total: 'SELECT COUNT(*) AS total FROM insumos',
     material: "SELECT COUNT(*) AS total FROM insumos WHERE tipo_insumo='Material'",
@@ -171,8 +289,108 @@ async function stats(db) {
   return result;
 }
 
+function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_insumos' : 'catalog.insumos';
+  const priceTable = isTenant ? 'tenant_precos_insumos' : 'catalog.precos_insumos';
+  const lookupPrefix = 'catalog.';
+  const idExpr = isTenant ? "'tenant:' || i.rowid" : 'CAST(i.id_insumo AS TEXT)';
+  const scopeExpr = isTenant ? "'tenant'" : "'catalog'";
+  const catalogIdExpr = isTenant ? 'i.tenant_catalog_id' : 'i.id_insumo';
+  const priceInsumoExpr = isTenant ? 'i.rowid' : 'i.id_insumo';
+
+  let subWhere = `WHERE id_insumo = ${priceInsumoExpr}`;
+  const subParams = [];
+  if (query.uf) {
+    subWhere += ' AND uf_referencia = ?';
+    subParams.push(query.uf);
+  }
+  if (query.mes && query.ano) {
+    subWhere += ` AND id_data_base IN (SELECT id_data_base FROM ${lookupPrefix}datas_base WHERE mes = ? AND ano = ?)`;
+    subParams.push(Number(query.mes), Number(query.ano));
+  }
+  const regime = String(query.regime || '').toLowerCase();
+  if (regime === 'onerado') subWhere += ' AND COALESCE(preco_nao_desonerado, 0) > 0';
+  if (regime === 'desonerado') subWhere += ' AND COALESCE(preco_desonerado, 0) > 0';
+
+  let precoExpr = 'p.preco_referencia';
+  if (regime === 'onerado') precoExpr = 'COALESCE(NULLIF(p.preco_nao_desonerado,0), p.preco_referencia)';
+  if (regime === 'desonerado') precoExpr = 'COALESCE(NULLIF(p.preco_desonerado,0), p.preco_referencia)';
+
+  const columns = insumoColumns(idExpr, scopeExpr, catalogIdExpr).replace('p.preco_referencia AS preco_regime', `${precoExpr} AS preco_regime`);
+  let sql = `
+    SELECT ${columns}
+    FROM ${table} i
+    LEFT JOIN ${lookupPrefix}unidades_medida um ON i.id_unidade = um.id_unidade
+    LEFT JOIN ${lookupPrefix}grupos_insumos gi ON i.id_grupo = gi.id_grupo
+    LEFT JOIN ${priceTable} p ON p.${isTenant ? 'rowid' : 'id_preco'} = (
+      SELECT ${isTenant ? 'rowid' : 'id_preco'} FROM ${priceTable}
+      ${subWhere}
+      ORDER BY ${isTenant ? 'rowid' : 'id_preco'} DESC LIMIT 1
+    )
+    LEFT JOIN ${lookupPrefix}datas_base db2 ON p.id_data_base = db2.id_data_base
+    LEFT JOIN ${lookupPrefix}fontes_referencia fr ON p.id_fonte = fr.id_fonte
+    WHERE 1=1`;
+  const params = [...subParams];
+
+  if (!isTenant) {
+    sql += `
+      AND NOT EXISTS (
+        SELECT 1 FROM tenant_referential_overrides r
+        WHERE r.domain='insumos' AND r.catalog_table='insumos'
+          AND r.catalog_id=i.id_insumo AND r.status='active'
+          AND r.action IN ('update','delete')
+      )`;
+  } else {
+    sql += " AND COALESCE(i.tenant_override_status,'active')='active'";
+  }
+  if (query.tipo) {
+    sql += ' AND i.tipo_insumo = ?';
+    params.push(query.tipo);
+  }
+  if (query.origem) {
+    sql += ' AND i.origem = ?';
+    params.push(query.origem);
+  }
+  if (query.situacao) {
+    sql += ' AND i.situacao = ?';
+    params.push(query.situacao);
+  }
+  if (query.q) {
+    sql += ' AND (i.descricao LIKE ? OR i.codigo_insumo LIKE ?)';
+    params.push(`%${query.q}%`, `%${query.q}%`);
+  }
+  if (query.uf || (query.mes && query.ano) || query.regime) sql += ' AND p.id_preco IS NOT NULL';
+  return { sql, params };
+}
+
 async function listInsumos(db, query = {}) {
   await ensureSchema(db);
+  if (await useTenantCatalogRead(db)) {
+    const catalog = buildTenantCatalogListSelect(query, 'catalog');
+    const tenant = buildTenantCatalogListSelect(query, 'tenant');
+    let sql = `
+      SELECT * FROM (
+        ${catalog.sql}
+        UNION ALL
+        ${tenant.sql}
+      )
+      ORDER BY CASE tipo_insumo
+        WHEN 'Material' THEN 0
+        WHEN 'Mao de Obra' THEN 1
+        WHEN 'MÃ£o de Obra' THEN 1
+        WHEN 'Equipamento' THEN 2
+        WHEN 'Servico Auxiliar' THEN 3
+        WHEN 'ServiÃ§o Auxiliar' THEN 3
+        ELSE 4 END, descricao`;
+    const params = [...catalog.params, ...tenant.params];
+    if (query.limit) {
+      sql += ' LIMIT ?';
+      params.push(Math.max(1, Math.min(500, Number(query.limit) || 100)));
+    }
+    return all(db, sql, params);
+  }
+
   const built = priceSelect(query);
   let sql = `${built.sql} WHERE 1=1`;
   const params = [...built.params];
@@ -211,7 +429,44 @@ async function listInsumos(db, query = {}) {
 
 async function getInsumo(db, id) {
   await ensureSchema(db);
+  if (await useTenantCatalogRead(db)) {
+    const scoped = scopedInsumoId(id);
+    if (scoped.scope === 'tenant') {
+      return getTenantInsumo(db, scoped.value);
+    }
+    const deleted = await one(db, `
+      SELECT 1 FROM tenant_referential_overrides
+      WHERE domain='insumos' AND catalog_table='insumos' AND catalog_id=?
+        AND status='active' AND action='delete'
+      LIMIT 1`, [scoped.value]);
+    if (deleted) return null;
+    const override = await one(db, `
+      SELECT rowid AS tenant_rowid
+      FROM tenant_insumos
+      WHERE tenant_catalog_id = ?
+        AND COALESCE(tenant_override_status,'active')='active'
+        AND tenant_override_action='update'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (override) return getTenantInsumo(db, override.tenant_rowid);
+    const built = buildTenantCatalogListSelect({}, 'catalog');
+    return one(db, `${built.sql} AND i.id_insumo = ?`, [...built.params, scoped.value]);
+  }
   return one(db, `${selectInsumo} WHERE i.id_insumo = ?`, [id]);
+}
+
+async function getTenantInsumo(db, rowid) {
+  if (!(await hasCatalogInsumos(db))) {
+    return one(db, `
+      SELECT 'tenant:' || rowid AS id_insumo,
+             codigo_insumo, descricao, tipo_insumo, id_unidade, id_grupo, origem,
+             encargos_aplicaveis, situacao, observacoes, encargos_sociais_percentual,
+             tenant_catalog_id AS _catalog_id,
+             'tenant' AS _tenant_scope
+      FROM tenant_insumos
+      WHERE rowid = ? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+  }
+  const built = buildTenantCatalogListSelect({}, 'tenant');
+  return one(db, `${built.sql} AND i.rowid = ?`, [...built.params, rowid]);
 }
 
 function codigoVariantes(codigo) {
@@ -301,6 +556,32 @@ function insumoParams(data) {
 
 async function createInsumo(db, data) {
   await ensureSchema(db);
+  if (await hasTenantInsumoOverrides(db)) {
+    const result = await run(db, `
+      INSERT INTO tenant_insumos
+        (codigo_insumo, descricao, tipo_insumo, id_unidade, id_grupo,
+         origem, encargos_aplicaveis, encargos_sociais_percentual, situacao, observacoes,
+         tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      ...insumoParams(data),
+      data.tenant_catalog_id || null,
+      data.tenant_override_action || 'create',
+      'active',
+      new Date().toISOString(),
+      new Date().toISOString(),
+    ]);
+    await run(db, 'UPDATE tenant_insumos SET id_insumo = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+    await savePrecoPrincipal(db, result.lastID, data, { tenant: true });
+    await recordReferentialOverride(db, {
+      catalogId: data.tenant_catalog_id || null,
+      tenantRowid: result.lastID,
+      action: data.tenant_override_action || 'create',
+      impactPolicy: data.impact_policy || 'preserve',
+      payload: data,
+    });
+    return getTenantInsumo(db, result.lastID);
+  }
+
   const result = await run(db, `
     INSERT INTO insumos
       (codigo_insumo, descricao, tipo_insumo, id_unidade, id_grupo,
@@ -312,16 +593,69 @@ async function createInsumo(db, data) {
 
 async function novoCodigoPreservado(db, base) {
   const clean = String(base || 'INSUMO').trim() || 'INSUMO';
+  const tenantMode = await hasTenantInsumoOverrides(db);
   for (let i = 1; i <= 999; i += 1) {
     const candidate = `${clean}.REV${String(i).padStart(3, '0')}`;
-    const exists = await one(db, 'SELECT 1 FROM insumos WHERE codigo_insumo = ? LIMIT 1', [candidate]);
+    const exists = tenantMode
+      ? await one(db, 'SELECT 1 FROM tenant_insumos WHERE codigo_insumo = ? AND COALESCE(tenant_override_status,\'active\')=\'active\' LIMIT 1', [candidate])
+      : await one(db, 'SELECT 1 FROM insumos WHERE codigo_insumo = ? LIMIT 1', [candidate]);
     if (!exists) return candidate;
   }
   return `${clean}.REV`;
 }
 
-async function updateInsumo(db, id, data) {
+async function updateInsumo(db, id, data, current = null) {
   await ensureSchema(db);
+  if (await hasTenantInsumoOverrides(db)) {
+    const scoped = scopedInsumoId(id);
+    if (scoped.scope === 'tenant') {
+      const result = await run(db, `
+        UPDATE tenant_insumos SET
+          codigo_insumo=?, descricao=?, tipo_insumo=?, id_unidade=?, id_grupo=?,
+          origem=?, encargos_aplicaveis=?, encargos_sociais_percentual=?, situacao=?, observacoes=?,
+          tenant_updated_at=?
+        WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`,
+      [...insumoParams(data), new Date().toISOString(), scoped.value]);
+      await savePrecoPrincipal(db, scoped.value, data, { tenant: true });
+      if (!result.changes) return null;
+      return getTenantInsumo(db, scoped.value);
+    }
+
+    const catalogId = Number(scoped.value);
+    const existing = await one(db, `
+      SELECT rowid AS rowid FROM tenant_insumos
+      WHERE tenant_catalog_id = ?
+        AND tenant_override_action = 'update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [catalogId]);
+    if (existing) {
+      await run(db, `
+        UPDATE tenant_insumos SET
+          codigo_insumo=?, descricao=?, tipo_insumo=?, id_unidade=?, id_grupo=?,
+          origem=?, encargos_aplicaveis=?, encargos_sociais_percentual=?, situacao=?, observacoes=?,
+          tenant_updated_at=?
+        WHERE rowid=?`, [...insumoParams(data), new Date().toISOString(), existing.rowid]);
+      await savePrecoPrincipal(db, existing.rowid, data, { tenant: true });
+      await recordReferentialOverride(db, {
+        catalogId,
+        tenantRowid: existing.rowid,
+        action: 'update',
+        impactPolicy: data.modo_impacto || 'alterar_composicoes',
+        payload: data,
+      });
+      return getTenantInsumo(db, existing.rowid);
+    }
+
+    if (!current) return null;
+    return createInsumo(db, {
+      ...current,
+      ...data,
+      tenant_catalog_id: catalogId,
+      tenant_override_action: 'update',
+      impact_policy: data.modo_impacto || 'alterar_composicoes',
+    });
+  }
+
   const result = await run(db, `
     UPDATE insumos SET
       codigo_insumo=?, descricao=?, tipo_insumo=?, id_unidade=?, id_grupo=?,
@@ -334,14 +668,65 @@ async function updateInsumo(db, id, data) {
 
 async function createPreservedRevision(db, current, data) {
   const codigoNovo = await novoCodigoPreservado(db, data.codigo_insumo || current.codigo_insumo);
-  return createInsumo(db, { ...data, codigo_insumo: codigoNovo });
+  return createInsumo(db, {
+    ...current,
+    ...data,
+    codigo_insumo: codigoNovo,
+    tenant_catalog_id: null,
+    tenant_override_action: 'create',
+    impact_policy: 'preserve',
+  });
 }
 
 async function inactivateInsumo(db, id) {
+  if (await hasTenantInsumoOverrides(db)) {
+    const scoped = scopedInsumoId(id);
+    if (scoped.scope === 'tenant') {
+      return run(db, `
+        UPDATE tenant_insumos
+        SET situacao='Inativo', tenant_override_status='deleted', tenant_updated_at=?
+        WHERE rowid=?`, [new Date().toISOString(), scoped.value]);
+    }
+    await run(db, `
+      UPDATE tenant_insumos
+      SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=?
+      WHERE tenant_catalog_id=? AND COALESCE(tenant_override_status,'active')='active'`,
+    [new Date().toISOString(), Number(scoped.value)]);
+    await recordReferentialOverride(db, {
+      catalogId: Number(scoped.value),
+      tenantRowid: null,
+      action: 'delete',
+      impactPolicy: 'preserve',
+      payload: { situacao: 'Inativo' },
+    });
+    return { changes: 1 };
+  }
   return run(db, "UPDATE insumos SET situacao = 'Inativo' WHERE id_insumo = ?", [id]);
 }
 
 async function deleteInsumo(db, id) {
+  if (await hasTenantInsumoOverrides(db)) {
+    const scoped = scopedInsumoId(id);
+    if (scoped.scope === 'tenant') {
+      return run(db, `
+        UPDATE tenant_insumos
+        SET tenant_override_status='deleted', tenant_updated_at=?
+        WHERE rowid=?`, [new Date().toISOString(), scoped.value]);
+    }
+    await run(db, `
+      UPDATE tenant_insumos
+      SET tenant_override_status='deleted', tenant_updated_at=?
+      WHERE tenant_catalog_id=? AND COALESCE(tenant_override_status,'active')='active'`,
+    [new Date().toISOString(), Number(scoped.value)]);
+    await recordReferentialOverride(db, {
+      catalogId: Number(scoped.value),
+      tenantRowid: null,
+      action: 'delete',
+      impactPolicy: 'alterar_composicoes',
+      payload: {},
+    });
+    return { changes: 1 };
+  }
   return run(db, 'DELETE FROM insumos WHERE id_insumo = ?', [id]);
 }
 
@@ -364,10 +749,52 @@ function pricePayload(data) {
   };
 }
 
-async function savePrecoPrincipal(db, idInsumo, data) {
+async function recordReferentialOverride(db, data = {}) {
+  if (!(await tableExists(db, 'tenant_referential_overrides'))) return null;
+  const catalogId = data.catalogId === null || data.catalogId === undefined ? null : Number(data.catalogId);
+  const payload = data.payload ? JSON.stringify(data.payload) : null;
+  if (catalogId !== null) {
+    const existing = await one(db, `
+      SELECT id_override FROM tenant_referential_overrides
+      WHERE domain='insumos' AND catalog_table='insumos' AND catalog_id=?
+        AND status='active'
+      ORDER BY id_override DESC LIMIT 1`, [catalogId]);
+    if (existing) {
+      await run(db, `
+        UPDATE tenant_referential_overrides
+        SET tenant_table='tenant_insumos', tenant_rowid=?, action=?, impact_policy=?,
+            payload_json=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id_override=?`, [
+        data.tenantRowid || null,
+        data.action || 'update',
+        data.impactPolicy || 'preserve',
+        payload,
+        existing.id_override,
+      ]);
+      return existing.id_override;
+    }
+  }
+  const result = await run(db, `
+    INSERT INTO tenant_referential_overrides
+      (domain, catalog_table, catalog_id, tenant_table, tenant_rowid,
+       action, impact_policy, payload_json, status)
+    VALUES ('insumos','insumos',?,?,?,?,?,?, 'active')`, [
+    catalogId,
+    'tenant_insumos',
+    data.tenantRowid || null,
+    data.action || 'create',
+    data.impactPolicy || 'preserve',
+    payload,
+  ]);
+  return result.lastID;
+}
+
+async function savePrecoPrincipal(db, idInsumo, data, options = {}) {
   const payload = pricePayload(data);
   if (payload.pref <= 0) return null;
-  const row = await one(db, 'SELECT id_preco FROM precos_insumos WHERE id_insumo = ? ORDER BY id_preco DESC LIMIT 1', [idInsumo]);
+  const table = options.tenant ? 'tenant_precos_insumos' : 'precos_insumos';
+  const keyColumn = options.tenant ? 'rowid' : 'id_preco';
+  const row = await one(db, `SELECT rowid, id_preco FROM ${table} WHERE id_insumo = ? ORDER BY ${keyColumn} DESC LIMIT 1`, [idInsumo]);
   const params = [
     data.id_data_base || null,
     data.uf_referencia || null,
@@ -383,31 +810,96 @@ async function savePrecoPrincipal(db, idInsumo, data) {
   ];
   if (row) {
     await run(db, `
-      UPDATE precos_insumos SET
+      UPDATE ${table} SET
         id_data_base=?, uf_referencia=?,
         preco_desonerado=?, preco_nao_desonerado=?, preco_referencia=?,
         cbs_percentual=?, ibs_percentual=?, is_percentual=?,
         iva_equivalente=?, preco_sem_tributos=?, encargos_sociais_percentual=?
-      WHERE id_preco=?`, [...params, row.id_preco]);
-    return row.id_preco;
+      WHERE ${keyColumn}=?`, [...params, options.tenant ? row.rowid : row.id_preco]);
+    return options.tenant ? row.rowid : row.id_preco;
   }
   const result = await run(db, `
-    INSERT INTO precos_insumos
+    INSERT INTO ${table}
       (id_insumo, id_data_base, uf_referencia,
        preco_desonerado, preco_nao_desonerado, preco_referencia,
        cbs_percentual, ibs_percentual, is_percentual, iva_equivalente,
        preco_sem_tributos, encargos_sociais_percentual)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [idInsumo, ...params]);
+  if (options.tenant) {
+    await run(db, 'UPDATE tenant_precos_insumos SET id_preco = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+  }
   return result.lastID;
 }
 
 async function listPrecos(db, idInsumo) {
   await ensureSchema(db);
+  if (await useTenantCatalogRead(db)) {
+    const scoped = scopedInsumoId(idInsumo);
+    if (scoped.scope === 'tenant') {
+      return all(db, `
+        SELECT p.*, db2.mes, db2.ano, db2.descricao AS desc_data_base,
+               fr.nome_fonte, um.sigla AS sigla_unidade,
+               'tenant:' || p.rowid AS id_preco
+        FROM tenant_precos_insumos p
+        LEFT JOIN catalog.datas_base db2 ON p.id_data_base = db2.id_data_base
+        LEFT JOIN catalog.fontes_referencia fr ON p.id_fonte = fr.id_fonte
+        LEFT JOIN tenant_insumos i ON p.id_insumo = i.rowid
+        LEFT JOIN catalog.unidades_medida um ON i.id_unidade = um.id_unidade
+        WHERE p.id_insumo = ? AND COALESCE(p.tenant_override_status,'active')='active'
+        ORDER BY p.rowid DESC`, [scoped.value]);
+    }
+    const override = await one(db, `
+      SELECT rowid AS tenant_rowid FROM tenant_insumos
+      WHERE tenant_catalog_id=? AND tenant_override_action='update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (override) return listPrecos(db, `tenant:${override.tenant_rowid}`);
+    return all(db, `
+      SELECT p.*, db2.mes, db2.ano, db2.descricao AS desc_data_base,
+             fr.nome_fonte, um.sigla AS sigla_unidade
+      FROM catalog.precos_insumos p
+      LEFT JOIN catalog.datas_base db2 ON p.id_data_base = db2.id_data_base
+      LEFT JOIN catalog.fontes_referencia fr ON p.id_fonte = fr.id_fonte
+      LEFT JOIN catalog.insumos i ON p.id_insumo = i.id_insumo
+      LEFT JOIN catalog.unidades_medida um ON i.id_unidade = um.id_unidade
+      WHERE p.id_insumo = ? ORDER BY p.id_preco DESC`, [scoped.value]);
+  }
   return all(db, `${selectPreco} WHERE p.id_insumo = ? ORDER BY p.id_preco DESC`, [idInsumo]);
 }
 
 async function createPreco(db, idInsumo, data) {
   await ensureSchema(db);
+  if (await hasTenantInsumoOverrides(db)) {
+    const scoped = scopedInsumoId(idInsumo);
+    if (scoped.scope !== 'tenant') {
+      const current = await getInsumo(db, idInsumo);
+      if (!current) return null;
+      const created = await createInsumo(db, {
+        ...current,
+        tenant_catalog_id: Number(scoped.value),
+        tenant_override_action: 'update',
+        impact_policy: 'alterar_precos',
+      });
+      return createPreco(db, created.id_insumo, data);
+    }
+    const p = pricePayload(data);
+    const result = await run(db, `
+      INSERT INTO tenant_precos_insumos
+        (id_insumo, id_data_base, id_fonte, uf_referencia,
+         preco_desonerado, preco_nao_desonerado, preco_referencia,
+         cbs_percentual, ibs_percentual, is_percentual, iva_equivalente,
+         preco_sem_tributos, encargos_sociais_percentual, data_coleta, observacoes,
+         tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      scoped.value, data.id_data_base || null, data.id_fonte || null, data.uf_referencia || null,
+      toNum(data.preco_desonerado), toNum(data.preco_nao_desonerado), p.pref,
+      p.cbs, p.ibs, p.isp, p.iva, p.psem, p.encargos,
+      data.data_coleta || null, data.observacoes || null,
+      'create', 'active', new Date().toISOString(), new Date().toISOString(),
+    ]);
+    await run(db, 'UPDATE tenant_precos_insumos SET id_preco = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_preco FROM tenant_precos_insumos WHERE rowid = ?", [result.lastID]);
+  }
   const p = pricePayload(data);
   const result = await run(db, `
     INSERT INTO precos_insumos
@@ -426,6 +918,25 @@ async function createPreco(db, idInsumo, data) {
 
 async function updatePreco(db, idPreco, data) {
   await ensureSchema(db);
+  const scoped = scopedInsumoId(idPreco);
+  if (scoped.scope === 'tenant' && await hasTenantInsumoOverrides(db)) {
+    const p = pricePayload(data);
+    const result = await run(db, `
+      UPDATE tenant_precos_insumos SET
+        id_data_base=?, id_fonte=?, uf_referencia=?,
+        preco_desonerado=?, preco_nao_desonerado=?, preco_referencia=?,
+        cbs_percentual=?, ibs_percentual=?, is_percentual=?, iva_equivalente=?,
+        preco_sem_tributos=?, encargos_sociais_percentual=?, data_coleta=?, observacoes=?,
+        tenant_updated_at=?
+      WHERE rowid=?`, [
+      data.id_data_base || null, data.id_fonte || null, data.uf_referencia || null,
+      toNum(data.preco_desonerado), toNum(data.preco_nao_desonerado), p.pref,
+      p.cbs, p.ibs, p.isp, p.iva, p.psem, p.encargos,
+      data.data_coleta || null, data.observacoes || null, new Date().toISOString(), scoped.value,
+    ]);
+    if (!result.changes) return null;
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_preco FROM tenant_precos_insumos WHERE rowid=?", [scoped.value]);
+  }
   const p = pricePayload(data);
   const result = await run(db, `
     UPDATE precos_insumos SET
@@ -444,6 +955,13 @@ async function updatePreco(db, idPreco, data) {
 }
 
 async function deletePreco(db, idPreco) {
+  const scoped = scopedInsumoId(idPreco);
+  if (scoped.scope === 'tenant' && await hasTenantInsumoOverrides(db)) {
+    return run(db, `
+      UPDATE tenant_precos_insumos
+      SET tenant_override_status='deleted', tenant_updated_at=?
+      WHERE rowid=?`, [new Date().toISOString(), scoped.value]);
+  }
   return run(db, 'DELETE FROM precos_insumos WHERE id_preco = ?', [idPreco]);
 }
 
@@ -485,6 +1003,7 @@ module.exports = {
   run,
   toNum,
   ensureSchema,
+  hasTenantInsumoOverrides,
   listGrupos,
   createGrupo,
   updateGrupo,

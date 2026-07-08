@@ -54,9 +54,10 @@ async function createInsumo(db, data) {
   return repo.createInsumo(db, data);
 }
 
-async function updateInsumo(db, id, data) {
+async function updateInsumo(db, id, data, options = {}) {
   assertDescricao(data);
-  const atual = await repo.one(db, 'SELECT * FROM insumos WHERE id_insumo = ?', [id]);
+  const readDb = options.readDb || db;
+  const atual = await getInsumo(readDb, id);
   if (!atual) throw httpError(404, 'Insumo nao encontrado.');
 
   if (data.modo_impacto === 'preservar') {
@@ -68,7 +69,7 @@ async function updateInsumo(db, id, data) {
     };
   }
 
-  const updated = await repo.updateInsumo(db, id, data);
+  const updated = await repo.updateInsumo(db, id, data, atual);
   if (!updated) throw httpError(404, 'Insumo nao encontrado.');
   return {
     ...updated,
@@ -77,8 +78,9 @@ async function updateInsumo(db, id, data) {
   };
 }
 
-async function deleteInsumo(db, id, modo = 'preservar') {
-  const impacto = await repo.impacto(db, id);
+async function deleteInsumo(db, id, modo = 'preservar', options = {}) {
+  const readDb = options.readDb || db;
+  const impacto = await repo.impacto(readDb, id);
   if (!impacto) throw httpError(404, 'Insumo nao encontrado.');
   if (impacto.tem_impacto && modo === 'preservar') {
     await repo.inactivateInsumo(db, id);
@@ -98,7 +100,13 @@ async function deleteInsumo(db, id, modo = 'preservar') {
   }
 }
 
-async function createPreco(db, idInsumo, data) {
+async function createPreco(db, idInsumo, data, options = {}) {
+  if (await repo.hasTenantInsumoOverrides(db) && !String(idInsumo).startsWith('tenant:')) {
+    const atual = await getInsumo(options.readDb || db, idInsumo);
+    if (!atual) throw httpError(404, 'Insumo nao encontrado.');
+    const override = await repo.updateInsumo(db, idInsumo, atual, atual);
+    return repo.createPreco(db, override.id_insumo, data);
+  }
   return repo.createPreco(db, idInsumo, data);
 }
 

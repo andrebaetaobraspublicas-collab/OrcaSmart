@@ -50,12 +50,12 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    const result = await service.updateInsumo(db, req.params.id, req.body || {});
+    const result = await service.updateInsumo(db, req.params.id, req.body || {}, { readDb });
     res.status(result._created ? 201 : 200).json(result);
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.deleteInsumo(db, req.params.id, String(req.query.modo || 'preservar')));
+    res.json(await service.deleteInsumo(db, req.params.id, String(req.query.modo || 'preservar'), { readDb }));
   }));
 
   router.get('/:id/precos', asyncHandler(async (req, res) => {
@@ -63,7 +63,7 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.post('/:id/precos', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createPreco(db, req.params.id, req.body || {}));
+    res.status(201).json(await service.createPreco(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   router.put('/precos/:id', asyncHandler(async (req, res) => {
