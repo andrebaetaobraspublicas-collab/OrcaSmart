@@ -36,8 +36,8 @@ async function listPerfis(db, query) {
   return repository.listPerfis(db, query);
 }
 
-async function getPerfil(db, idPerfil) {
-  const perfil = await repository.getPerfil(db, idPerfil);
+async function getPerfil(db, idPerfil, options = {}) {
+  const perfil = await repository.getPerfil(db, idPerfil, options);
   if (!perfil) {
     const err = new Error('Perfil nao encontrado.');
     err.status = 404;
@@ -94,13 +94,13 @@ async function recalcD(db, idPerfil) {
   return { perfil, totais };
 }
 
-async function listGrupos(db, idPerfil) {
-  await getPerfil(db, idPerfil);
+async function listGrupos(db, idPerfil, options = {}) {
+  await getPerfil(db, idPerfil, options);
   return repository.listGrupos(db, idPerfil);
 }
 
-async function getMemoria(db, idPerfil) {
-  const memoria = await repository.getMemoria(db, idPerfil);
+async function getMemoria(db, idPerfil, options = {}) {
+  const memoria = await repository.getMemoria(db, idPerfil, options);
   if (!memoria) {
     const err = new Error('Perfil nao encontrado.');
     err.status = 404;

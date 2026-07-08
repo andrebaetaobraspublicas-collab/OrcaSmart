@@ -160,14 +160,14 @@ async function sumGrupo(db, idPerfil, letra) {
   return toNum(row?.total);
 }
 
-async function calcEncargos(db, idPerfil, { recalcD = false } = {}) {
+async function calcEncargos(db, idPerfil, { recalcD = false, persist = true } = {}) {
   await ensureSchema(db);
   const A = await sumGrupo(db, idPerfil, 'A');
   const B = await sumGrupo(db, idPerfil, 'B');
   const C = await sumGrupo(db, idPerfil, 'C');
   let D = await sumGrupo(db, idPerfil, 'D');
 
-  if (recalcD) {
+  if (recalcD && persist) {
     const fator = 1 + A / 100;
     const dSobreB = Number((fator * B - B).toFixed(6));
     const dSobreC = Number((fator * C - C).toFixed(6));
@@ -182,12 +182,14 @@ async function calcEncargos(db, idPerfil, { recalcD = false } = {}) {
   }
 
   const total = Number((A + B + C + D).toFixed(6));
-  await run(db, `
-    UPDATE perfis_encargos
-    SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?
-    WHERE id_perfil = ?`, [A, B, C, D, total, idPerfil]);
-  for (const [letra, val] of [['A', A], ['B', B], ['C', C], ['D', D]]) {
-    await run(db, 'UPDATE grupos_encargos SET total_grupo = ? WHERE id_perfil = ? AND letra = ?', [val, idPerfil, letra]);
+  if (persist) {
+    await run(db, `
+      UPDATE perfis_encargos
+      SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?
+      WHERE id_perfil = ?`, [A, B, C, D, total, idPerfil]);
+    for (const [letra, val] of [['A', A], ['B', B], ['C', C], ['D', D]]) {
+      await run(db, 'UPDATE grupos_encargos SET total_grupo = ? WHERE id_perfil = ? AND letra = ?', [val, idPerfil, letra]);
+    }
   }
   return { A: Number(A.toFixed(4)), B: Number(B.toFixed(4)), C: Number(C.toFixed(4)), D: Number(D.toFixed(4)), total: Number(total.toFixed(4)) };
 }
@@ -237,9 +239,9 @@ async function listPerfis(db, query = {}) {
     ORDER BY pe.fonte_referencia, pe.uf_referencia, pe.categoria, pe.regime, pe.vigencia_inicio`, params);
 }
 
-async function getPerfil(db, idPerfil, { recalc = true } = {}) {
+async function getPerfil(db, idPerfil, { recalc = true, persist = true } = {}) {
   await ensureSchema(db);
-  if (recalc) await calcEncargos(db, idPerfil);
+  if (recalc) await calcEncargos(db, idPerfil, { persist });
   return one(db, `${selectPerfil} WHERE pe.id_perfil = ?`, [idPerfil]);
 }
 
@@ -356,10 +358,10 @@ async function listGrupos(db, idPerfil) {
   return grupos;
 }
 
-async function getMemoria(db, idPerfil) {
-  const perfil = await getPerfil(db, idPerfil);
+async function getMemoria(db, idPerfil, options = {}) {
+  const perfil = await getPerfil(db, idPerfil, options);
   if (!perfil) return null;
-  const totais = await calcEncargos(db, idPerfil);
+  const totais = await calcEncargos(db, idPerfil, options);
   const grupos = await listGrupos(db, idPerfil);
   return {
     perfil,

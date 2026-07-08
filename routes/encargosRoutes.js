@@ -3,8 +3,9 @@ const service = require('../services/encargosService');
 const repository = require('../repositories/encargosRepository');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
 
-module.exports = function(db) {
+module.exports = function(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   function asyncHandler(fn) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -75,11 +76,11 @@ module.exports = function(db) {
   }
 
   router.get('/perfis', asyncHandler(async (req, res) => {
-    res.json(await service.listPerfis(db, req.query));
+    res.json(await service.listPerfis(readDb, req.query));
   }));
 
   router.get('/perfis/:id', asyncHandler(async (req, res) => {
-    res.json(await service.getPerfil(db, req.params.id));
+    res.json(await service.getPerfil(readDb, req.params.id, { persist: false }));
   }));
 
   router.post('/perfis', asyncHandler(async (req, res) => {
@@ -103,15 +104,15 @@ module.exports = function(db) {
   }));
 
   router.get('/perfis/:id/grupos', asyncHandler(async (req, res) => {
-    res.json(await service.listGrupos(db, req.params.id));
+    res.json(await service.listGrupos(readDb, req.params.id, { persist: false }));
   }));
 
   router.get('/perfis/:id/memoria', asyncHandler(async (req, res) => {
-    res.json(await service.getMemoria(db, req.params.id));
+    res.json(await service.getMemoria(readDb, req.params.id, { persist: false }));
   }));
 
   router.get('/perfis/:id/exportar-excel', asyncHandler(async (req, res) => {
-    const memoria = await service.getMemoria(db, req.params.id);
+    const memoria = await service.getMemoria(readDb, req.params.id, { persist: false });
     const file = buildExcelHtml(memoria);
     const safeName = String(memoria.perfil.nome_perfil || `encargos_${req.params.id}`).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 80);
     res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
@@ -124,15 +125,15 @@ module.exports = function(db) {
   }));
 
   router.get('/perfis/:id/sicro-profissionais', asyncHandler(async (req, res) => {
-    res.json(await repository.listProfissionais(db, 'encargos_sicro_profissionais', { ...req.query, id_perfil: req.params.id }));
+    res.json(await repository.listProfissionais(readDb, 'encargos_sicro_profissionais', { ...req.query, id_perfil: req.params.id }));
   }));
 
   router.get('/sicro-profissionais', asyncHandler(async (req, res) => {
-    res.json(await repository.listProfissionais(db, 'encargos_sicro_profissionais', req.query));
+    res.json(await repository.listProfissionais(readDb, 'encargos_sicro_profissionais', req.query));
   }));
 
   router.get('/goinfra-profissionais', asyncHandler(async (req, res) => {
-    res.json(await repository.listProfissionais(db, 'encargos_goinfra_profissionais', req.query));
+    res.json(await repository.listProfissionais(readDb, 'encargos_goinfra_profissionais', req.query));
   }));
 
   router.post('/itens', asyncHandler(async (req, res) => {
