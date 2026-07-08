@@ -17,6 +17,8 @@ database/*.sqlite*
 !database/orcamento_obras_template.db.gz
 shared_catalog.db
 shared_catalog.db-*
+database/tenant_private_template.db
+database/tenant_private_template.db-*
 tenant_dbs/*
 !tenant_dbs/.gitkeep
 

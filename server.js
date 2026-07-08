@@ -368,7 +368,7 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
     });
   };
 
-  return runTenantMethod(method, sql, params || [], function onTenantResult(tenantErr, tenantResult) {
+  return runTenantCatalogReadMethod(method, sql, params || [], function onTenantResult(tenantErr, tenantResult) {
     const context = this;
     const missingTenantTable = tenantErr && /no such table/i.test(String(tenantErr.message || ''));
     const emptyTenantGet = !tenantErr && method === 'get' && !tenantResult;
@@ -377,6 +377,41 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
     }
     if (cb) cb.call(context, tenantErr, tenantResult);
     return undefined;
+  });
+}
+
+function runTenantCatalogReadMethod(method, sql, params, cb) {
+  const store = requestDb.getStore();
+  const dbPath = store && store.dbPath;
+  if (!dbPath || !path.resolve(dbPath).startsWith(path.resolve(TENANT_DB_DIR))) {
+    const err = new Error('Tenant nao definido para esta requisicao.');
+    if (cb) process.nextTick(() => cb(err));
+    return undefined;
+  }
+
+  const db = openSqlite(dbPath);
+  const finish = (context, err, result) => {
+    db.close(() => {
+      if (cb) requestDb.run({ dbPath }, () => cb.call(context, err, result));
+    });
+  };
+
+  if (!fs.existsSync(SHARED_CATALOG_DB_PATH)) {
+    return db[method](sql, params || [], function onRead(err, result) {
+      finish(this, err, result);
+    });
+  }
+
+  return db.run('ATTACH DATABASE ? AS catalog', [SHARED_CATALOG_DB_PATH], (attachErr) => {
+    if (attachErr) {
+      return db[method](sql, params || [], function onRead(err, result) {
+        finish(this, err, result);
+      });
+    }
+    return db[method](sql, params || [], function onCatalogRead(err, result) {
+      const context = this;
+      db.run('DETACH DATABASE catalog', [], () => finish(context, err, result));
+    });
   });
 }
 
@@ -444,6 +479,7 @@ app.get('/api/status', (_req, res) => res.json({
   phase2: {
     modelVersion: PHASE2_MODEL_VERSION,
     sharedCatalogPath: SHARED_CATALOG_DB_PATH,
+    sharedCatalogReadMode: 'tenant-first-with-attached-catalog-fallback',
     sharedCatalogReady: bootState.sharedCatalogReady,
     sharedCatalogBuilding: bootState.sharedCatalogBuilding,
     sharedCatalogError: bootState.sharedCatalogError,

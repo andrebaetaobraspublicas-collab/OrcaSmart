@@ -79,3 +79,20 @@ referenciais, e prepara o caminho para tenants futuros com bancos privados mais 
 
 As rotas de criacao, edicao, exclusao e importacao continuam gravando no banco do tenant. A promocao
 de alteracoes para o catalogo compartilhado ficara restrita ao fluxo administrativo em uma etapa futura.
+
+## Etapa 2.2 - template privado de tenant
+
+Foi criada a infraestrutura para gerar um template privado de tenant:
+
+- `utils/tenantTemplate.js`
+- `scripts/buildTenantTemplate.js`
+- comando `npm run build:tenant-template`
+
+O template resultante (`database/tenant_private_template.db`) remove as tabelas referenciais listadas no
+manifesto da Fase 2 e preserva as tabelas privadas do usuario. Ele ainda nao esta ativado no cadastro de
+novos tenants, porque algumas rotas complexas, especialmente `insumos`, `composicoes`, `bdi` e `encargos`,
+ainda precisam ser migradas para consultas hibridas com overrides.
+
+O servidor tambem passou a oferecer leitura com o catalogo anexado ao banco do tenant para as rotas
+referenciais ja migradas. Isso permite que tenants futuros, sem copia local dessas tabelas, consultem os
+dados comuns em `shared_catalog.db`.
