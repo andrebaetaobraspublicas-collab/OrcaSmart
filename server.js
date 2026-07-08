@@ -12,6 +12,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const os = require('os');
 const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
@@ -25,14 +26,11 @@ try {
 }
 
 const APP_DIR = __dirname;
-const DATA_DIR = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
-const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const LEGACY_DB_PATH = path.join(APP_DIR, 'database', 'orcamento_obras.db');
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -42,9 +40,29 @@ const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
 
 const stripe = Stripe && STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const requestDb = new AsyncLocalStorage();
+const bootState = {
+  databaseReady: false,
+  databaseError: null,
+};
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(TENANT_DB_DIR, { recursive: true });
+function ensureDataDir() {
+  const requestedDir = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
+  try {
+    fs.mkdirSync(requestedDir, { recursive: true });
+    fs.mkdirSync(path.join(requestedDir, 'tenant_dbs'), { recursive: true });
+    return requestedDir;
+  } catch (err) {
+    const fallbackDir = path.join(os.tmpdir(), 'orcasmart2-data');
+    fs.mkdirSync(fallbackDir, { recursive: true });
+    fs.mkdirSync(path.join(fallbackDir, 'tenant_dbs'), { recursive: true });
+    console.error(`Falha ao preparar DATA_DIR ${requestedDir}. Usando fallback ${fallbackDir}:`, err);
+    return fallbackDir;
+  }
+}
+
+const DATA_DIR = ensureDataDir();
+const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
+const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 
 function dbFileTemplate() {
   if (fs.existsSync(DB_TEMPLATE_PATH)) return DB_TEMPLATE_PATH;
@@ -340,6 +358,9 @@ app.get('/api/status', (_req, res) => res.json({
   build: 'sinapi-importacao-node',
   runtime: 'node',
   domain: PUBLIC_DOMAIN,
+  dataDir: DATA_DIR,
+  databaseReady: bootState.databaseReady,
+  databaseError: bootState.databaseError,
 }));
 
 app.post('/api/auth/register', async (req, res) => {
@@ -497,13 +518,19 @@ async function handleStripeEvent(event) {
   }
 }
 
+function startServer() {
+  app.listen(PORT, HOST, () => {
+    console.log(`OrçaSmart SaaS Node iniciado em http://${HOST}:${PORT}`);
+  });
+}
+
 initMasterDb()
   .then(() => {
-    app.listen(PORT, HOST, () => {
-      console.log(`OrçaSmart SaaS Node iniciado em http://${HOST}:${PORT}`);
-    });
+    bootState.databaseReady = true;
+    startServer();
   })
   .catch((err) => {
+    bootState.databaseError = err && err.message ? err.message : String(err);
     console.error('Falha ao inicializar banco SaaS:', err);
-    process.exit(1);
+    startServer();
   });
