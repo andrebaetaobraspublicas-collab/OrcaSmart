@@ -56,3 +56,26 @@ O servidor inicializa `shared_catalog.db` em segundo plano e expõe o estado em 
 3. Migrar consultas de insumos/composições para composição `tenant + catalog`.
 4. Criar novos tenants com bancos reduzidos.
 5. Bloquear edição direta de registros referenciais por usuários comuns, usando apenas overrides.
+
+## Etapa 2.1 - leitura preparada para catalogo compartilhado
+
+As primeiras rotas referenciais foram adaptadas para aceitar um banco de leitura separado:
+
+- `/api/estados`
+- `/api/municipios/estados`
+- `/api/municipios`
+- `/api/municipios/:id`
+- `/api/unidades`
+- `/api/unidades/:id`
+- `/api/fontes`
+- `/api/fontes/:id`
+- `/api/datas-base`
+- `/api/datas-base/:id`
+
+Nesta etapa, a leitura usa uma estrategia conservadora: tenta primeiro o banco do tenant e cai para
+`shared_catalog.db` quando a tabela ainda nao existir no tenant ou quando uma busca por id nao encontrar
+registro local. Isso evita quebrar tenants atuais, que ainda possuem copia completa das tabelas
+referenciais, e prepara o caminho para tenants futuros com bancos privados mais leves.
+
+As rotas de criacao, edicao, exclusao e importacao continuam gravando no banco do tenant. A promocao
+de alteracoes para o catalogo compartilhado ficara restrita ao fluxo administrativo em uma etapa futura.

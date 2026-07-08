@@ -314,6 +314,12 @@ const tenantDbProxy = {
   },
 };
 
+const sharedCatalogReadProxy = {
+  get(sql, params, cb) { return runSharedCatalogReadMethod('get', sql, params, cb); },
+  all(sql, params, cb) { return runSharedCatalogReadMethod('all', sql, params, cb); },
+  run(sql, params, cb) { return runSharedCatalogReadMethod('run', sql, params, cb); },
+};
+
 function runTenantMethod(method, sql, params, cb) {
   if (typeof params === 'function') {
     cb = params;
@@ -332,6 +338,45 @@ function runTenantMethod(method, sql, params, cb) {
     db.close(() => {
       if (cb) requestDb.run({ dbPath }, () => cb.call(context, err, result));
     });
+  });
+}
+
+function isCatalogSchemaEnsure(sql) {
+  return /^\s*CREATE\s+(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\b/i.test(String(sql || ''));
+}
+
+function runSharedCatalogReadMethod(method, sql, params, cb) {
+  if (typeof params === 'function') {
+    cb = params;
+    params = [];
+  }
+
+  if (method === 'run' && isCatalogSchemaEnsure(sql)) {
+    if (cb) process.nextTick(() => cb.call({ lastID: null, changes: 0 }, null));
+    return undefined;
+  }
+
+  const canReadCatalog = bootState.sharedCatalogReady && fs.existsSync(SHARED_CATALOG_DB_PATH);
+  const tryCatalog = () => {
+    if (!canReadCatalog) return undefined;
+    const catalogDb = openSqlite(SHARED_CATALOG_DB_PATH);
+    return catalogDb[method](sql, params || [], function onCatalogResult(catalogErr, catalogResult) {
+      const context = this;
+      catalogDb.close(() => {
+        if (cb) cb.call(context, catalogErr, catalogResult);
+      });
+    });
+  };
+
+  return runTenantMethod(method, sql, params || [], function onTenantResult(tenantErr, tenantResult) {
+    const context = this;
+    const missingTenantTable = tenantErr && /no such table/i.test(String(tenantErr.message || ''));
+    const emptyTenantGet = !tenantErr && method === 'get' && !tenantResult;
+    if (canReadCatalog && (missingTenantTable || emptyTenantGet)) {
+      return tryCatalog();
+    }
+    if (cb) cb.call(context, tenantErr, tenantResult);
+    return undefined;
   });
 }
 
@@ -514,12 +559,12 @@ app.use('/api', requireLogin);
 
 app.use('/api/obras', require('./routes/obrasRoutes')(tenantDbProxy));
 app.use('/api/orcamentos', require('./routes/orcamentosRoutes')(tenantDbProxy));
-app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy));
-app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy));
-app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy));
+app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
+app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
+app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
 app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
-app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy));
+app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy));
 app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy));
 app.use('/api/eventogramas', require('./routes/eventogramasRoutes')(tenantDbProxy));

@@ -3,27 +3,28 @@ const municipiosRepository = require('../repositories/municipiosRepository');
 const municipiosService = require('../services/municipiosService');
 const { parseMultipart, parseXlsxBuffer } = require('../utils/spreadsheetUpload');
 
-module.exports = function(db) {
+module.exports = function(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   function asyncHandler(fn) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
   }
 
   router.get('/estados', asyncHandler(async (_req, res) => {
-    res.json(await municipiosRepository.listEstados(db));
+    res.json(await municipiosRepository.listEstados(readDb));
   }));
 
   router.get('/municipios/estados', asyncHandler(async (_req, res) => {
-    res.json(await municipiosRepository.listEstados(db));
+    res.json(await municipiosRepository.listEstados(readDb));
   }));
 
   router.get('/municipios', asyncHandler(async (req, res) => {
-    res.json(await municipiosService.listMunicipios(db, req.query));
+    res.json(await municipiosService.listMunicipios(readDb, req.query));
   }));
 
   router.get('/municipios/:id', asyncHandler(async (req, res) => {
-    const row = await municipiosRepository.getMunicipio(db, req.params.id);
+    const row = await municipiosRepository.getMunicipio(readDb, req.params.id);
     if (!row) return res.status(404).json({ erro: 'Municipio nao encontrado.' });
     return res.json(row);
   }));
