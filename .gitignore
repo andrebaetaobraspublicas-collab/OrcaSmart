@@ -12,8 +12,11 @@ node_modules/
 *.sqlite
 *.sqlite3
 database/*.db
+database/*.db-*
 database/*.sqlite*
 !database/orcamento_obras_template.db.gz
+shared_catalog.db
+shared_catalog.db-*
 tenant_dbs/*
 !tenant_dbs/.gitkeep
 

@@ -18,6 +18,13 @@ const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
 const { apiNotFound, apiErrorHandler } = require('./middleware/apiErrors');
+const {
+  CATALOG_TABLES,
+  TENANT_TABLES,
+  USER_OVERRIDE_DOMAINS,
+  PHASE2_MODEL_VERSION,
+} = require('./utils/dataModelManifest');
+const { ensureSharedCatalog } = require('./utils/sharedCatalog');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -45,6 +52,10 @@ const requestDb = new AsyncLocalStorage();
 const bootState = {
   databaseReady: false,
   databaseError: null,
+  sharedCatalogReady: false,
+  sharedCatalogBuilding: false,
+  sharedCatalogError: null,
+  sharedCatalogStats: null,
 };
 
 function ensureDataDir() {
@@ -65,6 +76,13 @@ function ensureDataDir() {
 const DATA_DIR = ensureDataDir();
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
+const SHARED_CATALOG_DB_PATH = path.join(DATA_DIR, 'shared_catalog.db');
+const phase2Manifest = {
+  modelVersion: PHASE2_MODEL_VERSION,
+  catalogTables: CATALOG_TABLES,
+  tenantTables: TENANT_TABLES,
+  userOverrideDomains: USER_OVERRIDE_DOMAINS,
+};
 
 function getSqlite3() {
   if (!sqlite3) sqlite3 = require('sqlite3').verbose();
@@ -378,6 +396,17 @@ app.get('/api/status', (_req, res) => res.json({
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
   databaseError: bootState.databaseError,
+  phase2: {
+    modelVersion: PHASE2_MODEL_VERSION,
+    sharedCatalogPath: SHARED_CATALOG_DB_PATH,
+    sharedCatalogReady: bootState.sharedCatalogReady,
+    sharedCatalogBuilding: bootState.sharedCatalogBuilding,
+    sharedCatalogError: bootState.sharedCatalogError,
+    sharedCatalogStats: bootState.sharedCatalogStats,
+    catalogTables: CATALOG_TABLES.length,
+    tenantTables: TENANT_TABLES.length,
+    userOverrideDomains: USER_OVERRIDE_DOMAINS,
+  },
 }));
 
 app.post('/api/auth/register', async (req, res) => {
@@ -541,13 +570,41 @@ function startServer() {
   });
 }
 
+async function initializeSharedCatalog() {
+  if (bootState.sharedCatalogBuilding || bootState.sharedCatalogReady) return;
+  bootState.sharedCatalogBuilding = true;
+  bootState.sharedCatalogError = null;
+  try {
+    const sqlite = getSqlite3();
+    bootState.sharedCatalogStats = await ensureSharedCatalog({
+      sqlite3: sqlite,
+      paths: {
+        dataDir: DATA_DIR,
+        sharedCatalogPath: SHARED_CATALOG_DB_PATH,
+        templatePath: DB_TEMPLATE_PATH,
+        templateGzPath: DB_TEMPLATE_GZ_PATH,
+        legacyPath: LEGACY_DB_PATH,
+      },
+      manifest: phase2Manifest,
+    });
+    bootState.sharedCatalogReady = true;
+  } catch (err) {
+    bootState.sharedCatalogError = err && err.message ? err.message : String(err);
+    console.error('Falha ao inicializar catalogo compartilhado:', err);
+  } finally {
+    bootState.sharedCatalogBuilding = false;
+  }
+}
+
 initMasterDb()
   .then(() => {
     bootState.databaseReady = true;
     startServer();
+    initializeSharedCatalog();
   })
   .catch((err) => {
     bootState.databaseError = err && err.message ? err.message : String(err);
     console.error('Falha ao inicializar banco SaaS:', err);
     startServer();
+    initializeSharedCatalog();
   });

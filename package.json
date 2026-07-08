@@ -9,7 +9,8 @@
         "audit-db": "python database/auditar_integridade.py",
         "init-db": "python database/init.py",
         "start:python": "python server.py",
-        "init-db:node": "node database/init.js"
+        "init-db:node": "node database/init.js",
+        "build:shared-catalog": "node scripts/buildSharedCatalog.js --force"
     },
     "dependencies": {
         "cors": "^2.8.5",
