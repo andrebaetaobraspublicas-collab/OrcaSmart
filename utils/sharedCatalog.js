@@ -92,6 +92,7 @@ async function createMetadata(targetDb, manifest) {
     catalog_tables: JSON.stringify(manifest.catalogTables),
     tenant_tables: JSON.stringify(manifest.tenantTables),
     user_override_domains: JSON.stringify(manifest.userOverrideDomains),
+    user_override_tables: JSON.stringify(manifest.userOverrideTables || []),
   };
   for (const [key, value] of Object.entries(entries)) {
     await run(targetDb, 'INSERT INTO orcasmart_catalog_meta (key, value) VALUES (?, ?)', [key, value]);

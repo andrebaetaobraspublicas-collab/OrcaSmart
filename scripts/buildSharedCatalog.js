@@ -5,6 +5,7 @@ const {
   CATALOG_TABLES,
   TENANT_TABLES,
   USER_OVERRIDE_DOMAINS,
+  USER_OVERRIDE_TABLES,
   PHASE2_MODEL_VERSION,
 } = require('../utils/dataModelManifest');
 const { ensureSharedCatalog } = require('../utils/sharedCatalog');
@@ -29,6 +30,7 @@ async function main() {
       catalogTables: CATALOG_TABLES,
       tenantTables: TENANT_TABLES,
       userOverrideDomains: USER_OVERRIDE_DOMAINS,
+      userOverrideTables: USER_OVERRIDE_TABLES,
     },
   });
 

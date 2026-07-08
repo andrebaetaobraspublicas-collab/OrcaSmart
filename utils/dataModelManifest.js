@@ -46,11 +46,28 @@ const USER_OVERRIDE_DOMAINS = [
   'precos_equipamentos',
 ];
 
+const USER_OVERRIDE_TABLES = [
+  'tenant_componentes_bdi',
+  'tenant_composicoes',
+  'tenant_composicoes_secao_itens',
+  'tenant_composicoes_secoes',
+  'tenant_grupos_encargos',
+  'tenant_insumos',
+  'tenant_itens_composicao',
+  'tenant_itens_encargo',
+  'tenant_perfis_bdi',
+  'tenant_perfis_encargos',
+  'tenant_precos_equipamentos',
+  'tenant_precos_insumos',
+  'tenant_referential_overrides',
+];
+
 const PHASE2_MODEL_VERSION = 1;
 
 module.exports = {
   CATALOG_TABLES,
   TENANT_TABLES,
   USER_OVERRIDE_DOMAINS,
+  USER_OVERRIDE_TABLES,
   PHASE2_MODEL_VERSION,
 };

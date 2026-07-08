@@ -58,7 +58,67 @@ async function clearTenantTables(db, manifest) {
   return clearedTables;
 }
 
-async function createTenantMetadata(db, manifest, droppedTables, clearedTables) {
+const OVERRIDE_SOURCE_TABLES = [
+  'componentes_bdi',
+  'composicoes',
+  'composicoes_secao_itens',
+  'composicoes_secoes',
+  'grupos_encargos',
+  'insumos',
+  'itens_composicao',
+  'itens_encargo',
+  'perfis_bdi',
+  'perfis_encargos',
+  'precos_equipamentos',
+  'precos_insumos',
+];
+
+async function createOverrideTables(db) {
+  const createdTables = [];
+  for (const sourceTable of OVERRIDE_SOURCE_TABLES) {
+    const exists = await get(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [sourceTable],
+    );
+    if (!exists) continue;
+    const targetTable = `tenant_${sourceTable}`;
+    await run(db, `DROP TABLE IF EXISTS ${quoteIdent(targetTable)}`);
+    await run(db, `CREATE TABLE ${quoteIdent(targetTable)} AS SELECT * FROM ${quoteIdent(sourceTable)} WHERE 0`);
+    await run(db, `ALTER TABLE ${quoteIdent(targetTable)} ADD COLUMN tenant_catalog_id INTEGER`);
+    await run(db, `ALTER TABLE ${quoteIdent(targetTable)} ADD COLUMN tenant_override_action TEXT NOT NULL DEFAULT 'create'`);
+    await run(db, `ALTER TABLE ${quoteIdent(targetTable)} ADD COLUMN tenant_override_status TEXT NOT NULL DEFAULT 'active'`);
+    await run(db, `ALTER TABLE ${quoteIdent(targetTable)} ADD COLUMN tenant_created_at TEXT`);
+    await run(db, `ALTER TABLE ${quoteIdent(targetTable)} ADD COLUMN tenant_updated_at TEXT`);
+    await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_catalog`)} ON ${quoteIdent(targetTable)} (tenant_catalog_id)`);
+    await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_status`)} ON ${quoteIdent(targetTable)} (tenant_override_status)`);
+    createdTables.push(targetTable);
+  }
+
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS tenant_referential_overrides (
+      id_override INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL,
+      catalog_table TEXT NOT NULL,
+      catalog_id INTEGER,
+      tenant_table TEXT,
+      tenant_rowid INTEGER,
+      action TEXT NOT NULL CHECK(action IN ('create','update','delete','preserve')),
+      impact_policy TEXT NOT NULL DEFAULT 'preserve',
+      payload_json TEXT,
+      impact_json TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT
+    )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_tenant_referential_overrides_domain ON tenant_referential_overrides (domain, catalog_table, catalog_id)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_tenant_referential_overrides_status ON tenant_referential_overrides (status)');
+  createdTables.push('tenant_referential_overrides');
+
+  return createdTables;
+}
+
+async function createTenantMetadata(db, manifest, droppedTables, clearedTables, createdOverrideTables = []) {
   await run(db, `
     CREATE TABLE IF NOT EXISTS orcasmart_tenant_meta (
       key TEXT PRIMARY KEY,
@@ -69,6 +129,8 @@ async function createTenantMetadata(db, manifest, droppedTables, clearedTables) 
     model_version: String(manifest.modelVersion),
     generated_at: new Date().toISOString(),
     tenant_tables: JSON.stringify(manifest.tenantTables),
+    user_override_tables: JSON.stringify(manifest.userOverrideTables || []),
+    user_override_tables_created: JSON.stringify(createdOverrideTables),
     catalog_tables_removed: JSON.stringify(droppedTables),
     tenant_tables_cleared: JSON.stringify(clearedTables),
     note: 'Template privado experimental. As tabelas referenciais devem ser lidas do shared_catalog.db.',
@@ -114,8 +176,10 @@ async function buildTenantTemplate(options) {
 
   const db = new sqlite3.Database(tempFile);
   const droppedTables = [];
+  let overrideTables = [];
   try {
     await run(db, 'PRAGMA foreign_keys = OFF');
+    overrideTables = await createOverrideTables(db);
     for (const table of [...manifest.catalogTables].reverse()) {
       const exists = await get(
         db,
@@ -127,7 +191,7 @@ async function buildTenantTemplate(options) {
       droppedTables.push(table);
     }
     const clearedTables = await clearTenantTables(db, manifest);
-    await createTenantMetadata(db, manifest, droppedTables, clearedTables);
+    await createTenantMetadata(db, manifest, droppedTables, clearedTables, overrideTables);
     await run(db, 'VACUUM');
   } finally {
     await new Promise(resolve => db.close(resolve));
@@ -139,6 +203,7 @@ async function buildTenantTemplate(options) {
     created: true,
     path: paths.tenantTemplatePath,
     droppedTables: droppedTables.length,
+    overrideTables: overrideTables.length,
   };
 }
 

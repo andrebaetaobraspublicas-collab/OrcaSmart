@@ -22,6 +22,7 @@ const {
   CATALOG_TABLES,
   TENANT_TABLES,
   USER_OVERRIDE_DOMAINS,
+  USER_OVERRIDE_TABLES,
   PHASE2_MODEL_VERSION,
 } = require('./utils/dataModelManifest');
 const { ensureSharedCatalog } = require('./utils/sharedCatalog');
@@ -82,6 +83,7 @@ const phase2Manifest = {
   catalogTables: CATALOG_TABLES,
   tenantTables: TENANT_TABLES,
   userOverrideDomains: USER_OVERRIDE_DOMAINS,
+  userOverrideTables: USER_OVERRIDE_TABLES,
 };
 
 function getSqlite3() {
@@ -487,6 +489,7 @@ app.get('/api/status', (_req, res) => res.json({
     catalogTables: CATALOG_TABLES.length,
     tenantTables: TENANT_TABLES.length,
     userOverrideDomains: USER_OVERRIDE_DOMAINS,
+    userOverrideTables: USER_OVERRIDE_TABLES,
   },
 }));
 
