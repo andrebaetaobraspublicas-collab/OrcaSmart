@@ -1,15 +1,16 @@
 const express = require('express');
 const service = require('../services/insumosService');
 
-module.exports = function insumosRoutes(db) {
+module.exports = function insumosRoutes(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
   router.get('/grupos', asyncHandler(async (_req, res) => {
-    res.json(await service.listGrupos(db));
+    res.json(await service.listGrupos(readDb));
   }));
 
   router.post('/grupos', asyncHandler(async (req, res) => {
@@ -25,7 +26,7 @@ module.exports = function insumosRoutes(db) {
   }));
 
   router.get('/stats', asyncHandler(async (_req, res) => {
-    res.json(await service.stats(db));
+    res.json(await service.stats(readDb));
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
@@ -33,15 +34,15 @@ module.exports = function insumosRoutes(db) {
   }));
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await service.listInsumos(db, req.query || {}));
+    res.json(await service.listInsumos(readDb, req.query || {}));
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.getInsumo(db, req.params.id));
+    res.json(await service.getInsumo(readDb, req.params.id));
   }));
 
   router.get('/:id/impacto', asyncHandler(async (req, res) => {
-    res.json(await service.getImpacto(db, req.params.id));
+    res.json(await service.getImpacto(readDb, req.params.id));
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
@@ -58,7 +59,7 @@ module.exports = function insumosRoutes(db) {
   }));
 
   router.get('/:id/precos', asyncHandler(async (req, res) => {
-    res.json(await service.listPrecos(db, req.params.id));
+    res.json(await service.listPrecos(readDb, req.params.id));
   }));
 
   router.post('/:id/precos', asyncHandler(async (req, res) => {

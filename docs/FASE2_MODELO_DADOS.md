@@ -96,3 +96,18 @@ ainda precisam ser migradas para consultas hibridas com overrides.
 O servidor tambem passou a oferecer leitura com o catalogo anexado ao banco do tenant para as rotas
 referenciais ja migradas. Isso permite que tenants futuros, sem copia local dessas tabelas, consultem os
 dados comuns em `shared_catalog.db`.
+
+## Etapa 2.3 - leituras iniciais de insumos
+
+As rotas de consulta de insumos passaram a usar o mesmo proxy de leitura hibrida:
+
+- `/api/insumos/grupos`
+- `/api/insumos/stats`
+- `/api/insumos`
+- `/api/insumos/:id`
+- `/api/insumos/:id/impacto`
+- `/api/insumos/:id/precos`
+
+As rotas de criacao, edicao, exclusao, precos e exclusao em lote continuam gravando no banco do tenant.
+Isso preserva o comportamento atual para usuarios existentes e permite validar, em tenants experimentais
+enxutos, a consulta de insumos referenciais diretamente pelo catalogo compartilhado.

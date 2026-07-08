@@ -599,7 +599,7 @@ app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy, { rea
 app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
-app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy));
+app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy));
 app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy));
