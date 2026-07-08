@@ -16,8 +16,8 @@ const os = require('os');
 const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const { apiNotFound, apiErrorHandler } = require('./middleware/apiErrors');
+let sqlite3 = null;
 let Stripe = null;
 try {
   Stripe = require('stripe');
@@ -64,6 +64,11 @@ const DATA_DIR = ensureDataDir();
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 
+function getSqlite3() {
+  if (!sqlite3) sqlite3 = require('sqlite3').verbose();
+  return sqlite3;
+}
+
 function dbFileTemplate() {
   if (fs.existsSync(DB_TEMPLATE_PATH)) return DB_TEMPLATE_PATH;
   if (fs.existsSync(LEGACY_DB_PATH)) return LEGACY_DB_PATH;
@@ -71,7 +76,8 @@ function dbFileTemplate() {
 }
 
 function openSqlite(filePath) {
-  const db = new sqlite3.Database(filePath);
+  const sqlite = getSqlite3();
+  const db = new sqlite.Database(filePath);
   db.configure('busyTimeout', 10000);
   db.run('PRAGMA foreign_keys = ON');
   db.run('PRAGMA busy_timeout = 10000');
