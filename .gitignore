@@ -13,6 +13,7 @@ node_modules/
 *.sqlite3
 database/*.db
 database/*.sqlite*
+!database/orcamento_obras_template.db.gz
 tenant_dbs/*
 !tenant_dbs/.gitkeep
 

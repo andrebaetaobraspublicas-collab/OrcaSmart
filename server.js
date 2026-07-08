@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
+const zlib = require('zlib');
 const { AsyncLocalStorage } = require('async_hooks');
 
 const cors = require('cors');
@@ -32,6 +33,7 @@ const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br'
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
+const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const LEGACY_DB_PATH = path.join(APP_DIR, 'database', 'orcamento_obras.db');
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
@@ -72,6 +74,15 @@ function getSqlite3() {
 function dbFileTemplate() {
   if (fs.existsSync(DB_TEMPLATE_PATH)) return DB_TEMPLATE_PATH;
   if (fs.existsSync(LEGACY_DB_PATH)) return LEGACY_DB_PATH;
+  if (fs.existsSync(DB_TEMPLATE_GZ_PATH)) {
+    const extractedTemplate = path.join(DATA_DIR, 'orcamento_obras_template.db');
+    if (!fs.existsSync(extractedTemplate)) {
+      const tempFile = `${extractedTemplate}.tmp`;
+      fs.writeFileSync(tempFile, zlib.gunzipSync(fs.readFileSync(DB_TEMPLATE_GZ_PATH)));
+      fs.renameSync(tempFile, extractedTemplate);
+    }
+    return extractedTemplate;
+  }
   return DB_TEMPLATE_PATH;
 }
 
