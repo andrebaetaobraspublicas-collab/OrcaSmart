@@ -604,7 +604,7 @@ app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy, { readDb: sh
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/eventogramas', require('./routes/eventogramasRoutes')(tenantDbProxy));
-app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy));
+app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
 app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));

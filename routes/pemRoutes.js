@@ -1,23 +1,24 @@
 const express = require('express');
 const service = require('../services/pemService');
 
-module.exports = function pemRoutes(db) {
+module.exports = function pemRoutes(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
   router.get('/stats', asyncHandler(async (_req, res) => {
-    res.json(await service.stats(db));
+    res.json(await service.stats(readDb));
   }));
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await service.list(db, req.query || {}));
+    res.json(await service.list(readDb, req.query || {}));
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.getById(db, req.params.id));
+    res.json(await service.getById(readDb, req.params.id));
   }));
 
   router.put('/equipamentos/:id', asyncHandler(async (req, res) => {
