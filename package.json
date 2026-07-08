@@ -1,31 +1,31 @@
-﻿{
-    "name":  "orcasmart2-saas",
-    "version":  "2.0.0-alpha.1",
-    "description":  "OrcaSmart2 SaaS - backend Node.js consolidado",
-    "main":  "server.js",
-    "scripts":  {
-                    "start":  "node server.js",
-                    "dev":  "node server.js",
-                    "audit-db":  "python database/auditar_integridade.py",
-                    "init-db":  "python database/init.py",
-                    "start:python":  "python server.py",
-                    "init-db:node":  "node database/init.js"
-                },
-    "dependencies":  {
-                         "cors":  "^2.8.5",
-                         "express":  "^4.18.2",
-                         "sqlite3":  "^6.0.1",
-                         "stripe":  "^17.5.0"
-                     },
-    "devDependencies":  {
-                            "nodemon":  "^3.0.1"
-                        },
-    "keywords":  [
-                     "orcamento",
-                     "obras",
-                     "engenharia",
-                     "custos"
-                 ],
-    "author":  "",
-    "license":  "ISC"
+{
+    "name": "orcasmart2-saas",
+    "version": "2.0.0-alpha.1",
+    "description": "OrcaSmart2 SaaS - backend Node.js consolidado",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "node server.js",
+        "audit-db": "python database/auditar_integridade.py",
+        "init-db": "python database/init.py",
+        "start:python": "python server.py",
+        "init-db:node": "node database/init.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "sqlite3": "^5.1.7",
+        "stripe": "^17.5.0"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.1"
+    },
+    "keywords": [
+        "orcamento",
+        "obras",
+        "engenharia",
+        "custos"
+    ],
+    "author": "",
+    "license": "ISC"
 }
