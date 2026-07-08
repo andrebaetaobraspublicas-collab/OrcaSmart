@@ -88,7 +88,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.put('/perfis/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updatePerfil(db, req.params.id, req.body || {}));
+    res.json(await service.updatePerfil(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   router.delete('/perfis/:id', asyncHandler(async (req, res) => {
@@ -96,7 +96,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/perfis/:id/duplicar', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.duplicatePerfil(db, req.params.id));
+    res.status(201).json(await service.duplicatePerfil(db, req.params.id, { readDb }));
   }));
 
   router.post('/perfis/:id/recalcular-d', asyncHandler(async (req, res) => {

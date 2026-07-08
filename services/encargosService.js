@@ -51,9 +51,11 @@ async function createPerfil(db, data) {
   return repository.createPerfil(db, data);
 }
 
-async function updatePerfil(db, idPerfil, data) {
+async function updatePerfil(db, idPerfil, data, options = {}) {
   assertPerfilPayload(data);
-  const perfil = await repository.updatePerfil(db, idPerfil, data);
+  const current = options.readDb ? await repository.getPerfil(options.readDb, idPerfil, { recalc: false, persist: false }).catch(() => null) : null;
+  const grupos = options.readDb ? await repository.listGrupos(options.readDb, idPerfil).catch(() => []) : [];
+  const perfil = await repository.updatePerfil(db, idPerfil, { ...(current || {}), ...data, _grupos: grupos });
   if (!perfil) {
     const err = new Error('Perfil nao encontrado.');
     err.status = 404;
@@ -72,8 +74,8 @@ async function deletePerfil(db, idPerfil) {
   return { mensagem: 'Perfil excluido.' };
 }
 
-async function duplicatePerfil(db, idPerfil) {
-  const perfil = await repository.duplicatePerfil(db, idPerfil);
+async function duplicatePerfil(db, idPerfil, options = {}) {
+  const perfil = await repository.duplicatePerfil(db, idPerfil, options);
   if (!perfil) {
     const err = new Error('Perfil nao encontrado.');
     err.status = 404;

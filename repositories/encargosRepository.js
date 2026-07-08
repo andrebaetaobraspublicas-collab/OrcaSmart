@@ -59,6 +59,47 @@ async function addColumnIfMissing(db, table, column, ddl) {
   if (!(await hasColumn(db, table, column))) await run(db, `ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function scopedId(id) {
+  const value = String(id || '').trim();
+  if (value.startsWith('tenant:')) return { scope: 'tenant', value: Number(value.slice(7)) };
+  return { scope: 'catalog', value };
+}
+
+async function tableExists(db, table, schema = 'main') {
+  const row = await one(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+    [table],
+  ).catch(() => null);
+  return !!row;
+}
+
+async function hasTenantEncargosOverrides(db) {
+  return tableExists(db, 'tenant_perfis_encargos');
+}
+
+async function hasCatalogEncargos(db) {
+  return tableExists(db, 'perfis_encargos', 'catalog');
+}
+
+async function useTenantCatalogRead(db) {
+  return (await hasTenantEncargosOverrides(db)) && (await hasCatalogEncargos(db));
+}
+
+function visibleCatalogPerfilClause(alias = 'pe') {
+  return `
+    NOT EXISTS (
+      SELECT 1 FROM tenant_referential_overrides r
+      WHERE r.domain='encargos_sociais' AND r.catalog_table='perfis_encargos'
+        AND r.catalog_id=${alias}.id_perfil AND r.status='active'
+        AND r.action IN ('update','delete')
+    )`;
+}
+
 async function ensureSchema(db) {
   await run(db, `
     CREATE TABLE IF NOT EXISTS perfis_encargos (
@@ -152,6 +193,25 @@ async function ensureSchema(db) {
 }
 
 async function sumGrupo(db, idPerfil, letra) {
+  const scoped = scopedId(idPerfil);
+  if ((await hasTenantEncargosOverrides(db)) && scoped.scope === 'tenant') {
+    const row = await one(db, `
+      SELECT COALESCE(SUM(ie.percentual), 0) AS total
+      FROM tenant_itens_encargo ie
+      JOIN tenant_grupos_encargos ge ON ie.id_grupo_enc = ge.rowid
+      WHERE ge.id_perfil = ? AND ge.letra = ?
+        AND COALESCE(ge.tenant_override_status,'active')='active'
+        AND COALESCE(ie.tenant_override_status,'active')='active'`, [scoped.value, letra]);
+    return toNum(row?.total);
+  }
+  if (await useTenantCatalogRead(db)) {
+    const row = await one(db, `
+      SELECT COALESCE(SUM(ie.percentual), 0) AS total
+      FROM catalog.itens_encargo ie
+      JOIN catalog.grupos_encargos ge ON ie.id_grupo_enc = ge.id_grupo_enc
+      WHERE ge.id_perfil = ? AND ge.letra = ?`, [scoped.value, letra]);
+    return toNum(row?.total);
+  }
   const row = await one(db, `
     SELECT COALESCE(SUM(ie.percentual), 0) AS total
     FROM itens_encargo ie
@@ -161,28 +221,46 @@ async function sumGrupo(db, idPerfil, letra) {
 }
 
 async function calcEncargos(db, idPerfil, { recalcD = false, persist = true } = {}) {
-  await ensureSchema(db);
+  const tenantMode = await hasTenantEncargosOverrides(db);
+  const scoped = scopedId(idPerfil);
+  if (!tenantMode) await ensureSchema(db);
   const A = await sumGrupo(db, idPerfil, 'A');
   const B = await sumGrupo(db, idPerfil, 'B');
   const C = await sumGrupo(db, idPerfil, 'C');
   let D = await sumGrupo(db, idPerfil, 'D');
 
-  if (recalcD && persist) {
+  if (recalcD && persist && (!tenantMode || scoped.scope === 'tenant')) {
     const fator = 1 + A / 100;
     const dSobreB = Number((fator * B - B).toFixed(6));
     const dSobreC = Number((fator * C - C).toFixed(6));
     D = Number((dSobreB + dSobreC).toFixed(6));
-    const grupoD = await one(db, "SELECT id_grupo_enc FROM grupos_encargos WHERE id_perfil = ? AND letra = 'D'", [idPerfil]);
+    const grupoTable = tenantMode ? 'tenant_grupos_encargos' : 'grupos_encargos';
+    const itemTable = tenantMode ? 'tenant_itens_encargo' : 'itens_encargo';
+    const idCol = tenantMode ? 'rowid' : 'id_grupo_enc';
+    const idPerfilValue = tenantMode ? scoped.value : idPerfil;
+    const grupoD = await one(db, `SELECT ${idCol} AS id_grupo_enc FROM ${grupoTable} WHERE id_perfil = ? AND letra = 'D'`, [idPerfilValue]);
     if (grupoD) {
-      const itensD = await all(db, 'SELECT id_item FROM itens_encargo WHERE id_grupo_enc = ? ORDER BY ordem, id_item', [grupoD.id_grupo_enc]);
-      if (itensD[0]) await run(db, 'UPDATE itens_encargo SET percentual = ? WHERE id_item = ?', [dSobreB, itensD[0].id_item]);
-      if (itensD[1]) await run(db, 'UPDATE itens_encargo SET percentual = ? WHERE id_item = ?', [dSobreC, itensD[1].id_item]);
-      await run(db, 'UPDATE grupos_encargos SET total_grupo = ? WHERE id_grupo_enc = ?', [D, grupoD.id_grupo_enc]);
+      const itemIdCol = tenantMode ? 'rowid' : 'id_item';
+      const itensD = await all(db, `SELECT ${itemIdCol} AS id_item FROM ${itemTable} WHERE id_grupo_enc = ? ORDER BY ordem, ${itemIdCol}`, [grupoD.id_grupo_enc]);
+      if (itensD[0]) await run(db, `UPDATE ${itemTable} SET percentual = ? WHERE ${itemIdCol} = ?`, [dSobreB, itensD[0].id_item]);
+      if (itensD[1]) await run(db, `UPDATE ${itemTable} SET percentual = ? WHERE ${itemIdCol} = ?`, [dSobreC, itensD[1].id_item]);
+      await run(db, `UPDATE ${grupoTable} SET total_grupo = ? WHERE ${idCol} = ?`, [D, grupoD.id_grupo_enc]);
     }
   }
 
   const total = Number((A + B + C + D).toFixed(6));
-  if (persist) {
+  if (persist && (!tenantMode || scoped.scope === 'tenant')) {
+    if (tenantMode) {
+      await run(db, `
+        UPDATE tenant_perfis_encargos
+        SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?,
+            tenant_updated_at = ?
+        WHERE rowid = ?`, [A, B, C, D, total, new Date().toISOString(), scoped.value]);
+      for (const [letra, val] of [['A', A], ['B', B], ['C', C], ['D', D]]) {
+        await run(db, 'UPDATE tenant_grupos_encargos SET total_grupo = ?, tenant_updated_at = ? WHERE id_perfil = ? AND letra = ?', [val, new Date().toISOString(), scoped.value, letra]);
+      }
+      return { A: Number(A.toFixed(4)), B: Number(B.toFixed(4)), C: Number(C.toFixed(4)), D: Number(D.toFixed(4)), total: Number(total.toFixed(4)) };
+    }
     await run(db, `
       UPDATE perfis_encargos
       SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?
@@ -200,7 +278,18 @@ const selectPerfil = `
   LEFT JOIN datas_base db2 ON pe.id_data_base = db2.id_data_base`;
 
 async function listPerfis(db, query = {}) {
-  await ensureSchema(db);
+  if (await useTenantCatalogRead(db)) {
+    const catalog = buildPerfilListSelect(query, 'catalog');
+    const tenant = buildPerfilListSelect(query, 'tenant');
+    return all(db, `
+      SELECT * FROM (
+        ${catalog.sql}
+        UNION ALL
+        ${tenant.sql}
+      )
+      ORDER BY fonte_referencia, uf_referencia, categoria, regime, vigencia_inicio`, [...catalog.params, ...tenant.params]);
+  }
+  if (!(await hasTenantEncargosOverrides(db))) await ensureSchema(db);
   const where = ['1=1'];
   const params = [];
   if (query.fonte) {
@@ -239,13 +328,97 @@ async function listPerfis(db, query = {}) {
     ORDER BY pe.fonte_referencia, pe.uf_referencia, pe.categoria, pe.regime, pe.vigencia_inicio`, params);
 }
 
+function buildPerfilListSelect(query = {}, source = 'catalog') {
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_perfis_encargos' : 'catalog.perfis_encargos';
+  const dataTable = isTenant ? 'datas_base' : 'catalog.datas_base';
+  const where = ['1=1'];
+  const params = [];
+  if (isTenant) where.push("COALESCE(pe.tenant_override_status,'active')='active'");
+  else where.push(visibleCatalogPerfilClause('pe'));
+  if (query.fonte) { where.push("UPPER(COALESCE(pe.fonte_referencia, '')) = ?"); params.push(String(query.fonte).toUpperCase()); }
+  if (query.uf) { where.push('pe.uf_referencia = ?'); params.push(query.uf); }
+  if (query.categoria && !String(query.categoria).startsWith('Profissional')) { where.push('pe.categoria = ?'); params.push(query.categoria); }
+  if (query.regime) { where.push('pe.regime = ?'); params.push(query.regime); }
+  if (query.situacao) { where.push('pe.situacao = ?'); params.push(query.situacao); }
+  if (query.vigencia_inicio_mes) { where.push("substr(COALESCE(pe.vigencia_inicio, ''), 1, 7) = ?"); params.push(query.vigencia_inicio_mes); }
+  if (query.vigencia_fim_mes) { where.push("substr(COALESCE(pe.vigencia_fim, ''), 1, 7) = ?"); params.push(query.vigencia_fim_mes); }
+  if (query.q) { where.push('pe.nome_perfil LIKE ?'); params.push(`%${query.q}%`); }
+  return {
+    sql: `
+      SELECT ${isTenant ? "'tenant:' || pe.rowid" : 'CAST(pe.id_perfil AS TEXT)'} AS id_perfil,
+             pe.nome_perfil, pe.categoria, pe.regime, pe.uf_referencia, pe.id_data_base,
+             pe.descricao, pe.total_grupo_a, pe.total_grupo_b, pe.total_grupo_c,
+             pe.total_grupo_d, pe.encargo_total, pe.observacoes, pe.situacao,
+             pe.vigencia, pe.fonte_referencia, pe.vigencia_inicio, pe.vigencia_fim,
+             pe.encargo_original_percentual,
+             db2.mes AS db_mes, db2.ano AS db_ano,
+             ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
+             ${isTenant ? 'pe.tenant_catalog_id' : 'pe.id_perfil'} AS _catalog_id
+      FROM ${table} pe
+      LEFT JOIN ${dataTable} db2 ON pe.id_data_base = db2.id_data_base
+      WHERE ${where.join(' AND ')}`,
+    params,
+  };
+}
+
 async function getPerfil(db, idPerfil, { recalc = true, persist = true } = {}) {
+  const scoped = scopedId(idPerfil);
+  const tenantMode = await hasTenantEncargosOverrides(db);
+  if (tenantMode && scoped.scope === 'tenant') {
+    if (recalc) await calcEncargos(db, idPerfil, { persist });
+    return one(db, `
+      SELECT pe.*, 'tenant:' || pe.rowid AS id_perfil, NULL AS db_mes, NULL AS db_ano,
+             'tenant' AS _tenant_scope, pe.tenant_catalog_id AS _catalog_id
+      FROM tenant_perfis_encargos pe
+      WHERE pe.rowid = ? AND COALESCE(pe.tenant_override_status,'active')='active'`, [scoped.value]);
+  }
+  if (await useTenantCatalogRead(db)) {
+    const deleted = await one(db, `
+      SELECT 1 FROM tenant_referential_overrides
+      WHERE domain='encargos_sociais' AND catalog_table='perfis_encargos' AND catalog_id=?
+        AND status='active' AND action='delete'
+      LIMIT 1`, [scoped.value]);
+    if (deleted) return null;
+    const override = await one(db, `
+      SELECT rowid AS tenant_rowid
+      FROM tenant_perfis_encargos
+      WHERE tenant_catalog_id=? AND tenant_override_action='update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (override) return getPerfil(db, `tenant:${override.tenant_rowid}`, { recalc, persist });
+    if (recalc) await calcEncargos(db, idPerfil, { persist: false });
+    return one(db, `
+      SELECT pe.*, CAST(pe.id_perfil AS TEXT) AS id_perfil, db2.mes AS db_mes, db2.ano AS db_ano,
+             'catalog' AS _tenant_scope, pe.id_perfil AS _catalog_id
+      FROM catalog.perfis_encargos pe
+      LEFT JOIN catalog.datas_base db2 ON pe.id_data_base = db2.id_data_base
+      WHERE pe.id_perfil = ? AND ${visibleCatalogPerfilClause('pe')}`, [scoped.value]);
+  }
   await ensureSchema(db);
   if (recalc) await calcEncargos(db, idPerfil, { persist });
   return one(db, `${selectPerfil} WHERE pe.id_perfil = ?`, [idPerfil]);
 }
 
 async function createPerfil(db, data) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const result = await insertTenantPerfil(db, data, { action: data.tenant_override_action || 'create', catalogId: data.tenant_catalog_id || null });
+    const descs = {
+      A: 'Encargos Basicos',
+      B: 'Encargos sobre Tempo Trabalhado',
+      C: 'Encargos Rescisorios',
+      D: 'Incidencia de A sobre B e C',
+    };
+    for (const letra of ['A', 'B', 'C', 'D']) {
+      await insertTenantGrupo(db, {
+        id_perfil: result.lastID,
+        letra,
+        descricao: descs[letra],
+        total_grupo: 0,
+      });
+    }
+    return getPerfil(db, `tenant:${result.lastID}`);
+  }
   await ensureSchema(db);
   const result = await run(db, `
     INSERT INTO perfis_encargos
@@ -279,6 +452,27 @@ async function createPerfil(db, data) {
 }
 
 async function updatePerfil(db, idPerfil, data) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const scoped = scopedId(idPerfil);
+    if (scoped.scope === 'tenant') {
+      const result = await updateTenantPerfil(db, scoped.value, data);
+      if (!result.changes) return null;
+      return getPerfil(db, `tenant:${scoped.value}`);
+    }
+    const existing = await one(db, `
+      SELECT rowid AS rowid FROM tenant_perfis_encargos
+      WHERE tenant_catalog_id=? AND tenant_override_action='update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (existing) {
+      await updateTenantPerfil(db, existing.rowid, data);
+      await recordEncargosOverride(db, { catalogId: Number(scoped.value), tenantRowid: existing.rowid, action: 'update', payload: data });
+      return getPerfil(db, `tenant:${existing.rowid}`);
+    }
+    const result = await insertTenantPerfil(db, data, { catalogId: Number(scoped.value), action: 'update' });
+    await copyCatalogPerfilChildrenToTenant(db, data._grupos || [], result.lastID);
+    return getPerfil(db, `tenant:${result.lastID}`);
+  }
   await ensureSchema(db);
   const result = await run(db, `
     UPDATE perfis_encargos SET
@@ -306,14 +500,34 @@ async function updatePerfil(db, idPerfil, data) {
 }
 
 async function deletePerfil(db, idPerfil) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const scoped = scopedId(idPerfil);
+    if (scoped.scope === 'tenant') {
+      await run(db, "UPDATE tenant_itens_encargo SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_grupo_enc IN (SELECT rowid FROM tenant_grupos_encargos WHERE id_perfil=?)", [new Date().toISOString(), scoped.value]);
+      await run(db, "UPDATE tenant_grupos_encargos SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_perfil=?", [new Date().toISOString(), scoped.value]);
+      return run(db, "UPDATE tenant_perfis_encargos SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=? WHERE rowid=?", [new Date().toISOString(), scoped.value]);
+    }
+    await recordEncargosOverride(db, { catalogId: Number(scoped.value), tenantRowid: null, action: 'delete', payload: {} });
+    return { changes: 1 };
+  }
   await ensureSchema(db);
   return run(db, 'DELETE FROM perfis_encargos WHERE id_perfil = ?', [idPerfil]);
 }
 
-async function duplicatePerfil(db, idPerfil) {
-  await ensureSchema(db);
-  const perfil = await one(db, 'SELECT * FROM perfis_encargos WHERE id_perfil = ?', [idPerfil]);
+async function duplicatePerfil(db, idPerfil, options = {}) {
+  const tenantMode = await hasTenantEncargosOverrides(db);
+  const scoped = scopedId(idPerfil);
+  const readDb = options.readDb || db;
+  const perfil = tenantMode ? await getPerfil(scoped.scope === 'tenant' ? db : readDb, idPerfil, { recalc: false, persist: false }) : await one(db, 'SELECT * FROM perfis_encargos WHERE id_perfil = ?', [idPerfil]);
   if (!perfil) return null;
+  if (tenantMode) {
+    const result = await insertTenantPerfil(db, { ...perfil, nome_perfil: `Copia de ${perfil.nome_perfil}`, tenant_catalog_id: null }, { action: 'create' });
+    const grupos = await listGrupos(scoped.scope === 'tenant' ? db : readDb, idPerfil);
+    await copyCatalogPerfilChildrenToTenant(db, grupos, result.lastID);
+    await calcEncargos(db, `tenant:${result.lastID}`);
+    return getPerfil(db, `tenant:${result.lastID}`);
+  }
+  await ensureSchema(db);
   const novo = await run(db, `
     INSERT INTO perfis_encargos
       (nome_perfil, categoria, regime, uf_referencia, id_data_base, descricao, observacoes, situacao,
@@ -350,6 +564,30 @@ async function duplicatePerfil(db, idPerfil) {
 }
 
 async function listGrupos(db, idPerfil) {
+  const scoped = scopedId(idPerfil);
+  if ((await hasTenantEncargosOverrides(db)) && scoped.scope === 'tenant') {
+    const grupos = await all(db, `
+      SELECT *, 'tenant:' || rowid AS id_grupo_enc
+      FROM tenant_grupos_encargos
+      WHERE id_perfil = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY letra`, [scoped.value]);
+    for (const grupo of grupos) {
+      const grupoRowid = scopedId(grupo.id_grupo_enc).value;
+      grupo.itens = await all(db, `
+        SELECT *, 'tenant:' || rowid AS id_item
+        FROM tenant_itens_encargo
+        WHERE id_grupo_enc = ? AND COALESCE(tenant_override_status,'active')='active'
+        ORDER BY ordem, rowid`, [grupoRowid]);
+    }
+    return grupos;
+  }
+  if (await useTenantCatalogRead(db)) {
+    const grupos = await all(db, 'SELECT * FROM catalog.grupos_encargos WHERE id_perfil = ? ORDER BY letra', [scoped.value]);
+    for (const grupo of grupos) {
+      grupo.itens = await all(db, 'SELECT * FROM catalog.itens_encargo WHERE id_grupo_enc = ? ORDER BY ordem, id_item', [grupo.id_grupo_enc]);
+    }
+    return grupos;
+  }
   await ensureSchema(db);
   const grupos = await all(db, 'SELECT * FROM grupos_encargos WHERE id_perfil = ? ORDER BY letra', [idPerfil]);
   for (const grupo of grupos) {
@@ -380,6 +618,14 @@ async function getMemoria(db, idPerfil, options = {}) {
 }
 
 async function createItem(db, data) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const scopedGrupo = scopedId(data.id_grupo_enc);
+    if (scopedGrupo.scope !== 'tenant') return null;
+    const result = await insertTenantItem(db, { ...data, id_grupo_enc: scopedGrupo.value });
+    const grupo = await one(db, 'SELECT id_perfil FROM tenant_grupos_encargos WHERE rowid = ?', [scopedGrupo.value]);
+    if (grupo) await calcEncargos(db, `tenant:${grupo.id_perfil}`);
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_item FROM tenant_itens_encargo WHERE rowid = ?", [result.lastID]);
+  }
   await ensureSchema(db);
   const result = await run(db, `
     INSERT INTO itens_encargo (id_grupo_enc, descricao, base_legal, percentual, observacoes, ordem)
@@ -398,6 +644,26 @@ async function createItem(db, data) {
 }
 
 async function updateItem(db, idItem, data) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const scoped = scopedId(idItem);
+    if (scoped.scope !== 'tenant') return null;
+    const before = await one(db, 'SELECT ge.id_perfil FROM tenant_itens_encargo ie JOIN tenant_grupos_encargos ge ON ge.rowid = ie.id_grupo_enc WHERE ie.rowid = ?', [scoped.value]);
+    const result = await run(db, `
+      UPDATE tenant_itens_encargo
+      SET descricao = ?, base_legal = ?, percentual = ?, observacoes = ?, ordem = ?, tenant_updated_at = ?
+      WHERE rowid = ? AND COALESCE(tenant_override_status,'active')='active'`, [
+      data.descricao || '',
+      data.base_legal || null,
+      toNum(data.percentual),
+      data.observacoes || null,
+      Number(data.ordem || 0),
+      new Date().toISOString(),
+      scoped.value,
+    ]);
+    if (!result.changes) return null;
+    if (before) await calcEncargos(db, `tenant:${before.id_perfil}`);
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_item FROM tenant_itens_encargo WHERE rowid = ?", [scoped.value]);
+  }
   await ensureSchema(db);
   const before = await one(db, 'SELECT ge.id_perfil FROM itens_encargo ie JOIN grupos_encargos ge ON ge.id_grupo_enc = ie.id_grupo_enc WHERE ie.id_item = ?', [idItem]);
   const result = await run(db, `
@@ -417,6 +683,14 @@ async function updateItem(db, idItem, data) {
 }
 
 async function deleteItem(db, idItem) {
+  if (await hasTenantEncargosOverrides(db)) {
+    const scoped = scopedId(idItem);
+    if (scoped.scope !== 'tenant') return { changes: 0 };
+    const before = await one(db, 'SELECT ge.id_perfil FROM tenant_itens_encargo ie JOIN tenant_grupos_encargos ge ON ge.rowid = ie.id_grupo_enc WHERE ie.rowid = ?', [scoped.value]);
+    const result = await run(db, "UPDATE tenant_itens_encargo SET tenant_override_status='deleted', tenant_updated_at=? WHERE rowid=?", [new Date().toISOString(), scoped.value]);
+    if (before) await calcEncargos(db, `tenant:${before.id_perfil}`);
+    return result;
+  }
   await ensureSchema(db);
   const before = await one(db, 'SELECT ge.id_perfil FROM itens_encargo ie JOIN grupos_encargos ge ON ge.id_grupo_enc = ie.id_grupo_enc WHERE ie.id_item = ?', [idItem]);
   const result = await run(db, 'DELETE FROM itens_encargo WHERE id_item = ?', [idItem]);
@@ -580,6 +854,159 @@ async function listProfissionais(db, table, query = {}) {
     WHERE ${where.join(' AND ')}
     ORDER BY pe.uf_referencia, pe.categoria, pe.regime, ep.codigo_profissional
     LIMIT 1000`, params);
+}
+
+function perfilParams(data = {}) {
+  return [
+    String(data.nome_perfil || '').trim(),
+    data.categoria || 'Horista',
+    data.regime || 'Normal',
+    data.uf_referencia || null,
+    data.id_data_base || null,
+    data.descricao || null,
+    data.observacoes || null,
+    data.situacao || 'Ativo',
+    normFonte(data.fonte_referencia || 'SINAPI'),
+    data.vigencia || null,
+    data.vigencia_inicio || null,
+    data.vigencia_fim || null,
+    data.encargo_original_percentual === undefined ? null : toNum(data.encargo_original_percentual, null),
+  ];
+}
+
+async function insertTenantPerfil(db, data = {}, options = {}) {
+  const result = await run(db, `
+    INSERT INTO tenant_perfis_encargos
+      (nome_perfil, categoria, regime, uf_referencia, id_data_base, descricao, observacoes, situacao,
+       fonte_referencia, vigencia, vigencia_inicio, vigencia_fim, encargo_original_percentual,
+       tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, [
+    ...perfilParams(data),
+    options.catalogId || data.tenant_catalog_id || null,
+    options.action || data.tenant_override_action || 'create',
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ]);
+  await run(db, 'UPDATE tenant_perfis_encargos SET id_perfil=? WHERE rowid=?', [result.lastID, result.lastID]);
+  await recordEncargosOverride(db, {
+    catalogId: options.catalogId || data.tenant_catalog_id || null,
+    tenantRowid: result.lastID,
+    action: options.action || data.tenant_override_action || 'create',
+    payload: data,
+  });
+  return result;
+}
+
+async function updateTenantPerfil(db, rowid, data = {}) {
+  return run(db, `
+    UPDATE tenant_perfis_encargos SET
+      nome_perfil=?, categoria=?, regime=?, uf_referencia=?, id_data_base=?,
+      descricao=?, observacoes=?, situacao=?, fonte_referencia=?, vigencia=?,
+      vigencia_inicio=?, vigencia_fim=?, encargo_original_percentual=?, tenant_updated_at=?
+    WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [
+    ...perfilParams(data),
+    new Date().toISOString(),
+    rowid,
+  ]);
+}
+
+async function insertTenantGrupo(db, data = {}) {
+  const result = await run(db, `
+    INSERT INTO tenant_grupos_encargos
+      (id_perfil, letra, descricao, total_grupo, tenant_catalog_id, tenant_override_action,
+       tenant_override_status, tenant_created_at, tenant_updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`, [
+    data.id_perfil,
+    data.letra,
+    data.descricao || null,
+    toNum(data.total_grupo),
+    data.tenant_catalog_id || null,
+    data.tenant_override_action || 'create',
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ]);
+  await run(db, 'UPDATE tenant_grupos_encargos SET id_grupo_enc=? WHERE rowid=?', [result.lastID, result.lastID]);
+  return result;
+}
+
+async function insertTenantItem(db, data = {}) {
+  const result = await run(db, `
+    INSERT INTO tenant_itens_encargo
+      (id_grupo_enc, descricao, base_legal, percentual, observacoes, ordem,
+       tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, [
+    data.id_grupo_enc,
+    data.descricao || '',
+    data.base_legal || null,
+    toNum(data.percentual),
+    data.observacoes || null,
+    Number(data.ordem || 0),
+    data.tenant_catalog_id || null,
+    data.tenant_override_action || 'create',
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ]);
+  await run(db, 'UPDATE tenant_itens_encargo SET id_item=? WHERE rowid=?', [result.lastID, result.lastID]);
+  return result;
+}
+
+async function copyCatalogPerfilChildrenToTenant(db, grupos = [], tenantPerfilId) {
+  for (const grupo of grupos || []) {
+    const scopedGrupo = scopedId(grupo.id_grupo_enc);
+    const novoGrupo = await insertTenantGrupo(db, {
+      ...grupo,
+      id_perfil: tenantPerfilId,
+      tenant_catalog_id: scopedGrupo.scope === 'catalog' ? Number(scopedGrupo.value) : null,
+    });
+    for (const item of grupo.itens || []) {
+      const scopedItem = scopedId(item.id_item);
+      await insertTenantItem(db, {
+        ...item,
+        id_grupo_enc: novoGrupo.lastID,
+        tenant_catalog_id: scopedItem.scope === 'catalog' ? Number(scopedItem.value) : null,
+      });
+    }
+  }
+}
+
+async function recordEncargosOverride(db, data = {}) {
+  if (!(await tableExists(db, 'tenant_referential_overrides'))) return null;
+  const catalogId = data.catalogId === null || data.catalogId === undefined ? null : Number(data.catalogId);
+  const payload = data.payload ? JSON.stringify(data.payload) : null;
+  if (catalogId !== null) {
+    const existing = await one(db, `
+      SELECT id_override FROM tenant_referential_overrides
+      WHERE domain='encargos_sociais' AND catalog_table='perfis_encargos' AND catalog_id=?
+        AND status='active'
+      ORDER BY id_override DESC LIMIT 1`, [catalogId]);
+    if (existing) {
+      await run(db, `
+        UPDATE tenant_referential_overrides
+        SET tenant_table='tenant_perfis_encargos', tenant_rowid=?, action=?,
+            impact_policy=?, payload_json=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id_override=?`, [
+        data.tenantRowid || null,
+        data.action || 'update',
+        data.impactPolicy || 'preserve',
+        payload,
+        existing.id_override,
+      ]);
+      return existing.id_override;
+    }
+  }
+  const result = await run(db, `
+    INSERT INTO tenant_referential_overrides
+      (domain, catalog_table, catalog_id, tenant_table, tenant_rowid,
+       action, impact_policy, payload_json, status)
+    VALUES ('encargos_sociais','perfis_encargos',?,?,?,?,?,?, 'active')`, [
+    catalogId,
+    'tenant_perfis_encargos',
+    data.tenantRowid || null,
+    data.action || 'create',
+    data.impactPolicy || 'preserve',
+    payload,
+  ]);
+  return result.lastID;
 }
 
 async function getOriginalPercentual(db, perfilNovo, categoria, fonte, uf, idDataBase) {
