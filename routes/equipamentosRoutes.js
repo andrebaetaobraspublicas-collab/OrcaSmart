@@ -38,7 +38,7 @@ module.exports = function equipamentosRoutes(db, options = {}) {
   }));
 
   router.get('/:id/impacto', asyncHandler(async (req, res) => {
-    res.json(await service.impacto(db, req.params.id));
+    res.json(await service.impacto(readDb, req.params.id));
   }));
 
   router.post('/:id/aplicar-custo', asyncHandler(async (req, res) => {
@@ -50,7 +50,7 @@ module.exports = function equipamentosRoutes(db, options = {}) {
   }));
 
   router.post('/:id/precos', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createPreco(db, req.params.id, req.body || {}));
+    res.status(201).json(await service.createPreco(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   router.delete('/precos/:id', asyncHandler(async (req, res) => {

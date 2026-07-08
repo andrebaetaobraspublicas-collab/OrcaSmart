@@ -57,8 +57,9 @@ async function aplicarCusto(db, id, data) {
   return result;
 }
 
-async function createPreco(db, id, data) {
-  const row = await repo.createPreco(db, id, data || {});
+async function createPreco(db, id, data, options = {}) {
+  const equipamento = options.readDb ? await repo.getById(options.readDb, id).catch(() => null) : null;
+  const row = await repo.createPreco(db, id, data || {}, { equipamento });
   if (!row) throw httpError(404, 'Equipamento nao encontrado.');
   return row;
 }
