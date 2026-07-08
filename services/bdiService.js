@@ -29,9 +29,11 @@ async function createPerfil(db, data) {
   return repo.createPerfil(db, data || {});
 }
 
-async function updatePerfil(db, id, data) {
+async function updatePerfil(db, id, data, options = {}) {
   validarNomePerfil(data);
-  const row = await repo.updatePerfil(db, id, data || {});
+  const current = options.readDb ? await repo.getPerfil(options.readDb, id).catch(() => null) : null;
+  const componentes = options.readDb ? await repo.listComponentes(options.readDb, id).catch(() => []) : [];
+  const row = await repo.updatePerfil(db, id, data || {}, { current, componentes });
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
   return row;
 }
@@ -42,27 +44,27 @@ async function deletePerfil(db, id) {
   return { mensagem: 'Perfil BDI excluido.' };
 }
 
-async function duplicarPerfil(db, id) {
-  const row = await repo.duplicarPerfil(db, id);
+async function duplicarPerfil(db, id, options = {}) {
+  const row = await repo.duplicarPerfil(db, id, options);
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
   return row;
 }
 
-async function createComponente(db, data) {
+async function createComponente(db, data, options = {}) {
   validarDescricaoComponente(data);
   if (!data?.id_perfil_bdi) throw httpError(400, 'Perfil BDI e obrigatorio.');
-  return repo.createComponente(db, data);
+  return repo.createComponente(db, data, options);
 }
 
-async function updateComponente(db, id, data) {
+async function updateComponente(db, id, data, options = {}) {
   validarDescricaoComponente(data);
-  const row = await repo.updateComponente(db, id, data || {});
+  const row = await repo.updateComponente(db, id, data || {}, options);
   if (!row) throw httpError(404, 'Componente nao encontrado.');
   return row;
 }
 
-async function deleteComponente(db, id) {
-  const deleted = await repo.deleteComponente(db, id);
+async function deleteComponente(db, id, options = {}) {
+  const deleted = await repo.deleteComponente(db, id, options);
   if (!deleted) throw httpError(404, 'Componente nao encontrado.');
   return { mensagem: 'Componente excluido.' };
 }
