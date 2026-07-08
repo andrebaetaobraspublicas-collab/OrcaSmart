@@ -91,7 +91,8 @@ async function getPerfil(db, id) {
     GROUP BY b.id_perfil_bdi`, [id]);
 }
 
-async function calcBdi(db, pid) {
+async function calcBdi(db, pid, options = {}) {
+  const persist = options.persist !== false;
   const p = await one(db, 'SELECT * FROM perfis_bdi WHERE id_perfil_bdi=?', [pid]);
   if (!p) return null;
   const comps = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=? AND ativo=1', [pid]);
@@ -128,7 +129,9 @@ async function calcBdi(db, pid) {
     bdi = ((multBase * (1 + IVAeq / 100)) - 1) * 100;
   }
   bdi = Number(Math.max(0, bdi).toFixed(6));
-  await run(db, 'UPDATE perfis_bdi SET bdi_percentual=?, ivaeq_percentual=? WHERE id_perfil_bdi=?', [bdi, IVAeq, pid]);
+  if (persist) {
+    await run(db, 'UPDATE perfis_bdi SET bdi_percentual=?, ivaeq_percentual=? WHERE id_perfil_bdi=?', [bdi, IVAeq, pid]);
+  }
   return {
     AC, S, R, DF, L, T, ISS, CPRB, IVAeq, ano, bdi,
     CBS: toNum(p.cbs_percentual, 0),
@@ -139,8 +142,8 @@ async function calcBdi(db, pid) {
   };
 }
 
-async function recalcAndGet(db, pid) {
-  await calcBdi(db, pid);
+async function recalcAndGet(db, pid, options = {}) {
+  await calcBdi(db, pid, options);
   return getPerfil(db, pid);
 }
 
@@ -263,11 +266,11 @@ async function deleteComponente(db, id) {
   return true;
 }
 
-async function memoria(db, idPerfil) {
-  const perfil = await recalcAndGet(db, idPerfil);
+async function memoria(db, idPerfil, options = {}) {
+  const perfil = await recalcAndGet(db, idPerfil, options);
   if (!perfil) return null;
   const componentes = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=? AND ativo=1 ORDER BY grupo, ordem', [idPerfil]);
-  const totais = await calcBdi(db, idPerfil);
+  const totais = await calcBdi(db, idPerfil, options);
   const ano = totais.ano;
   const expressao = perfil.regime_tributario === 'Simples Nacional'
     ? 'BDI Simples = {[(1+AC+S+R)x(1+DF)x(1+L)/(1-T Simples)] - 1} x 100'

@@ -610,7 +610,7 @@ app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
-app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy));
+app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')({ all: allMaster }));
 

@@ -18,8 +18,8 @@ function validarDescricaoComponente(data = {}) {
   }
 }
 
-async function getPerfil(db, id) {
-  const row = await repo.recalcAndGet(db, id);
+async function getPerfil(db, id, options = {}) {
+  const row = await repo.recalcAndGet(db, id, options);
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
   return row;
 }
@@ -67,8 +67,8 @@ async function deleteComponente(db, id) {
   return { mensagem: 'Componente excluido.' };
 }
 
-async function memoria(db, id) {
-  const row = await repo.memoria(db, id);
+async function memoria(db, id, options = {}) {
+  const row = await repo.memoria(db, id, options);
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
   return row;
 }
