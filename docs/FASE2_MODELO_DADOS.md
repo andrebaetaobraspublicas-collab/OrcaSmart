@@ -111,3 +111,18 @@ As rotas de consulta de insumos passaram a usar o mesmo proxy de leitura hibrida
 As rotas de criacao, edicao, exclusao, precos e exclusao em lote continuam gravando no banco do tenant.
 Isso preserva o comportamento atual para usuarios existentes e permite validar, em tenants experimentais
 enxutos, a consulta de insumos referenciais diretamente pelo catalogo compartilhado.
+
+## Etapa 2.4 - leituras iniciais de composicoes
+
+As rotas de consulta de composicoes tambem passaram a usar o proxy de leitura hibrida:
+
+- `/api/composicoes/grupos`
+- `/api/composicoes/stats`
+- `/api/composicoes`
+- `/api/composicoes/:id`
+- `/api/composicoes/:id/uso-orcamentos`
+- `/api/composicoes/:id/impacto`
+
+As operacoes de criacao, edicao, exclusao, itens, recalculo e exclusao em lote continuam vinculadas ao
+banco do tenant. Isso permite que composicoes referenciais sejam consultadas no catalogo compartilhado,
+enquanto composicoes proprias do usuario continuam sendo gravadas de forma isolada.

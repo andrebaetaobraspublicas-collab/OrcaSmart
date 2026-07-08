@@ -2,23 +2,24 @@ const express = require('express');
 const repo = require('../repositories/composicoesRepository');
 const service = require('../services/composicoesService');
 
-module.exports = function(db) {
+module.exports = function(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   function asyncHandler(fn) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
   }
 
   router.get('/grupos', asyncHandler(async (req, res) => {
-    res.json(await repo.listGrupos(db, req.query));
+    res.json(await repo.listGrupos(readDb, req.query));
   }));
 
   router.get('/stats', asyncHandler(async (_req, res) => {
-    res.json(await repo.stats(db));
+    res.json(await repo.stats(readDb));
   }));
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await repo.listComposicoes(db, req.query));
+    res.json(await repo.listComposicoes(readDb, req.query));
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
@@ -46,7 +47,7 @@ module.exports = function(db) {
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.getComposicao(db, req.params.id));
+    res.json(await service.getComposicao(readDb, req.params.id));
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
@@ -62,13 +63,13 @@ module.exports = function(db) {
   }));
 
   router.get('/:id/uso-orcamentos', asyncHandler(async (req, res) => {
-    const impacto = await repo.impactoComposicao(db, req.params.id);
+    const impacto = await repo.impactoComposicao(readDb, req.params.id);
     if (!impacto) return res.json([]);
     return res.json(impacto.orcamentos || []);
   }));
 
   router.get('/:id/impacto', asyncHandler(async (req, res) => {
-    const impacto = await repo.impactoComposicao(db, req.params.id);
+    const impacto = await repo.impactoComposicao(readDb, req.params.id);
     if (!impacto) return res.status(404).json({ erro: 'Composicao nao encontrada.' });
     return res.json(impacto);
   }));
