@@ -25,6 +25,65 @@ function toNum(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function scopedComposicaoId(id) {
+  const value = String(id || '').trim();
+  if (value.startsWith('tenant:')) return { scope: 'tenant', value: Number(value.slice(7)) };
+  return { scope: 'catalog', value };
+}
+
+function scopedItemId(id) {
+  const value = String(id || '').trim();
+  if (value.startsWith('tenant:')) return { scope: 'tenant', value: Number(value.slice(7)) };
+  return { scope: 'catalog', value };
+}
+
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+async function tableExists(db, table, schema = 'main') {
+  const row = await one(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+    [table],
+  ).catch(() => null);
+  return !!row;
+}
+
+async function hasTenantComposicaoOverrides(db) {
+  return tableExists(db, 'tenant_composicoes');
+}
+
+async function hasCatalogComposicoes(db) {
+  return tableExists(db, 'composicoes', 'catalog');
+}
+
+async function useTenantCatalogRead(db) {
+  return (await hasTenantComposicaoOverrides(db)) && (await hasCatalogComposicoes(db));
+}
+
+function visibleCatalogClause(alias = 'c') {
+  return `
+    NOT EXISTS (
+      SELECT 1 FROM tenant_referential_overrides r
+      WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+        AND r.catalog_id=${alias}.id_composicao AND r.status='active'
+        AND r.action IN ('update','delete')
+    )`;
+}
+
+function compSelectColumns(idExpr, scopeExpr, catalogIdExpr) {
+  return `
+    ${idExpr} AS id_composicao,
+    c.codigo, c.fonte, c.formato, c.descricao, c.unidade, c.id_grupo_comp,
+    c.mes_referencia, c.uf_referencia, c.situacao_ref, c.custo_unitario,
+    c.fic, c.producao_equipe, c.unidade_producao, c.situacao, c.observacoes,
+    c.custo_horario_execucao, c.custo_unitario_execucao, c.custo_fic, c.subtotal_sicro,
+    g.nome_grupo AS nome_grupo_comp,
+    ${scopeExpr} AS _tenant_scope,
+    ${catalogIdExpr} AS _catalog_id`;
+}
+
 function codigoVariantes(codigo) {
   const cod = String(codigo || '').trim();
   if (!cod) return [];
@@ -44,6 +103,28 @@ const selectComp = `
   LEFT JOIN grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp`;
 
 async function listGrupos(db, query = {}) {
+  if (await useTenantCatalogRead(db)) {
+    const params = [];
+    let fonteFilter = '';
+    if (query.fonte) {
+      fonteFilter = ' AND g.fonte = ?';
+      params.push(query.fonte);
+    }
+    return all(db, `
+      SELECT g.*, COUNT(v.id_composicao) AS qtd_composicoes
+      FROM catalog.grupos_composicoes g
+      LEFT JOIN (
+        SELECT id_composicao, id_grupo_comp FROM catalog.composicoes c WHERE ${visibleCatalogClause('c')}
+        UNION ALL
+        SELECT 'tenant:' || rowid AS id_composicao, id_grupo_comp
+        FROM tenant_composicoes
+        WHERE COALESCE(tenant_override_status,'active')='active'
+      ) v ON v.id_grupo_comp = g.id_grupo_comp
+      WHERE 1 = 1 ${fonteFilter}
+      GROUP BY g.id_grupo_comp
+      ORDER BY g.nome_grupo`, params);
+  }
+
   const params = [];
   let fonteFilter = '';
   if (query.fonte) {
@@ -60,6 +141,29 @@ async function listGrupos(db, query = {}) {
 }
 
 async function stats(db) {
+  if (await useTenantCatalogRead(db)) {
+    const visible = visibleCatalogClause('c');
+    const porFonte = await all(db, `
+      SELECT fonte, COUNT(*) AS total FROM (
+        SELECT c.fonte FROM catalog.composicoes c WHERE ${visible}
+        UNION ALL
+        SELECT fonte FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
+      )
+      GROUP BY fonte ORDER BY fonte`);
+    const porFormato = await all(db, `
+      SELECT formato, COUNT(*) AS total FROM (
+        SELECT c.formato FROM catalog.composicoes c WHERE ${visible}
+        UNION ALL
+        SELECT formato FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
+      )
+      GROUP BY formato ORDER BY formato`);
+    return {
+      total: porFonte.reduce((sum, row) => sum + Number(row.total || 0), 0),
+      por_fonte: porFonte,
+      por_formato: porFormato,
+    };
+  }
+
   const porFonte = await all(db, 'SELECT fonte, COUNT(*) AS total FROM composicoes GROUP BY fonte ORDER BY fonte');
   const porFormato = await all(db, 'SELECT formato, COUNT(*) AS total FROM composicoes GROUP BY formato ORDER BY formato');
   return {
@@ -112,6 +216,24 @@ function appendListFilters(query = {}) {
 async function listComposicoes(db, query = {}) {
   const limit = Math.max(1, Math.min(500, Number(query.limit || 50)));
   const offset = Math.max(0, Number(query.offset || 0));
+  if (await useTenantCatalogRead(db)) {
+    const catalog = buildTenantCatalogListSelect(query, 'catalog');
+    const tenant = buildTenantCatalogListSelect(query, 'tenant');
+    const baseSql = `
+      SELECT * FROM (
+        ${catalog.sql}
+        UNION ALL
+        ${tenant.sql}
+      )`;
+    const params = [...catalog.params, ...tenant.params];
+    const total = await one(db, `SELECT COUNT(*) AS total FROM (${baseSql})`, params);
+    const items = await all(db, `
+      ${baseSql}
+      ORDER BY fonte, codigo
+      LIMIT ? OFFSET ?`, [...params, limit, offset]);
+    return { items, total: Number(total?.total || 0), limit, offset };
+  }
+
   const { where, params } = appendListFilters(query);
   const clause = where.join(' AND ');
   const total = await one(db, `SELECT COUNT(*) AS total FROM composicoes c WHERE ${clause}`, params);
@@ -123,7 +245,92 @@ async function listComposicoes(db, query = {}) {
   return { items, total: Number(total?.total || 0), limit, offset };
 }
 
+function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
+  const idExpr = isTenant ? "'tenant:' || c.rowid" : 'CAST(c.id_composicao AS TEXT)';
+  const scopeExpr = isTenant ? "'tenant'" : "'catalog'";
+  const catalogIdExpr = isTenant ? 'c.tenant_catalog_id' : 'c.id_composicao';
+  const columns = compSelectColumns(idExpr, scopeExpr, catalogIdExpr);
+  const where = ['1=1'];
+  const params = [];
+
+  if (isTenant) where.push("COALESCE(c.tenant_override_status,'active')='active'");
+  else where.push(visibleCatalogClause('c'));
+  if (query.fonte) {
+    where.push('c.fonte = ?');
+    params.push(query.fonte);
+  }
+  if (query.formato) {
+    where.push('c.formato = ?');
+    params.push(query.formato);
+  }
+  if (query.id_grupo_comp) {
+    where.push('c.id_grupo_comp = ?');
+    params.push(query.id_grupo_comp);
+  }
+  if (query.uf) {
+    where.push('c.uf_referencia = ?');
+    params.push(query.uf);
+  }
+  if (query.mes_ref) {
+    where.push('c.mes_referencia = ?');
+    params.push(query.mes_ref);
+  }
+  if (query.regime === 'Desonerado') {
+    where.push("(LOWER(COALESCE(c.situacao_ref,'')) LIKE '%desonerado%' OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%com desoner%')");
+  } else if (query.regime === 'Onerado') {
+    where.push(`(
+      LOWER(COALESCE(c.situacao_ref,'')) = 'onerado'
+      OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%sem desoner%'
+      OR (LOWER(COALESCE(c.situacao_ref,'')) LIKE '%onerado%'
+          AND LOWER(COALESCE(c.situacao_ref,'')) NOT LIKE '%desonerado%')
+    )`);
+  }
+  if (query.q) {
+    where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
+    params.push(`%${query.q}%`, `%${query.q}%`);
+  }
+
+  return {
+    sql: `
+      SELECT ${columns}
+      FROM ${table} c
+      LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
+      WHERE ${where.join(' AND ')}`,
+    params,
+  };
+}
+
 async function getComposicao(db, idComposicao) {
+  if (await useTenantCatalogRead(db)) {
+    const scoped = scopedComposicaoId(idComposicao);
+    if (scoped.scope === 'tenant') return getTenantComposicao(db, scoped.value);
+    const deleted = await one(db, `
+      SELECT 1 FROM tenant_referential_overrides
+      WHERE domain='composicoes' AND catalog_table='composicoes' AND catalog_id=?
+        AND status='active' AND action='delete'
+      LIMIT 1`, [scoped.value]);
+    if (deleted) return null;
+    const override = await one(db, `
+      SELECT rowid AS tenant_rowid
+      FROM tenant_composicoes
+      WHERE tenant_catalog_id = ?
+        AND tenant_override_action='update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (override) return getTenantComposicao(db, override.tenant_rowid);
+    const built = buildTenantCatalogListSelect({}, 'catalog');
+    const comp = await one(db, `${built.sql} AND c.id_composicao = ?`, [...built.params, scoped.value]);
+    if (!comp) return null;
+    comp.itens = await all(db, 'SELECT *, id_item AS id_item_comp FROM catalog.itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [scoped.value]);
+    comp.secoes = await all(db, 'SELECT * FROM catalog.composicoes_secoes WHERE id_composicao = ? ORDER BY ordem, letra_secao', [scoped.value]);
+    for (const secao of comp.secoes) {
+      secao.itens = await all(db, 'SELECT * FROM catalog.composicoes_secao_itens WHERE id_secao = ? ORDER BY ordem, id_item_secao', [secao.id_secao]);
+    }
+    return comp;
+  }
+
   const comp = await one(db, `${selectComp} WHERE c.id_composicao = ?`, [idComposicao]);
   if (!comp) return null;
   comp.itens = await all(db, 'SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [idComposicao]);
@@ -134,7 +341,54 @@ async function getComposicao(db, idComposicao) {
   return comp;
 }
 
+async function getTenantComposicao(db, rowid) {
+  const hasCatalog = await hasCatalogComposicoes(db);
+  const comp = hasCatalog
+    ? await one(db, `
+        SELECT ${compSelectColumns("'tenant:' || c.rowid", "'tenant'", 'c.tenant_catalog_id')}
+        FROM tenant_composicoes c
+        LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
+        WHERE c.rowid = ? AND COALESCE(c.tenant_override_status,'active')='active'`, [rowid])
+    : await one(db, `
+        SELECT 'tenant:' || rowid AS id_composicao,
+               codigo, fonte, formato, descricao, unidade, id_grupo_comp, mes_referencia,
+               uf_referencia, situacao_ref, custo_unitario, fic, producao_equipe, unidade_producao,
+               situacao, observacoes, custo_horario_execucao, custo_unitario_execucao, custo_fic,
+               subtotal_sicro, 'tenant' AS _tenant_scope, tenant_catalog_id AS _catalog_id
+        FROM tenant_composicoes
+        WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+  if (!comp) return null;
+  comp.itens = await all(db, `
+    SELECT *, 'tenant:' || rowid AS id_item, 'tenant:' || rowid AS id_item_comp
+    FROM tenant_itens_composicao
+    WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY ordem, rowid`, [rowid]);
+  comp.secoes = await all(db, `
+    SELECT *, 'tenant:' || rowid AS id_secao
+    FROM tenant_composicoes_secoes
+    WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY ordem, letra_secao`, [rowid]);
+  for (const secao of comp.secoes) {
+    const secaoRowid = String(secao.id_secao).startsWith('tenant:') ? Number(String(secao.id_secao).slice(7)) : secao.id_secao;
+    secao.itens = await all(db, `
+      SELECT *, 'tenant:' || rowid AS id_item_secao
+      FROM tenant_composicoes_secao_itens
+      WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY ordem, rowid`, [secaoRowid]);
+  }
+  return comp;
+}
+
 async function createComposicao(db, data = {}) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const result = await insertTenantComposicao(db, data, {
+      catalogId: data.tenant_catalog_id || null,
+      action: data.tenant_override_action || 'create',
+      impactPolicy: data.impact_policy || 'preserve',
+    });
+    return getTenantComposicao(db, result.lastID);
+  }
+
   const result = await run(db, `
     INSERT INTO composicoes
       (codigo, fonte, formato, descricao, unidade, id_grupo_comp, mes_referencia, uf_referencia,
@@ -160,6 +414,39 @@ async function createComposicao(db, data = {}) {
 }
 
 async function updateComposicaoDirect(db, idComposicao, data = {}) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const scoped = scopedComposicaoId(idComposicao);
+    if (scoped.scope === 'tenant') {
+      const result = await updateTenantComposicao(db, scoped.value, data);
+      if (!result.changes) return null;
+      return getTenantComposicao(db, scoped.value);
+    }
+    const current = data._current || {};
+    const existing = await one(db, `
+      SELECT rowid AS rowid
+      FROM tenant_composicoes
+      WHERE tenant_catalog_id=? AND tenant_override_action='update'
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+    if (existing) {
+      await updateTenantComposicao(db, existing.rowid, { ...current, ...data });
+      await recordReferentialOverride(db, {
+        catalogId: Number(scoped.value),
+        tenantRowid: existing.rowid,
+        action: 'update',
+        impactPolicy: data.impact_policy || 'alterar_orcamentos',
+        payload: data,
+      });
+      return getTenantComposicao(db, existing.rowid);
+    }
+    const created = await insertTenantComposicao(db, { ...current, ...data }, {
+      catalogId: Number(scoped.value),
+      action: 'update',
+      impactPolicy: data.impact_policy || 'alterar_orcamentos',
+    });
+    return getTenantComposicao(db, created.lastID);
+  }
+
   const result = await run(db, `
     UPDATE composicoes SET
       codigo = ?, descricao = ?, unidade = ?, fonte = ?, formato = ?, id_grupo_comp = ?,
@@ -188,13 +475,140 @@ async function updateComposicaoDirect(db, idComposicao, data = {}) {
 }
 
 async function deleteComposicaoDirect(db, idComposicao) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const scoped = scopedComposicaoId(idComposicao);
+    if (scoped.scope === 'tenant') {
+      await run(db, "UPDATE tenant_composicoes_secao_itens SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
+      await run(db, "UPDATE tenant_composicoes_secoes SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
+      await run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
+      return run(db, "UPDATE tenant_composicoes SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=? WHERE rowid = ?", [new Date().toISOString(), scoped.value]);
+    }
+    await run(db, `
+      UPDATE tenant_composicoes
+      SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=?
+      WHERE tenant_catalog_id=? AND COALESCE(tenant_override_status,'active')='active'`,
+    [new Date().toISOString(), Number(scoped.value)]);
+    await recordReferentialOverride(db, {
+      catalogId: Number(scoped.value),
+      tenantRowid: null,
+      action: 'delete',
+      impactPolicy: 'preserve',
+      payload: {},
+    });
+    return { changes: 1 };
+  }
+
   await run(db, 'DELETE FROM composicoes_secao_itens WHERE id_composicao = ?', [idComposicao]);
   await run(db, 'DELETE FROM composicoes_secoes WHERE id_composicao = ?', [idComposicao]);
   await run(db, 'DELETE FROM itens_composicao WHERE id_composicao = ?', [idComposicao]);
   return run(db, 'DELETE FROM composicoes WHERE id_composicao = ?', [idComposicao]);
 }
 
+function composicaoParams(data = {}) {
+  return [
+    data.codigo || null,
+    data.fonte || 'USUARIO',
+    data.formato || 'UNITARIO',
+    String(data.descricao || '').trim(),
+    data.unidade || null,
+    data.id_grupo_comp || null,
+    data.mes_referencia || null,
+    data.uf_referencia || null,
+    data.situacao_ref || null,
+    data.custo_unitario === undefined ? 0 : toNum(data.custo_unitario),
+    data.fic === undefined ? null : toNum(data.fic, null),
+    data.producao_equipe === undefined ? null : toNum(data.producao_equipe, null),
+    data.unidade_producao || null,
+    data.situacao || 'Ativo',
+    data.observacoes || null,
+    data.custo_horario_execucao === undefined ? null : toNum(data.custo_horario_execucao, null),
+    data.custo_unitario_execucao === undefined ? null : toNum(data.custo_unitario_execucao, null),
+    data.custo_fic === undefined ? null : toNum(data.custo_fic, null),
+    data.subtotal_sicro === undefined ? null : toNum(data.subtotal_sicro, null),
+  ];
+}
+
+async function insertTenantComposicao(db, data = {}, options = {}) {
+  const result = await run(db, `
+    INSERT INTO tenant_composicoes
+      (codigo, fonte, formato, descricao, unidade, id_grupo_comp, mes_referencia, uf_referencia,
+       situacao_ref, custo_unitario, fic, producao_equipe, unidade_producao, situacao, observacoes,
+       custo_horario_execucao, custo_unitario_execucao, custo_fic, subtotal_sicro,
+       tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+  [
+    ...composicaoParams(data),
+    options.catalogId || null,
+    options.action || 'create',
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ]);
+  await run(db, 'UPDATE tenant_composicoes SET id_composicao = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+  await recordReferentialOverride(db, {
+    catalogId: options.catalogId || null,
+    tenantRowid: result.lastID,
+    action: options.action || 'create',
+    impactPolicy: options.impactPolicy || 'preserve',
+    payload: data,
+  });
+  return result;
+}
+
+async function updateTenantComposicao(db, rowid, data = {}) {
+  return run(db, `
+    UPDATE tenant_composicoes SET
+      codigo=?, fonte=?, formato=?, descricao=?, unidade=?, id_grupo_comp=?,
+      mes_referencia=?, uf_referencia=?, situacao_ref=?, custo_unitario=?, fic=?,
+      producao_equipe=?, unidade_producao=?, situacao=?, observacoes=?,
+      custo_horario_execucao=?, custo_unitario_execucao=?, custo_fic=?, subtotal_sicro=?,
+      tenant_updated_at=?
+    WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`,
+  [...composicaoParams(data), new Date().toISOString(), rowid]);
+}
+
+async function recordReferentialOverride(db, data = {}) {
+  if (!(await tableExists(db, 'tenant_referential_overrides'))) return null;
+  const catalogId = data.catalogId === null || data.catalogId === undefined ? null : Number(data.catalogId);
+  const payload = data.payload ? JSON.stringify(data.payload) : null;
+  if (catalogId !== null) {
+    const existing = await one(db, `
+      SELECT id_override FROM tenant_referential_overrides
+      WHERE domain='composicoes' AND catalog_table='composicoes' AND catalog_id=?
+        AND status='active'
+      ORDER BY id_override DESC LIMIT 1`, [catalogId]);
+    if (existing) {
+      await run(db, `
+        UPDATE tenant_referential_overrides
+        SET tenant_table='tenant_composicoes', tenant_rowid=?, action=?, impact_policy=?,
+            payload_json=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id_override=?`, [
+        data.tenantRowid || null,
+        data.action || 'update',
+        data.impactPolicy || 'preserve',
+        payload,
+        existing.id_override,
+      ]);
+      return existing.id_override;
+    }
+  }
+  const result = await run(db, `
+    INSERT INTO tenant_referential_overrides
+      (domain, catalog_table, catalog_id, tenant_table, tenant_rowid,
+       action, impact_policy, payload_json, status)
+    VALUES ('composicoes','composicoes',?,?,?,?,?,?, 'active')`, [
+    catalogId,
+    'tenant_composicoes',
+    data.tenantRowid || null,
+    data.action || 'create',
+    data.impactPolicy || 'preserve',
+    payload,
+  ]);
+  return result.lastID;
+}
+
 async function impactoComposicao(db, idComposicao) {
+  if (await useTenantCatalogRead(db)) return impactoComposicaoTenantCatalog(db, idComposicao);
+
   const comp = await one(db, 'SELECT * FROM composicoes WHERE id_composicao = ?', [idComposicao]);
   if (!comp) return null;
   const parents = new Map();
@@ -276,6 +690,88 @@ async function impactoComposicao(db, idComposicao) {
   };
 }
 
+async function impactoComposicaoTenantCatalog(db, idComposicao) {
+  const comp = await getComposicao(db, idComposicao);
+  if (!comp) return null;
+  const variantesOrigem = codigoVariantes(comp.codigo);
+  const parents = new Map();
+  if (variantesOrigem.length) {
+    const qs = variantesOrigem.map(() => '?').join(',');
+    const catalogParents = await all(db, `
+      SELECT ${compSelectColumns('CAST(c.id_composicao AS TEXT)', "'catalog'", 'c.id_composicao')}
+      FROM catalog.itens_composicao ic
+      JOIN catalog.composicoes c ON c.id_composicao = ic.id_composicao
+      LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
+      WHERE UPPER(COALESCE(ic.tipo_item, '')) = 'COMPOSICAO'
+        AND ic.codigo_item IN (${qs})
+        AND ${visibleCatalogClause('c')}`, variantesOrigem);
+    const tenantParents = await all(db, `
+      SELECT ${compSelectColumns("'tenant:' || c.rowid", "'tenant'", 'c.tenant_catalog_id')}
+      FROM tenant_itens_composicao ic
+      JOIN tenant_composicoes c ON c.rowid = ic.id_composicao
+      LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
+      WHERE UPPER(COALESCE(ic.tipo_item, '')) = 'COMPOSICAO'
+        AND ic.codigo_item IN (${qs})
+        AND COALESCE(c.tenant_override_status,'active')='active'
+        AND COALESCE(ic.tenant_override_status,'active')='active'`, variantesOrigem);
+    [...catalogParents, ...tenantParents].forEach((row) => {
+      if (String(row.id_composicao) !== String(comp.id_composicao)) parents.set(String(row.id_composicao), row);
+    });
+  }
+
+  const whereDireto = ['CAST(os.id_composicao AS TEXT) = ?'];
+  const paramsDireto = [String(idComposicao).startsWith('tenant:') ? String(idComposicao).slice(7) : String(idComposicao)];
+  if (variantesOrigem.length) {
+    whereDireto.push(`os.codigo IN (${variantesOrigem.map(() => '?').join(',')})`);
+    paramsDireto.push(...variantesOrigem);
+  }
+  const diretos = await all(db, `
+    SELECT os.id_item, os.id_orcamento, os.descricao, os.codigo, os.quantidade,
+           os.custo_unitario, os.id_composicao,
+           o.nome_orcamento, o.versao, o.status,
+           ob.nome_obra
+    FROM orcamento_sintetico os
+    JOIN orcamentos o ON o.id_orcamento = os.id_orcamento
+    LEFT JOIN obras ob ON ob.id_obra = o.id_obra
+    WHERE ${whereDireto.join(' OR ')}
+    ORDER BY o.nome_orcamento, os.ordem`, paramsDireto).catch(() => []);
+  diretos.forEach(row => { row.impacto_tipo = 'direto'; });
+
+  let indiretos = [];
+  const parentIds = [...parents.keys()].map(id => String(id).replace(/^tenant:/, ''));
+  if (parentIds.length) {
+    indiretos = await all(db, `
+      SELECT os.id_item, os.id_orcamento, os.descricao, os.codigo, os.quantidade,
+             os.custo_unitario, os.id_composicao,
+             o.nome_orcamento, o.versao, o.status,
+             ob.nome_obra
+      FROM orcamento_sintetico os
+      JOIN orcamentos o ON o.id_orcamento = os.id_orcamento
+      LEFT JOIN obras ob ON ob.id_obra = o.id_obra
+      WHERE CAST(os.id_composicao AS TEXT) IN (${parentIds.map(() => '?').join(',')})
+      ORDER BY o.nome_orcamento, os.ordem`, parentIds).catch(() => []);
+    indiretos.forEach(row => { row.impacto_tipo = 'indireto'; });
+  }
+
+  const combinados = new Map();
+  for (const row of [...diretos, ...indiretos]) {
+    if (!combinados.has(row.id_item) || combinados.get(row.id_item).impacto_tipo !== 'direto') {
+      combinados.set(row.id_item, row);
+    }
+  }
+  return {
+    composicao: comp,
+    composicoes_auxiliares: [...parents.values()],
+    orcamentos_diretos: diretos,
+    orcamentos_indiretos: indiretos,
+    orcamentos: [...combinados.values()],
+    qtd_orcamentos: combinados.size,
+    qtd_composicoes_auxiliares: parents.size,
+    tem_impacto: parents.size > 0 || combinados.size > 0,
+    total_orcamentos: combinados.size,
+  };
+}
+
 async function recalcularComposicaoUnitaria(db, idComposicao) {
   const itens = await all(db, 'SELECT * FROM itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [idComposicao]);
   let total = 0;
@@ -331,7 +827,10 @@ function novoCodigoUsuario(baseCodigo) {
 async function uniqueCodigoUsuario(db, codigoBase) {
   let codigo = novoCodigoUsuario(codigoBase);
   let suffix = 2;
-  while (await one(db, 'SELECT 1 FROM composicoes WHERE codigo = ?', [codigo])) {
+  const tenantMode = await hasTenantComposicaoOverrides(db);
+  while (tenantMode
+    ? await one(db, "SELECT 1 FROM tenant_composicoes WHERE codigo = ? AND COALESCE(tenant_override_status,'active')='active'", [codigo])
+    : await one(db, 'SELECT 1 FROM composicoes WHERE codigo = ?', [codigo])) {
     codigo = `${novoCodigoUsuario(codigoBase)}-${suffix}`;
     suffix += 1;
   }
@@ -339,6 +838,7 @@ async function uniqueCodigoUsuario(db, codigoBase) {
 }
 
 async function replaceItens(db, idComposicao, itens = []) {
+  if (await hasTenantComposicaoOverrides(db)) return replaceTenantItens(db, idComposicao, itens);
   await run(db, 'DELETE FROM itens_composicao WHERE id_composicao = ?', [idComposicao]);
   for (let ordem = 0; ordem < itens.length; ordem += 1) {
     const item = itens[ordem] || {};
@@ -361,7 +861,120 @@ async function replaceItens(db, idComposicao, itens = []) {
   }
 }
 
-async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao_orcamentos = 'manter' } = {}) {
+async function replaceTenantItens(db, idComposicao, itens = []) {
+  const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
+    ? scopedComposicaoId(idComposicao).value
+    : Number(idComposicao);
+  await run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), rowid]);
+  for (let ordem = 0; ordem < itens.length; ordem += 1) {
+    const item = itens[ordem] || {};
+    const result = await run(db, `
+      INSERT INTO tenant_itens_composicao
+        (id_composicao, tipo_item, codigo_item, descricao, unidade, coeficiente, preco_unitario,
+         custo_parcial, situacao_item, ordem, tenant_override_action, tenant_override_status,
+         tenant_created_at, tenant_updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'create', 'active', ?, ?)`, [
+      rowid,
+      item.tipo_item || 'INSUMO',
+      item.codigo_item || null,
+      item.descricao || '',
+      item.unidade || null,
+      toNum(item.coeficiente),
+      item.preco_unitario === undefined ? null : toNum(item.preco_unitario, null),
+      item.custo_parcial === undefined ? null : toNum(item.custo_parcial, null),
+      item.situacao_item || null,
+      ordem,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    ]);
+    await run(db, 'UPDATE tenant_itens_composicao SET id_item = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+  }
+}
+
+async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
+  const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
+    ? scopedComposicaoId(idComposicao).value
+    : Number(idComposicao);
+  const itens = await all(db, `
+    SELECT rowid AS _rowid, *
+    FROM tenant_itens_composicao
+    WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY ordem, rowid`, [rowid]);
+  let total = 0;
+  for (const item of itens) {
+    const preco = toNum(item.preco_unitario);
+    const parcial = Number((toNum(item.coeficiente) * preco).toFixed(4));
+    await run(db, 'UPDATE tenant_itens_composicao SET preco_unitario = ?, custo_parcial = ? WHERE rowid = ?', [preco, parcial, item._rowid]);
+    total += parcial;
+  }
+  const rounded = Number(total.toFixed(4));
+  await run(db, 'UPDATE tenant_composicoes SET custo_unitario = ?, tenant_updated_at=? WHERE rowid = ?', [rounded, new Date().toISOString(), rowid]);
+  return rounded;
+}
+
+async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao_orcamentos = 'manter' } = {}, options = {}) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const readDb = options.readDb || db;
+    const compOrig = options.current || await getComposicao(readDb, idComposicao);
+    if (!compOrig) return null;
+    const impacto = options.impacto || await impactoComposicao(readDb, idComposicao).catch(() => null);
+    const temImpacto = (impacto?.composicoes_auxiliares || []).length > 0 || (impacto?.orcamentos || []).length > 0;
+    const referenciais = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+    const scoped = scopedComposicaoId(idComposicao);
+    const criarNova = scoped.scope === 'catalog' || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
+    let idResultado = scoped.scope === 'tenant' ? scoped.value : null;
+    let codNovo = null;
+
+    await run(db, 'BEGIN');
+    try {
+      if (criarNova) {
+        codNovo = await uniqueCodigoUsuario(db, dados.codigo || compOrig.codigo);
+        const created = await insertTenantComposicao(db, {
+          ...compOrig,
+          ...dados,
+          codigo: codNovo,
+          fonte: 'USUARIO',
+          situacao: 'Ativo',
+          custo_unitario: 0,
+        }, {
+          catalogId: scoped.scope === 'catalog' ? Number(scoped.value) : null,
+          action: scoped.scope === 'catalog' ? 'update' : 'create',
+          impactPolicy: acao_orcamentos,
+        });
+        idResultado = created.lastID;
+      } else {
+        await updateTenantComposicao(db, idResultado, { ...compOrig, ...dados, fonte: compOrig.fonte || 'USUARIO' });
+      }
+      await replaceTenantItens(db, idResultado, itens);
+      const custo = await recalcularTenantComposicaoUnitaria(db, idResultado);
+
+      if (acao_orcamentos === 'atualizar' && !String(idComposicao).startsWith('tenant:')) {
+        await run(db, `
+          UPDATE orcamento_sintetico
+          SET id_composicao = ?, codigo = ?, descricao = ?, custo_unitario = ?
+          WHERE id_composicao = ?`, [
+          idResultado,
+          codNovo || dados.codigo || compOrig.codigo,
+          String(dados.descricao || compOrig.descricao || '').trim(),
+          custo,
+          Number(scoped.value),
+        ]).catch(() => {});
+      }
+
+      await run(db, 'COMMIT');
+      return {
+        composicao: await getTenantComposicao(db, idResultado),
+        id_resultado: `tenant:${idResultado}`,
+        criou_nova: criarNova,
+        cod_novo: codNovo,
+        mensagem: criarNova ? `Nova composicao USUARIO criada (codigo: ${codNovo}).` : 'Composicao atualizada.',
+      };
+    } catch (err) {
+      await run(db, 'ROLLBACK').catch(() => {});
+      throw err;
+    }
+  }
+
   const compOrig = await one(db, 'SELECT * FROM composicoes WHERE id_composicao = ?', [idComposicao]);
   if (!compOrig) return null;
   const impacto = await impactoComposicao(db, idComposicao);
@@ -476,7 +1089,33 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
   }
 }
 
-async function excluirComVinculo(db, idComposicao, acao = 'desvincular') {
+async function excluirComVinculo(db, idComposicao, acao = 'desvincular', options = {}) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const impacto = options.impacto || await impactoComposicao(options.readDb || db, idComposicao);
+    if (!impacto) return null;
+    const scoped = scopedComposicaoId(idComposicao);
+    await run(db, 'BEGIN');
+    try {
+      if (acao === 'remover') {
+        if (scoped.scope === 'tenant') {
+          await run(db, 'DELETE FROM orcamento_sintetico WHERE id_composicao = ?', [scoped.value]).catch(() => {});
+        } else {
+          await run(db, 'DELETE FROM orcamento_sintetico WHERE id_composicao = ?', [Number(scoped.value)]).catch(() => {});
+        }
+      } else if (scoped.scope === 'tenant') {
+        await run(db, 'UPDATE orcamento_sintetico SET id_composicao = NULL WHERE id_composicao = ?', [scoped.value]).catch(() => {});
+      } else {
+        await run(db, 'UPDATE orcamento_sintetico SET id_composicao = NULL WHERE id_composicao = ?', [Number(scoped.value)]).catch(() => {});
+      }
+      await deleteComposicaoDirect(db, idComposicao);
+      await run(db, 'COMMIT');
+      return { mensagem: 'Composicao excluida com sucesso.' };
+    } catch (err) {
+      await run(db, 'ROLLBACK').catch(() => {});
+      throw err;
+    }
+  }
+
   const impacto = await impactoComposicao(db, idComposicao);
   if (!impacto) return null;
   const comp = impacto.composicao;
@@ -540,6 +1179,33 @@ async function excluirEmLote(db, data = {}) {
     throw err;
   }
   const { clause, params } = batchWhere(data);
+  if (await hasTenantComposicaoOverrides(db)) {
+    const readMode = await hasCatalogComposicoes(db);
+    if (readMode) {
+      const catalog = buildTenantCatalogListSelect(data, 'catalog');
+      const tenant = buildTenantCatalogListSelect(data, 'tenant');
+      const rows = await all(db, `
+        SELECT id_composicao FROM (
+          ${catalog.sql}
+          UNION ALL
+          ${tenant.sql}
+        )`, [...catalog.params, ...tenant.params]);
+      if (data.dry_run) return { total: rows.length, dry_run: true };
+      let excluidos = 0;
+      await run(db, 'BEGIN');
+      try {
+        for (const row of rows) {
+          const result = await deleteComposicaoDirect(db, row.id_composicao);
+          excluidos += result.changes || 0;
+        }
+        await run(db, 'COMMIT');
+      } catch (err) {
+        await run(db, 'ROLLBACK').catch(() => {});
+        throw err;
+      }
+      return { total: rows.length, excluidos, dry_run: false, mensagem: `${excluidos} composicao(oes) excluida(s) com sucesso.` };
+    }
+  }
   const rows = await all(db, `SELECT id_composicao FROM composicoes WHERE ${clause}`, params);
   if (data.dry_run) return { total: rows.length, dry_run: true };
   let excluidos = 0;
@@ -558,6 +1224,31 @@ async function excluirEmLote(db, data = {}) {
 }
 
 async function createItem(db, idComposicao, data = {}) {
+  if (await hasTenantComposicaoOverrides(db)) {
+    const scoped = scopedComposicaoId(idComposicao);
+    if (scoped.scope !== 'tenant') return null;
+    const result = await run(db, `
+      INSERT INTO tenant_itens_composicao
+        (id_composicao, tipo_item, codigo_item, descricao, unidade, coeficiente, preco_unitario, custo_parcial,
+         situacao_item, ordem, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'create', 'active', ?, ?)`, [
+      scoped.value,
+      data.tipo_item || 'INSUMO',
+      data.codigo_item || null,
+      data.descricao || '',
+      data.unidade || null,
+      toNum(data.coeficiente),
+      data.preco_unitario === undefined ? null : toNum(data.preco_unitario, null),
+      data.custo_parcial === undefined ? null : toNum(data.custo_parcial, null),
+      data.situacao_item || null,
+      data.ordem || 0,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    ]);
+    await run(db, 'UPDATE tenant_itens_composicao SET id_item = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_item FROM tenant_itens_composicao WHERE rowid = ?", [result.lastID]);
+  }
+
   const result = await run(db, `
     INSERT INTO itens_composicao
       (id_composicao, tipo_item, codigo_item, descricao, unidade, coeficiente, preco_unitario, custo_parcial, situacao_item, ordem)
@@ -577,6 +1268,29 @@ async function createItem(db, idComposicao, data = {}) {
 }
 
 async function updateItem(db, idItem, data = {}) {
+  const scoped = scopedItemId(idItem);
+  if (scoped.scope === 'tenant' && await hasTenantComposicaoOverrides(db)) {
+    const result = await run(db, `
+      UPDATE tenant_itens_composicao
+      SET tipo_item = ?, codigo_item = ?, descricao = ?, unidade = ?, coeficiente = ?,
+          preco_unitario = ?, custo_parcial = ?, situacao_item = ?, ordem = ?, tenant_updated_at=?
+      WHERE rowid = ? AND COALESCE(tenant_override_status,'active')='active'`, [
+      data.tipo_item || 'INSUMO',
+      data.codigo_item || null,
+      data.descricao || '',
+      data.unidade || null,
+      toNum(data.coeficiente),
+      data.preco_unitario === undefined ? null : toNum(data.preco_unitario, null),
+      data.custo_parcial === undefined ? null : toNum(data.custo_parcial, null),
+      data.situacao_item || null,
+      data.ordem || 0,
+      new Date().toISOString(),
+      scoped.value,
+    ]);
+    if (!result.changes) return null;
+    return one(db, "SELECT *, 'tenant:' || rowid AS id_item FROM tenant_itens_composicao WHERE rowid = ?", [scoped.value]);
+  }
+
   const result = await run(db, `
     UPDATE itens_composicao
     SET tipo_item = ?, codigo_item = ?, descricao = ?, unidade = ?, coeficiente = ?,
@@ -598,6 +1312,10 @@ async function updateItem(db, idItem, data = {}) {
 }
 
 async function deleteItem(db, idItem) {
+  const scoped = scopedItemId(idItem);
+  if (scoped.scope === 'tenant' && await hasTenantComposicaoOverrides(db)) {
+    return run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE rowid = ?", [new Date().toISOString(), scoped.value]);
+  }
   return run(db, 'DELETE FROM itens_composicao WHERE id_item = ?', [idItem]);
 }
 

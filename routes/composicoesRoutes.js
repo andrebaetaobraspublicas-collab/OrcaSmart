@@ -51,11 +51,11 @@ module.exports = function(db, options = {}) {
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updateComposicao(db, req.params.id, req.body || {}));
+    res.json(await service.updateComposicao(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.deleteComposicao(db, req.params.id));
+    res.json(await service.deleteComposicao(db, req.params.id, { readDb }));
   }));
 
   router.post('/:id/itens', asyncHandler(async (req, res) => {
@@ -75,11 +75,11 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/:id/excluir-com-vinculo', asyncHandler(async (req, res) => {
-    res.json(await service.excluirComVinculo(db, req.params.id, req.body || {}));
+    res.json(await service.excluirComVinculo(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   router.post('/:id/editar-com-vinculo', asyncHandler(async (req, res) => {
-    res.json(await service.editarComVinculo(db, req.params.id, req.body || {}));
+    res.json(await service.editarComVinculo(db, req.params.id, req.body || {}, { readDb }));
   }));
 
   return router;

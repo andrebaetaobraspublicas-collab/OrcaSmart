@@ -10,9 +10,10 @@ async function assertDescricao(data = {}) {
   if (!String(data.descricao || '').trim()) throw badRequest('Descricao e obrigatoria.');
 }
 
-async function updateComposicao(db, id, data) {
+async function updateComposicao(db, id, data, options = {}) {
   await assertDescricao(data);
-  const impacto = await repo.impactoComposicao(db, id);
+  const readDb = options.readDb || db;
+  const impacto = await repo.impactoComposicao(readDb, id);
   if (!impacto) {
     const err = new Error('Composicao nao encontrada.');
     err.status = 404;
@@ -23,11 +24,13 @@ async function updateComposicao(db, id, data) {
     err.status = 409;
     throw err;
   }
-  return repo.updateComposicaoDirect(db, id, data);
+  const current = await repo.getComposicao(readDb, id);
+  return repo.updateComposicaoDirect(db, id, { ...data, _current: current });
 }
 
-async function deleteComposicao(db, id) {
-  const impacto = await repo.impactoComposicao(db, id);
+async function deleteComposicao(db, id, options = {}) {
+  const readDb = options.readDb || db;
+  const impacto = await repo.impactoComposicao(readDb, id);
   if (!impacto) {
     const err = new Error('Composicao nao encontrada.');
     err.status = 404;
@@ -52,9 +55,12 @@ async function createComposicao(db, data) {
   return repo.createComposicao(db, data);
 }
 
-async function editarComVinculo(db, id, payload = {}) {
+async function editarComVinculo(db, id, payload = {}, options = {}) {
   await assertDescricao(payload.dados || {});
-  const result = await repo.editarComVinculo(db, id, payload);
+  const readDb = options.readDb || db;
+  const current = await repo.getComposicao(readDb, id);
+  const impacto = await repo.impactoComposicao(readDb, id).catch(() => null);
+  const result = await repo.editarComVinculo(db, id, payload, { readDb, current, impacto });
   if (!result) {
     const err = new Error('Composicao nao encontrada.');
     err.status = 404;
@@ -63,10 +69,12 @@ async function editarComVinculo(db, id, payload = {}) {
   return result;
 }
 
-async function excluirComVinculo(db, id, payload = {}) {
+async function excluirComVinculo(db, id, payload = {}, options = {}) {
   const acao = payload.acao || 'desvincular';
   if (!['desvincular', 'remover'].includes(acao)) throw badRequest('Acao de exclusao invalida.');
-  const result = await repo.excluirComVinculo(db, id, acao);
+  const readDb = options.readDb || db;
+  const impacto = await repo.impactoComposicao(readDb, id).catch(() => null);
+  const result = await repo.excluirComVinculo(db, id, acao, { readDb, impacto });
   if (!result) {
     const err = new Error('Composicao nao encontrada.');
     err.status = 404;
