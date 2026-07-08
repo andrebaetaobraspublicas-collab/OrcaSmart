@@ -26,6 +26,7 @@ const {
   PHASE2_MODEL_VERSION,
 } = require('./utils/dataModelManifest');
 const { ensureSharedCatalog } = require('./utils/sharedCatalog');
+const { buildTenantTemplate } = require('./utils/tenantTemplate');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -42,6 +43,7 @@ const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
+const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
 const LEGACY_DB_PATH = path.join(APP_DIR, 'database', 'orcamento_obras.db');
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
@@ -57,6 +59,10 @@ const bootState = {
   sharedCatalogBuilding: false,
   sharedCatalogError: null,
   sharedCatalogStats: null,
+  tenantTemplateReady: false,
+  tenantTemplateBuilding: false,
+  tenantTemplateError: null,
+  tenantTemplateStats: null,
 };
 
 function ensureDataDir() {
@@ -195,7 +201,9 @@ function tenantDbPath(idTenant) {
 function createTenantDatabase(idTenant) {
   const target = tenantDbPath(idTenant);
   if (!fs.existsSync(target)) {
-    const template = dbFileTemplate();
+    const template = fs.existsSync(TENANT_PRIVATE_TEMPLATE_PATH)
+      ? TENANT_PRIVATE_TEMPLATE_PATH
+      : dbFileTemplate();
     if (!fs.existsSync(template)) {
       throw new Error(`Banco-template não encontrado em ${template}`);
     }
@@ -486,6 +494,11 @@ app.get('/api/status', (_req, res) => res.json({
     sharedCatalogBuilding: bootState.sharedCatalogBuilding,
     sharedCatalogError: bootState.sharedCatalogError,
     sharedCatalogStats: bootState.sharedCatalogStats,
+    tenantTemplatePath: TENANT_PRIVATE_TEMPLATE_PATH,
+    tenantTemplateReady: bootState.tenantTemplateReady,
+    tenantTemplateBuilding: bootState.tenantTemplateBuilding,
+    tenantTemplateError: bootState.tenantTemplateError,
+    tenantTemplateStats: bootState.tenantTemplateStats,
     catalogTables: CATALOG_TABLES.length,
     tenantTables: TENANT_TABLES.length,
     userOverrideDomains: USER_OVERRIDE_DOMAINS,
@@ -680,8 +693,36 @@ async function initializeSharedCatalog() {
   }
 }
 
+async function initializeTenantTemplate() {
+  if (bootState.tenantTemplateBuilding || bootState.tenantTemplateReady) return;
+  bootState.tenantTemplateBuilding = true;
+  bootState.tenantTemplateError = null;
+  try {
+    const sqlite = getSqlite3();
+    bootState.tenantTemplateStats = await buildTenantTemplate({
+      sqlite3: sqlite,
+      force: false,
+      manifest: phase2Manifest,
+      paths: {
+        dataDir: DATA_DIR,
+        tenantTemplatePath: TENANT_PRIVATE_TEMPLATE_PATH,
+        templatePath: DB_TEMPLATE_PATH,
+        templateGzPath: DB_TEMPLATE_GZ_PATH,
+        legacyPath: LEGACY_DB_PATH,
+      },
+    });
+    bootState.tenantTemplateReady = true;
+  } catch (err) {
+    bootState.tenantTemplateError = err && err.message ? err.message : String(err);
+    console.error('Falha ao inicializar template privado de tenant:', err);
+  } finally {
+    bootState.tenantTemplateBuilding = false;
+  }
+}
+
 initMasterDb()
-  .then(() => {
+  .then(async () => {
+    await initializeTenantTemplate();
     bootState.databaseReady = true;
     startServer();
     initializeSharedCatalog();
