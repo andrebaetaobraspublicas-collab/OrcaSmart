@@ -1,19 +1,20 @@
 const express = require('express');
 const service = require('../services/equipamentosService');
 
-module.exports = function equipamentosRoutes(db) {
+module.exports = function equipamentosRoutes(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
   router.get('/familias', asyncHandler(async (_req, res) => {
-    res.json(await service.familias(db));
+    res.json(await service.familias(readDb));
   }));
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await service.list(db, req.query || {}));
+    res.json(await service.list(readDb, req.query || {}));
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
@@ -21,7 +22,7 @@ module.exports = function equipamentosRoutes(db) {
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.getById(db, req.params.id));
+    res.json(await service.getById(readDb, req.params.id));
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
@@ -33,7 +34,7 @@ module.exports = function equipamentosRoutes(db) {
   }));
 
   router.post('/:id/calcular', asyncHandler(async (req, res) => {
-    res.json(await service.calcular(db, req.params.id, req.body || {}));
+    res.json(await service.calcular(readDb, req.params.id, req.body || {}));
   }));
 
   router.get('/:id/impacto', asyncHandler(async (req, res) => {
@@ -45,7 +46,7 @@ module.exports = function equipamentosRoutes(db) {
   }));
 
   router.get('/:id/precos', asyncHandler(async (req, res) => {
-    res.json(await service.listPrecos(db, req.params.id));
+    res.json(await service.listPrecos(readDb, req.params.id));
   }));
 
   router.post('/:id/precos', asyncHandler(async (req, res) => {

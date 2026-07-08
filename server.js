@@ -598,7 +598,7 @@ app.use('/api/orcamentos', require('./routes/orcamentosRoutes')(tenantDbProxy));
 app.use('/api/unidades', require('./routes/unidadesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/fontes', require('./routes/fontesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/datas-base', require('./routes/datasBaseRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
-app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy));
+app.use('/api/equipamentos', require('./routes/equipamentosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/insumos', require('./routes/insumosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
