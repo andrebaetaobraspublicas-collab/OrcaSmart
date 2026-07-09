@@ -4,6 +4,7 @@ const AdminPage = {
   state: {
     tab: 'usuarios',
     users: [],
+    subscriptions: [],
     tenants: [],
     logs: [],
     health: null,
@@ -22,6 +23,30 @@ const AdminPage = {
     if (!n) return '-';
     if (n < 1024 * 1024) return `${(n / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} KB`;
     return `${(n / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
+  },
+
+  fmtEpochDate(value) {
+    const n = Number(value || 0);
+    if (!n) return '-';
+    const date = new Date(n * 1000);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleDateString('pt-BR');
+  },
+
+  epochToDateInput(value) {
+    const n = Number(value || 0);
+    if (!n) return '';
+    const date = new Date(n * 1000);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = part => String(part).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  },
+
+  dateInputToEpoch(value) {
+    if (!value) return null;
+    const date = new Date(`${value}T23:59:59`);
+    if (Number.isNaN(date.getTime())) return null;
+    return Math.floor(date.getTime() / 1000);
   },
 
   badge(text, tone = 'gray') {
@@ -55,10 +80,11 @@ const AdminPage = {
   },
 
   async loadAll() {
-    const [me, overview, users, tenants, logs, health, backups] = await Promise.all([
+    const [me, overview, users, subscriptions, tenants, logs, health, backups] = await Promise.all([
       API.auth.me(),
       API.admin.overview(),
       API.admin.users(),
+      API.admin.subscriptions(),
       API.admin.tenants(),
       API.admin.auditLog({ limit: 80 }),
       API.admin.health(),
@@ -67,6 +93,7 @@ const AdminPage = {
     this.state.me = me || null;
     this.state.overview = overview || {};
     this.state.users = Array.isArray(users) ? users : [];
+    this.state.subscriptions = Array.isArray(subscriptions) ? subscriptions : [];
     this.state.tenants = tenants && Array.isArray(tenants.tenants) ? tenants.tenants : [];
     this.state.logs = Array.isArray(logs) ? logs : [];
     this.state.health = health || null;
@@ -99,6 +126,7 @@ const AdminPage = {
     return `
       <div class="toolbar" style="padding:12px 20px">
         ${btn('usuarios', 'Usuarios')}
+        ${btn('assinaturas', 'Assinaturas')}
         ${btn('tenants', 'Tenants')}
         ${btn('saude', 'Saude')}
         ${btn('backups', 'Backups')}
@@ -116,6 +144,12 @@ const AdminPage = {
 
   statusOptions(status) {
     return ['ativo', 'suspenso', 'inativo'].map(value =>
+      `<option value="${value}" ${value === status ? 'selected' : ''}>${value}</option>`
+    ).join('');
+  },
+
+  subscriptionOptions(status) {
+    return ['trial', 'trialing', 'active', 'past_due', 'canceled', 'incomplete', 'incomplete_expired', 'unpaid'].map(value =>
       `<option value="${value}" ${value === status ? 'selected' : ''}>${value}</option>`
     ).join('');
   },
@@ -147,6 +181,56 @@ const AdminPage = {
               <th>Assinatura</th><th>Tenant</th><th>Criado em</th><th>Acoes</th>
             </tr></thead>
             <tbody>${rows || `<tr><td colspan="8" class="text-center text-3">Nenhum usuario encontrado.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
+  },
+
+  renderSubscriptions() {
+    const rows = this.state.subscriptions.map(item => {
+      const status = item.subscription_status === 'sem_assinatura' ? 'trial' : item.subscription_status;
+      return `
+        <tr>
+          <td class="fw-500">${Utils.esc(item.nome)}<div class="text-3 text-sm">${Utils.esc(item.email)}</div></td>
+          <td>${Utils.esc(item.tenant || '-')}<div class="text-3 text-sm">${this.statusBadge(item.tenant_status)}</div></td>
+          <td>${this.roleBadge(item.role)}<div style="margin-top:4px">${this.statusBadge(item.user_status)}</div></td>
+          <td>
+            <select class="filter-select" data-admin-subscription-status="${item.id_user}">
+              ${this.subscriptionOptions(status)}
+            </select>
+            ${item.subscription_status === 'sem_assinatura' ? '<div class="text-3 text-sm">Sem registro: ao salvar, sera criado.</div>' : ''}
+          </td>
+          <td>
+            <input type="date" class="filter-select" data-admin-subscription-end="${item.id_user}" value="${this.epochToDateInput(item.current_period_end)}">
+            <div class="text-3 text-sm">Atual: ${this.fmtEpochDate(item.current_period_end)}</div>
+          </td>
+          <td class="text-3 text-sm">
+            <div>Sub: ${Utils.esc(item.stripe_subscription_id || '-')}</div>
+            <div>Cliente: ${Utils.esc(item.stripe_customer_id || '-')}</div>
+          </td>
+          <td class="text-3 text-sm">${Utils.esc(item.subscription_updated_at || item.subscription_created_at || '-')}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" data-admin-subscription-save="${item.id_user}">Salvar</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="section-card">
+        <div class="section-card-header">
+          <div>
+            <h2>Assinaturas dos usuarios</h2>
+            <p class="text-3 text-sm">Ajustes manuais ficam registrados na auditoria administrativa.</p>
+          </div>
+          <span class="text-3 text-sm">${this.fmtInt(this.state.subscriptions.length)} registro(s)</span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr>
+              <th>Usuario</th><th>Tenant</th><th>Conta</th><th>Status da assinatura</th>
+              <th>Fim do periodo</th><th>Stripe</th><th>Atualizado em</th><th>Acoes</th>
+            </tr></thead>
+            <tbody>${rows || `<tr><td colspan="8" class="text-center text-3">Nenhuma assinatura encontrada.</td></tr>`}</tbody>
           </table>
         </div>
       </div>`;
@@ -208,6 +292,16 @@ const AdminPage = {
       return before.status !== after.status
         ? `status: ${before.status || '-'} -> ${after.status || '-'}`
         : 'Sem mudanca detectada';
+    }
+    if (log.entidade_tipo === 'subscription') {
+      const bits = [];
+      if (before.subscription_status !== after.subscription_status) {
+        bits.push(`status: ${before.subscription_status || '-'} -> ${after.subscription_status || '-'}`);
+      }
+      if (before.current_period_end !== after.current_period_end) {
+        bits.push(`fim: ${this.fmtEpochDate(before.current_period_end)} -> ${this.fmtEpochDate(after.current_period_end)}`);
+      }
+      return bits.join(' | ') || 'Sem mudanca detectada';
     }
     return log.acao || '-';
   },
@@ -542,6 +636,7 @@ const AdminPage = {
   },
 
   renderContent() {
+    if (this.state.tab === 'assinaturas') return this.renderSubscriptions();
     if (this.state.tab === 'tenants') return this.renderTenants();
     if (this.state.tab === 'saude') return this.renderHealth();
     if (this.state.tab === 'backups') return this.renderBackups();
@@ -624,6 +719,34 @@ const AdminPage = {
           await this.render();
         } catch (err) {
           Toast.error(err.message || 'Falha ao atualizar usuario.');
+          btn.disabled = false;
+        }
+      });
+    });
+    document.querySelectorAll('[data-admin-subscription-save]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.adminSubscriptionSave;
+        const status = document.querySelector(`[data-admin-subscription-status="${id}"]`).value;
+        const periodValue = document.querySelector(`[data-admin-subscription-end="${id}"]`).value;
+        const user = this.state.subscriptions.find(item => String(item.id_user) === String(id));
+        const ok = await Confirm.ask(
+          `Alterar a assinatura de ${user ? user.email : '#' + id} para "${status}"?`,
+          { title: 'Confirmar alteracao de assinatura', okText: 'Salvar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await API.admin.updateSubscription(id, {
+            status,
+            current_period_end: this.dateInputToEpoch(periodValue),
+          });
+          Toast.success('Assinatura atualizada.');
+          await this.render();
+          this.state.tab = 'assinaturas';
+          document.getElementById('adminPanelBody').innerHTML = this.renderSubscriptions();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao atualizar assinatura.');
           btn.disabled = false;
         }
       });

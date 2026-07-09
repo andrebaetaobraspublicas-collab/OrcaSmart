@@ -50,6 +50,11 @@ const API = {
       return API.get(`/admin/users${q ? '?' + q : ''}`);
     },
     updateUser: (id, data) => API._req('PATCH', `/admin/users/${id}`, data),
+    subscriptions: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/admin/subscriptions${q ? '?' + q : ''}`);
+    },
+    updateSubscription: (id, data) => API._req('PATCH', `/admin/users/${id}/subscription`, data),
     tenants: (params = {}) => {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/tenants${q ? '?' + q : ''}`);

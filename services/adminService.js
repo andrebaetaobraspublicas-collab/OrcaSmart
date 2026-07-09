@@ -4,6 +4,17 @@ const zlib = require('zlib');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
 
+const SUBSCRIPTION_STATUSES = [
+  'trial',
+  'trialing',
+  'active',
+  'past_due',
+  'canceled',
+  'incomplete',
+  'incomplete_expired',
+  'unpaid',
+];
+
 function openReadOnly(sqlite3, dbPath) {
   return new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY);
 }
@@ -417,6 +428,67 @@ async function listUsers(master, filters = {}) {
   return repo.listUsers(master, filters);
 }
 
+async function listSubscriptions(master, filters = {}) {
+  return repo.listSubscriptions(master, filters);
+}
+
+function pickSubscriptionPatch(data = {}) {
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(data, 'status')) {
+    if (!SUBSCRIPTION_STATUSES.includes(data.status)) {
+      const err = new Error('Status de assinatura invalido.');
+      err.status = 400;
+      throw err;
+    }
+    patch.status = data.status;
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'current_period_end')) {
+    if (data.current_period_end === null || data.current_period_end === '' || data.current_period_end === undefined) {
+      patch.current_period_end = null;
+    } else {
+      const value = Number(data.current_period_end);
+      if (!Number.isFinite(value) || value < 0) {
+        const err = new Error('Fim do periodo invalido.');
+        err.status = 400;
+        throw err;
+      }
+      patch.current_period_end = Math.floor(value);
+    }
+  }
+  return patch;
+}
+
+async function updateUserSubscription(master, actor, idUser, data = {}) {
+  const id = Number(idUser);
+  if (!id) {
+    const err = new Error('Usuario invalido.');
+    err.status = 400;
+    throw err;
+  }
+  const patch = pickSubscriptionPatch(data);
+  if (!Object.keys(patch).length) {
+    const err = new Error('Nenhuma alteracao de assinatura informada.');
+    err.status = 400;
+    throw err;
+  }
+  const before = await repo.getUserSubscription(master, id);
+  if (!before) {
+    const err = new Error('Usuario nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  await repo.upsertUserSubscription(master, id, patch);
+  const after = await repo.getUserSubscription(master, id);
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.subscription.update',
+    entidade_tipo: 'subscription',
+    entidade_id: id,
+    antes: before,
+    depois: after,
+  });
+  return { ok: true, subscription: after };
+}
+
 async function listTenants(master, options = {}) {
   const tenants = await repo.listTenants(master, {
     id_tenant: options.id_tenant || null,
@@ -594,8 +666,10 @@ module.exports = {
   getBackupManifest,
   getBackupArchivePath,
   listUsers,
+  listSubscriptions,
   listTenants,
   updateUser,
+  updateUserSubscription,
   updateTenant,
   listAuditLogs,
   auditPhase2Tenants,

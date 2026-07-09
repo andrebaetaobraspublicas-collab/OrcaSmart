@@ -53,6 +53,79 @@ async function listUsers(master, filters = {}) {
   return master.all(sql, params);
 }
 
+async function listSubscriptions(master, filters = {}) {
+  let sql = `
+    SELECT u.id_user, u.nome, u.email, u.role, u.status AS user_status,
+           t.id_tenant, t.nome AS tenant, t.status AS tenant_status,
+           s.id_subscription, COALESCE(s.status, 'sem_assinatura') AS subscription_status,
+           s.stripe_subscription_id, COALESCE(s.stripe_customer_id, u.stripe_customer_id) AS stripe_customer_id,
+           s.current_period_end, s.created_at AS subscription_created_at, s.updated_at AS subscription_updated_at
+    FROM users u
+    JOIN tenants t ON t.id_tenant = u.id_tenant
+    LEFT JOIN subscriptions s ON s.id_user = u.id_user`;
+  const where = [];
+  const params = [];
+
+  if (filters.q) {
+    where.push('(LOWER(u.nome) LIKE ? OR LOWER(u.email) LIKE ? OR LOWER(t.nome) LIKE ?)');
+    const q = `%${String(filters.q).toLowerCase()}%`;
+    params.push(q, q, q);
+  }
+  if (filters.status) {
+    where.push('COALESCE(s.status, ?) = ?');
+    params.push('sem_assinatura', filters.status);
+  }
+  if (filters.tenant_status) {
+    where.push('t.status = ?');
+    params.push(filters.tenant_status);
+  }
+
+  if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
+  sql += ' ORDER BY u.created_at DESC, u.id_user DESC';
+  return master.all(sql, params);
+}
+
+async function getUserSubscription(master, idUser) {
+  return master.get(`
+    SELECT u.id_user, u.nome, u.email, u.role, u.status AS user_status,
+           t.id_tenant, t.nome AS tenant, t.status AS tenant_status,
+           s.id_subscription, COALESCE(s.status, 'sem_assinatura') AS subscription_status,
+           s.stripe_subscription_id, COALESCE(s.stripe_customer_id, u.stripe_customer_id) AS stripe_customer_id,
+           s.current_period_end, s.created_at AS subscription_created_at, s.updated_at AS subscription_updated_at
+    FROM users u
+    JOIN tenants t ON t.id_tenant = u.id_tenant
+    LEFT JOIN subscriptions s ON s.id_user = u.id_user
+    WHERE u.id_user = ?`, [idUser]);
+}
+
+async function upsertUserSubscription(master, idUser, data = {}) {
+  const existing = await master.get('SELECT id_subscription FROM subscriptions WHERE id_user = ?', [idUser]);
+  if (existing) {
+    const fields = [];
+    const params = [];
+    if (data.status) {
+      fields.push('status = ?');
+      params.push(data.status);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'current_period_end')) {
+      fields.push('current_period_end = ?');
+      params.push(data.current_period_end);
+    }
+    if (!fields.length) return { changes: 0 };
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(idUser);
+    return master.run(`UPDATE subscriptions SET ${fields.join(', ')} WHERE id_user = ?`, params);
+  }
+
+  return master.run(`
+    INSERT INTO subscriptions (id_user, status, current_period_end, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)`, [
+      idUser,
+      data.status || 'trial',
+      Object.prototype.hasOwnProperty.call(data, 'current_period_end') ? data.current_period_end : null,
+    ]);
+}
+
 async function listTenants(master, filters = {}) {
   let sql = `
     SELECT t.id_tenant, t.nome, t.slug, t.db_path, t.status, t.created_at,
@@ -176,6 +249,9 @@ async function listAuditLogs(master, filters = {}) {
 module.exports = {
   overview,
   listUsers,
+  listSubscriptions,
+  getUserSubscription,
+  upsertUserSubscription,
   listTenants,
   listTenantUsers,
   getUser,

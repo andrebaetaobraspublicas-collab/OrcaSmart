@@ -29,6 +29,18 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.updateUser(master, req.user, req.params.id, req.body || {}));
   }));
 
+  router.get('/subscriptions', asyncHandler(async (req, res) => {
+    res.json(await service.listSubscriptions(master, {
+      q: req.query.q || null,
+      status: req.query.status || null,
+      tenant_status: req.query.tenant_status || null,
+    }));
+  }));
+
+  router.patch('/users/:id/subscription', asyncHandler(async (req, res) => {
+    res.json(await service.updateUserSubscription(master, req.user, req.params.id, req.body || {}));
+  }));
+
   router.get('/tenants', asyncHandler(async (req, res) => {
     const tenants = await service.listTenants(master, {
       ...options,
