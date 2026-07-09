@@ -3,20 +3,22 @@
  */
 const express = require('express');
 const orcamentosService = require('../services/orcamentosService');
+const { catalogFallbackReadDb } = require('../utils/catalogFallbackReadDb');
 
 module.exports = function(db) {
   const router = express.Router();
+  const readDb = catalogFallbackReadDb(db);
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.listOrcamentos(db, req.query || {}));
+    res.json(await orcamentosService.listOrcamentos(readDb, req.query || {}));
   }));
 
   router.get('/:id/completo', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.getOrcamento(db, req.params.id));
+    res.json(await orcamentosService.getOrcamento(readDb, req.params.id));
   }));
 
   router.put('/:id/bdi', asyncHandler(async (req, res) => {
@@ -28,7 +30,7 @@ module.exports = function(db) {
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.getOrcamento(db, req.params.id));
+    res.json(await orcamentosService.getOrcamento(readDb, req.params.id));
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
