@@ -10,31 +10,52 @@ function all(db, sql, params = []) {
   });
 }
 
-const scalarQueries = {
+const tenantScalarQueries = {
   totalObras: 'SELECT COUNT(*) AS total FROM obras',
   totalOrcamentos: 'SELECT COUNT(*) AS total FROM orcamentos',
+  totalEventogramas: 'SELECT COUNT(*) AS total FROM eventogramas',
+};
+
+const catalogScalarQueries = {
   totalInsumos: 'SELECT COUNT(*) AS total FROM insumos',
   totalComposicoes: 'SELECT COUNT(*) AS total FROM composicoes',
   totalCompSINAPI: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SINAPI'",
   totalCompSICRO: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SICRO'",
   totalCompUsuario: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'USUARIO'",
-  totalEventogramas: 'SELECT COUNT(*) AS total FROM eventogramas',
   totalUnidades: 'SELECT COUNT(*) AS total FROM unidades_medida',
   totalFontes: 'SELECT COUNT(*) AS total FROM fontes_referencia',
 };
 
-async function stats(db) {
-  const result = {};
-  for (const [key, sql] of Object.entries(scalarQueries)) {
+async function safeScalar(db, sql) {
+  try {
     const row = await one(db, sql);
-    result[key] = row?.total || 0;
+    return row?.total || 0;
+  } catch (err) {
+    if (/no such table/i.test(String(err.message || ''))) return 0;
+    throw err;
   }
-  result.ultimosOrcamentos = await all(db, `
-    SELECT o.id_orcamento, o.nome_orcamento, o.status, o.data_criacao,
-           o.valor_total, ob.nome_obra
-    FROM orcamentos o
-    LEFT JOIN obras ob ON ob.id_obra = o.id_obra
-    ORDER BY o.data_criacao DESC LIMIT 5`);
+}
+
+async function stats(db, options = {}) {
+  const readDb = options.readDb || db;
+  const result = {};
+  for (const [key, sql] of Object.entries(tenantScalarQueries)) {
+    result[key] = await safeScalar(db, sql);
+  }
+  for (const [key, sql] of Object.entries(catalogScalarQueries)) {
+    result[key] = await safeScalar(readDb, sql);
+  }
+  try {
+    result.ultimosOrcamentos = await all(db, `
+      SELECT o.id_orcamento, o.nome_orcamento, o.status, o.data_criacao,
+             o.valor_total, ob.nome_obra
+      FROM orcamentos o
+      LEFT JOIN obras ob ON ob.id_obra = o.id_obra
+      ORDER BY o.data_criacao DESC LIMIT 5`);
+  } catch (err) {
+    if (!/no such table/i.test(String(err.message || ''))) throw err;
+    result.ultimosOrcamentos = [];
+  }
   return result;
 }
 
