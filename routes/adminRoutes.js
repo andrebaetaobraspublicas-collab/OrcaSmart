@@ -38,8 +38,20 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json({ total: tenants.length, tenants });
   }));
 
+  router.get('/tenants/:id/diagnostics', asyncHandler(async (req, res) => {
+    res.json(await service.tenantDiagnostics(master, req.params.id, options));
+  }));
+
   router.patch('/tenants/:id', asyncHandler(async (req, res) => {
     res.json(await service.updateTenant(master, req.user, req.params.id, req.body || {}));
+  }));
+
+  router.get('/backups', asyncHandler(async (_req, res) => {
+    res.json(await service.listBackups(master, options));
+  }));
+
+  router.post('/backups', asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createBackup(master, req.user, options));
   }));
 
   router.get('/audit-log', asyncHandler(async (req, res) => {

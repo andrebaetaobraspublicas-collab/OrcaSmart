@@ -74,6 +74,16 @@ async function listTenants(master, filters = {}) {
   return master.all(sql, params);
 }
 
+async function listTenantUsers(master, idTenant) {
+  return master.all(`
+    SELECT u.id_user, u.nome, u.email, u.role, u.status, u.created_at,
+           s.status AS subscription_status, s.current_period_end
+    FROM users u
+    LEFT JOIN subscriptions s ON s.id_user = u.id_user
+    WHERE u.id_tenant = ?
+    ORDER BY u.created_at DESC`, [idTenant]);
+}
+
 async function getUser(master, idUser) {
   return master.get(`
     SELECT u.id_user, u.id_tenant, u.nome, u.email, u.role, u.status,
@@ -167,6 +177,7 @@ module.exports = {
   overview,
   listUsers,
   listTenants,
+  listTenantUsers,
   getUser,
   updateUser,
   getTenant,

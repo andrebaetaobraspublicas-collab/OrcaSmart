@@ -7,6 +7,7 @@ const AdminPage = {
     tenants: [],
     logs: [],
     health: null,
+    backups: null,
     me: null,
     overview: {},
     audit: null,
@@ -54,13 +55,14 @@ const AdminPage = {
   },
 
   async loadAll() {
-    const [me, overview, users, tenants, logs, health] = await Promise.all([
+    const [me, overview, users, tenants, logs, health, backups] = await Promise.all([
       API.auth.me(),
       API.admin.overview(),
       API.admin.users(),
       API.admin.tenants(),
       API.admin.auditLog({ limit: 80 }),
       API.admin.health(),
+      API.admin.backups(),
     ]);
     this.state.me = me || null;
     this.state.overview = overview || {};
@@ -68,6 +70,7 @@ const AdminPage = {
     this.state.tenants = tenants && Array.isArray(tenants.tenants) ? tenants.tenants : [];
     this.state.logs = Array.isArray(logs) ? logs : [];
     this.state.health = health || null;
+    this.state.backups = backups || null;
   },
 
   card(value, label, tone = 'blue') {
@@ -98,6 +101,7 @@ const AdminPage = {
         ${btn('usuarios', 'Usuarios')}
         ${btn('tenants', 'Tenants')}
         ${btn('saude', 'Saude')}
+        ${btn('backups', 'Backups')}
         ${btn('logs', 'Auditoria admin')}
         ${btn('auditoria', 'Auditoria Fase 2')}
         <button class="btn btn-ghost btn-sm" id="adminRefresh" style="margin-left:auto">${Utils.icons.refresh} Atualizar</button>
@@ -168,6 +172,7 @@ const AdminPage = {
           <td>
             <select class="filter-select" data-admin-tenant-status="${tenant.id_tenant}">${this.statusOptions(tenant.status || 'ativo')}</select>
             <button class="btn btn-primary btn-sm" data-admin-tenant-save="${tenant.id_tenant}" style="margin-left:6px">Salvar</button>
+            <button class="btn btn-ghost btn-sm" data-admin-tenant-diagnostics="${tenant.id_tenant}" style="margin-left:6px">Diagnostico</button>
           </td>
         </tr>`;
     }).join('');
@@ -307,6 +312,138 @@ const AdminPage = {
       </div>`;
   },
 
+  renderBackups() {
+    const data = this.state.backups || {};
+    const rows = (data.backups || []).map(item => `
+      <tr>
+        <td class="fw-500">${Utils.esc(item.id)}</td>
+        <td>${Utils.esc(item.created_at || '-')}</td>
+        <td>${Utils.esc(item.build || '-')}</td>
+        <td>${this.fmtInt(item.tenants)}</td>
+        <td>${this.fmtInt(item.files)}</td>
+        <td class="text-3 text-sm" style="word-break:break-all">${Utils.esc(item.path || '-')}</td>
+      </tr>`).join('');
+
+    return `
+      <div class="section-card">
+        <div class="section-card-header">
+          <div>
+            <h2>Snapshots administrativos</h2>
+            <p class="text-3 text-sm">Copia fisica do master, catalogo compartilhado, template e bancos dos tenants.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" id="adminCreateBackup">${Utils.icons.plus} Gerar snapshot</button>
+        </div>
+        <div class="section-card-body">
+          <div class="text-3 text-sm" style="margin-bottom:12px">Diretorio: ${Utils.esc(data.root || '-')}</div>
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>Snapshot</th><th>Criado em</th><th>Build</th><th>Tenants</th><th>Arquivos</th><th>Caminho</th></tr></thead>
+              <tbody>${rows || `<tr><td colspan="6" class="text-center text-3">Nenhum snapshot administrativo criado.</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  tableRows(items = []) {
+    return items.map(item => `
+      <tr>
+        <td class="fw-500">${Utils.esc(item.table)}</td>
+        <td>${item.error ? this.badge('Erro', 'red') : item.rows === null || item.rows === undefined ? this.badge('Ausente', 'yellow') : this.badge('OK', 'green')}</td>
+        <td>${item.rows === null || item.rows === undefined ? '-' : this.fmtInt(item.rows)}</td>
+        <td class="text-3 text-sm">${Utils.esc(item.error || '')}</td>
+      </tr>`).join('');
+  },
+
+  async openTenantDiagnostics(idTenant) {
+    try {
+      const data = await API.admin.tenantDiagnostics(idTenant);
+      const tenant = data.tenant || {};
+      const users = data.users || [];
+      const privateTables = data.tables && data.tables.private ? data.tables.private : [];
+      const overrideTables = data.tables && data.tables.overrides ? data.tables.overrides : [];
+      const logs = data.audit_log || [];
+      const userRows = users.map(user => `
+        <tr>
+          <td>${Utils.esc(user.nome)}</td>
+          <td>${Utils.esc(user.email)}</td>
+          <td>${this.roleBadge(user.role)}</td>
+          <td>${this.statusBadge(user.status)}</td>
+          <td>${this.statusBadge(user.subscription_status || 'sem_assinatura')}</td>
+        </tr>`).join('');
+      const logRows = logs.map(log => `
+        <tr>
+          <td class="text-3 text-sm">${Utils.esc(log.created_at || '-')}</td>
+          <td>${Utils.esc(log.admin_email || '-')}</td>
+          <td>${Utils.esc(log.acao || '-')}</td>
+          <td>${Utils.esc(this.logSummary(log))}</td>
+        </tr>`).join('');
+
+      Modal.open({
+        title: `Diagnostico do tenant #${tenant.id_tenant || idTenant}`,
+        body: `
+          <div class="section-card-body">
+            <div class="cards-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+              ${this.card(tenant.users_count, 'Usuarios', 'blue')}
+              ${this.card(tenant.stats && tenant.stats.obras, 'Obras', 'green')}
+              ${this.card(tenant.stats && tenant.stats.orcamentos, 'Orcamentos', 'yellow')}
+              ${this.fileStatusCard('Banco privado', tenant.db, 'blue')}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+              <div>
+                <div class="text-3 text-sm">Tenant</div>
+                <div class="fw-500">${Utils.esc(tenant.nome || '-')}</div>
+              </div>
+              <div>
+                <div class="text-3 text-sm">Status</div>
+                <div>${this.statusBadge(tenant.status)}</div>
+              </div>
+              <div style="grid-column:1 / -1">
+                <div class="text-3 text-sm">Banco</div>
+                <div class="fw-500" style="word-break:break-all">${Utils.esc(tenant.db && tenant.db.path || '-')}</div>
+              </div>
+            </div>
+
+            <h3 style="margin:12px 0">Usuarios do tenant</h3>
+            <div class="table-wrapper" style="margin-bottom:16px">
+              <table>
+                <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th><th>Assinatura</th></tr></thead>
+                <tbody>${userRows || `<tr><td colspan="5" class="text-center text-3">Nenhum usuario.</td></tr>`}</tbody>
+              </table>
+            </div>
+
+            <h3 style="margin:12px 0">Tabelas privadas</h3>
+            <div class="table-wrapper" style="margin-bottom:16px">
+              <table>
+                <thead><tr><th>Tabela</th><th>Status</th><th>Registros</th><th>Detalhe</th></tr></thead>
+                <tbody>${this.tableRows(privateTables) || `<tr><td colspan="4" class="text-center text-3">Sem tabelas privadas informadas.</td></tr>`}</tbody>
+              </table>
+            </div>
+
+            <h3 style="margin:12px 0">Tabelas de personalizacao do usuario</h3>
+            <div class="table-wrapper" style="margin-bottom:16px">
+              <table>
+                <thead><tr><th>Tabela</th><th>Status</th><th>Registros</th><th>Detalhe</th></tr></thead>
+                <tbody>${this.tableRows(overrideTables) || `<tr><td colspan="4" class="text-center text-3">Sem tabelas de override informadas.</td></tr>`}</tbody>
+              </table>
+            </div>
+
+            <h3 style="margin:12px 0">Auditoria recente deste tenant</h3>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Data</th><th>Admin</th><th>Acao</th><th>Resumo</th></tr></thead>
+                <tbody>${logRows || `<tr><td colspan="4" class="text-center text-3">Sem eventos administrativos recentes.</td></tr>`}</tbody>
+              </table>
+            </div>
+          </div>`,
+        footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>`,
+        size: 'xl',
+      });
+    } catch (err) {
+      Toast.error(err.message || 'Falha ao carregar diagnostico.');
+    }
+  },
+
   renderAudit() {
     const audit = this.state.audit;
     const body = !audit ? `
@@ -347,6 +484,7 @@ const AdminPage = {
   renderContent() {
     if (this.state.tab === 'tenants') return this.renderTenants();
     if (this.state.tab === 'saude') return this.renderHealth();
+    if (this.state.tab === 'backups') return this.renderBackups();
     if (this.state.tab === 'logs') return this.renderLogs();
     if (this.state.tab === 'auditoria') return this.renderAudit();
     return this.renderUsers();
@@ -451,6 +589,32 @@ const AdminPage = {
         }
       });
     });
+    document.querySelectorAll('[data-admin-tenant-diagnostics]').forEach(btn => {
+      btn.addEventListener('click', () => this.openTenantDiagnostics(btn.dataset.adminTenantDiagnostics));
+    });
+    const backupBtn = document.getElementById('adminCreateBackup');
+    if (backupBtn) {
+      backupBtn.addEventListener('click', async () => {
+        const ok = await Confirm.ask(
+          'Gerar um snapshot administrativo agora? A operacao copia os bancos para o diretorio persistente de backups.',
+          { title: 'Gerar snapshot', okText: 'Gerar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        backupBtn.disabled = true;
+        backupBtn.textContent = 'Gerando...';
+        try {
+          await API.admin.createBackup();
+          Toast.success('Snapshot administrativo criado.');
+          await this.render();
+          this.state.tab = 'backups';
+          document.getElementById('adminPanelBody').innerHTML = this.renderBackups();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao gerar snapshot.');
+          backupBtn.disabled = false;
+        }
+      });
+    }
     document.querySelectorAll('#adminRunAudit').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;

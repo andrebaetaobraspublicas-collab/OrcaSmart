@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
 
@@ -26,6 +27,19 @@ async function tableCount(sqlite3, dbPath, tableName) {
   } finally {
     await dbClose(db);
   }
+}
+
+async function tenantTableStats(sqlite3, tenant, tableNames = []) {
+  if (!tenant.db_path || !fs.existsSync(tenant.db_path) || !sqlite3) return [];
+  const tables = [];
+  for (const tableName of tableNames) {
+    try {
+      tables.push({ table: tableName, rows: await tableCount(sqlite3, tenant.db_path, tableName), error: null });
+    } catch (err) {
+      tables.push({ table: tableName, rows: null, error: err.message });
+    }
+  }
+  return tables;
 }
 
 async function tenantStats(sqlite3, tenant) {
@@ -117,6 +131,147 @@ async function systemHealth(master, options = {}) {
     },
     phase2: options.phase2Manifest || null,
   };
+}
+
+async function tenantDiagnostics(master, idTenant, options = {}) {
+  const id = Number(idTenant);
+  if (!id) {
+    const err = new Error('Tenant invalido.');
+    err.status = 400;
+    throw err;
+  }
+  const tenant = await repo.getTenant(master, id);
+  if (!tenant) {
+    const err = new Error('Tenant nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const [users, stats, tenantTables, overrideTables, auditLogs] = await Promise.all([
+    repo.listTenantUsers(master, id),
+    tenantStats(options.sqlite3, tenant),
+    tenantTableStats(options.sqlite3, tenant, options.tenantTables || []),
+    tenantTableStats(options.sqlite3, tenant, options.userOverrideTables || []),
+    repo.listAuditLogs(master, { entidade_tipo: 'tenant', entidade_id: id, limit: 20 }),
+  ]);
+  return {
+    tenant: {
+      ...tenant,
+      db: fileInfo(tenant.db_path),
+      stats,
+    },
+    users,
+    tables: {
+      private: tenantTables,
+      overrides: overrideTables,
+    },
+    audit_log: auditLogs.map(row => ({
+      ...row,
+      antes: row.antes ? JSON.parse(row.antes) : null,
+      depois: row.depois ? JSON.parse(row.depois) : null,
+    })),
+  };
+}
+
+function safeCopyFile(source, target) {
+  if (!source || !fs.existsSync(source)) return null;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+  return fileInfo(target);
+}
+
+function copyDbWithSidecars(source, targetDir, targetName) {
+  const copied = [];
+  const main = safeCopyFile(source, path.join(targetDir, targetName));
+  if (main) copied.push(main);
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = safeCopyFile(`${source}${suffix}`, path.join(targetDir, `${targetName}${suffix}`));
+    if (sidecar) copied.push(sidecar);
+  }
+  return copied;
+}
+
+function backupRoot(options = {}) {
+  return options.backupDir || path.join(options.dataDir || process.cwd(), 'backups', 'admin');
+}
+
+async function listBackups(_master, options = {}) {
+  const root = backupRoot(options);
+  if (!fs.existsSync(root)) return { root, total: 0, backups: [] };
+  const backups = fs.readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map((entry) => {
+      const dir = path.join(root, entry.name);
+      const manifestPath = path.join(dir, 'manifest.json');
+      let manifest = null;
+      if (fs.existsSync(manifestPath)) {
+        try {
+          manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        } catch (_err) {
+          manifest = null;
+        }
+      }
+      return {
+        id: entry.name,
+        path: dir,
+        created_at: manifest && manifest.created_at ? manifest.created_at : fs.statSync(dir).mtime.toISOString(),
+        build: manifest && manifest.build ? manifest.build : null,
+        files: manifest && manifest.files ? manifest.files.length : 0,
+        tenants: manifest && manifest.tenants ? manifest.tenants.length : 0,
+      };
+    })
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return { root, total: backups.length, backups };
+}
+
+async function createBackup(master, actor, options = {}) {
+  const tenants = await repo.listTenants(master);
+  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+  const root = backupRoot(options);
+  const dir = path.join(root, `snapshot_${stamp}`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const files = [];
+  const addCopied = items => items.forEach(item => { if (item) files.push(item); });
+  addCopied(copyDbWithSidecars(options.masterPath, dir, 'saas_master.db'));
+  addCopied(copyDbWithSidecars(options.catalogPath, dir, 'shared_catalog.db'));
+  addCopied(copyDbWithSidecars(options.tenantTemplatePath, dir, 'tenant_private_template.db'));
+
+  const tenantDir = path.join(dir, 'tenant_dbs');
+  const tenantFiles = [];
+  for (const tenant of tenants) {
+    const targetName = `tenant_${String(tenant.id_tenant).padStart(6, '0')}.db`;
+    const copied = copyDbWithSidecars(tenant.db_path, tenantDir, targetName);
+    tenantFiles.push({
+      id_tenant: tenant.id_tenant,
+      nome: tenant.nome,
+      status: tenant.status,
+      db_path: tenant.db_path,
+      copied: copied.length > 0,
+      files: copied,
+    });
+    addCopied(copied);
+  }
+
+  const manifest = {
+    id: path.basename(dir),
+    created_at: new Date().toISOString(),
+    build: options.build || null,
+    app: options.app || null,
+    version: options.version || null,
+    root: dir,
+    files,
+    tenants: tenantFiles,
+  };
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.backup.create',
+    entidade_tipo: 'backup',
+    entidade_id: manifest.id,
+    antes: null,
+    depois: { id: manifest.id, files: files.length, tenants: tenantFiles.length },
+  });
+  return manifest;
 }
 
 async function overview(master) {
@@ -298,6 +453,9 @@ async function migratePhase2Tenants(master, data = {}, options = {}) {
 module.exports = {
   overview,
   systemHealth,
+  tenantDiagnostics,
+  listBackups,
+  createBackup,
   listUsers,
   listTenants,
   updateUser,
