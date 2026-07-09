@@ -60,7 +60,12 @@ async function useTenantCatalogRead(db) {
   return (await hasTenantBdiOverrides(db)) && (await hasCatalogBdi(db));
 }
 
-function visibleCatalogClause(alias = 'b') {
+async function hasTenantReferentialOverrides(db) {
+  return tableExists(db, 'tenant_referential_overrides');
+}
+
+function visibleCatalogClause(alias = 'b', hasOverrides = true) {
+  if (!hasOverrides) return '1=1';
   return `
     NOT EXISTS (
       SELECT 1 FROM tenant_referential_overrides r
@@ -139,11 +144,12 @@ async function getPerfil(db, id) {
   if (tenantMode && scoped.scope === 'tenant') return getTenantPerfil(db, scoped.value);
 
   if (await useTenantCatalogRead(db)) {
-    const deleted = await one(db, `
+    const hasOverrides = await hasTenantReferentialOverrides(db);
+    const deleted = hasOverrides ? await one(db, `
       SELECT 1 FROM tenant_referential_overrides
       WHERE domain='bdi' AND catalog_table='perfis_bdi' AND catalog_id=?
         AND status='active' AND action='delete'
-      LIMIT 1`, [scoped.value]);
+      LIMIT 1`, [scoped.value]) : null;
     if (deleted) return null;
     const override = await one(db, `
       SELECT rowid AS tenant_rowid
@@ -157,7 +163,7 @@ async function getPerfil(db, id) {
              'catalog' AS _tenant_scope, b.id_perfil_bdi AS _catalog_id
       FROM catalog.perfis_bdi b
       LEFT JOIN catalog.componentes_bdi c ON c.id_perfil_bdi=b.id_perfil_bdi AND c.ativo=1
-      WHERE b.id_perfil_bdi=? AND ${visibleCatalogClause('b')}
+      WHERE b.id_perfil_bdi=? AND ${visibleCatalogClause('b', hasOverrides)}
       GROUP BY b.id_perfil_bdi`, [scoped.value]);
   }
   return one(db, `
@@ -255,7 +261,8 @@ async function recalcAndGet(db, pid, options = {}) {
 
 async function listPerfis(db, query = {}) {
   if (await useTenantCatalogRead(db)) {
-    const catalog = buildPerfilListSelect(query, 'catalog');
+    const hasOverrides = await hasTenantReferentialOverrides(db);
+    const catalog = buildPerfilListSelect(query, 'catalog', hasOverrides);
     const tenant = buildPerfilListSelect(query, 'tenant');
     return all(db, `
       SELECT * FROM (
@@ -283,7 +290,7 @@ async function listPerfis(db, query = {}) {
   return all(db, sql, params);
 }
 
-function buildPerfilListSelect(query = {}, source = 'catalog') {
+function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_perfis_bdi' : 'catalog.perfis_bdi';
   const compTable = isTenant ? 'tenant_componentes_bdi' : 'catalog.componentes_bdi';
@@ -291,7 +298,7 @@ function buildPerfilListSelect(query = {}, source = 'catalog') {
   const where = ['1=1'];
   const params = [];
   if (isTenant) where.push("COALESCE(b.tenant_override_status,'active')='active'");
-  else where.push(visibleCatalogClause('b'));
+  else where.push(visibleCatalogClause('b', hasOverrides));
   if (query.tipo) { where.push('b.tipo_obra=?'); params.push(query.tipo); }
   if (query.regime) { where.push('b.regime_tributario=?'); params.push(query.regime); }
   if (query.ano) { where.push('b.ano_orcamento=?'); params.push(query.ano); }

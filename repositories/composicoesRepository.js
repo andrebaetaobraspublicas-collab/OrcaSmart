@@ -62,7 +62,12 @@ async function useTenantCatalogRead(db) {
   return (await hasTenantComposicaoOverrides(db)) && (await hasCatalogComposicoes(db));
 }
 
-function visibleCatalogClause(alias = 'c') {
+async function hasTenantReferentialOverrides(db) {
+  return tableExists(db, 'tenant_referential_overrides');
+}
+
+function visibleCatalogClause(alias = 'c', hasOverrides = true) {
+  if (!hasOverrides) return '1=1';
   return `
     NOT EXISTS (
       SELECT 1 FROM tenant_referential_overrides r
@@ -104,6 +109,7 @@ const selectComp = `
 
 async function listGrupos(db, query = {}) {
   if (await useTenantCatalogRead(db)) {
+    const hasOverrides = await hasTenantReferentialOverrides(db);
     const params = [];
     let fonteFilter = '';
     if (query.fonte) {
@@ -114,7 +120,7 @@ async function listGrupos(db, query = {}) {
       SELECT g.*, COUNT(v.id_composicao) AS qtd_composicoes
       FROM catalog.grupos_composicoes g
       LEFT JOIN (
-        SELECT id_composicao, id_grupo_comp FROM catalog.composicoes c WHERE ${visibleCatalogClause('c')}
+        SELECT id_composicao, id_grupo_comp FROM catalog.composicoes c WHERE ${visibleCatalogClause('c', hasOverrides)}
         UNION ALL
         SELECT 'tenant:' || rowid AS id_composicao, id_grupo_comp
         FROM tenant_composicoes
@@ -142,7 +148,7 @@ async function listGrupos(db, query = {}) {
 
 async function stats(db) {
   if (await useTenantCatalogRead(db)) {
-    const visible = visibleCatalogClause('c');
+    const visible = visibleCatalogClause('c', await hasTenantReferentialOverrides(db));
     const porFonte = await all(db, `
       SELECT fonte, COUNT(*) AS total FROM (
         SELECT c.fonte FROM catalog.composicoes c WHERE ${visible}
@@ -217,7 +223,8 @@ async function listComposicoes(db, query = {}) {
   const limit = Math.max(1, Math.min(500, Number(query.limit || 50)));
   const offset = Math.max(0, Number(query.offset || 0));
   if (await useTenantCatalogRead(db)) {
-    const catalog = buildTenantCatalogListSelect(query, 'catalog');
+    const hasOverrides = await hasTenantReferentialOverrides(db);
+    const catalog = buildTenantCatalogListSelect(query, 'catalog', hasOverrides);
     const tenant = buildTenantCatalogListSelect(query, 'tenant');
     const baseSql = `
       SELECT * FROM (
@@ -245,7 +252,7 @@ async function listComposicoes(db, query = {}) {
   return { items, total: Number(total?.total || 0), limit, offset };
 }
 
-function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
+function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
   const idExpr = isTenant ? "'tenant:' || c.rowid" : 'CAST(c.id_composicao AS TEXT)';
@@ -256,7 +263,7 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
   const params = [];
 
   if (isTenant) where.push("COALESCE(c.tenant_override_status,'active')='active'");
-  else where.push(visibleCatalogClause('c'));
+  else where.push(visibleCatalogClause('c', hasOverrides));
   if (query.fonte) {
     where.push('c.fonte = ?');
     params.push(query.fonte);
@@ -306,11 +313,12 @@ async function getComposicao(db, idComposicao) {
   if (await useTenantCatalogRead(db)) {
     const scoped = scopedComposicaoId(idComposicao);
     if (scoped.scope === 'tenant') return getTenantComposicao(db, scoped.value);
-    const deleted = await one(db, `
+    const hasOverrides = await hasTenantReferentialOverrides(db);
+    const deleted = hasOverrides ? await one(db, `
       SELECT 1 FROM tenant_referential_overrides
       WHERE domain='composicoes' AND catalog_table='composicoes' AND catalog_id=?
         AND status='active' AND action='delete'
-      LIMIT 1`, [scoped.value]);
+      LIMIT 1`, [scoped.value]) : null;
     if (deleted) return null;
     const override = await one(db, `
       SELECT rowid AS tenant_rowid
@@ -320,7 +328,7 @@ async function getComposicao(db, idComposicao) {
         AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
     if (override) return getTenantComposicao(db, override.tenant_rowid);
-    const built = buildTenantCatalogListSelect({}, 'catalog');
+    const built = buildTenantCatalogListSelect({}, 'catalog', hasOverrides);
     const comp = await one(db, `${built.sql} AND c.id_composicao = ?`, [...built.params, scoped.value]);
     if (!comp) return null;
     comp.itens = await all(db, 'SELECT *, id_item AS id_item_comp FROM catalog.itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [scoped.value]);
@@ -695,6 +703,7 @@ async function impactoComposicaoTenantCatalog(db, idComposicao) {
   if (!comp) return null;
   const variantesOrigem = codigoVariantes(comp.codigo);
   const parents = new Map();
+  const hasOverrides = await hasTenantReferentialOverrides(db);
   if (variantesOrigem.length) {
     const qs = variantesOrigem.map(() => '?').join(',');
     const catalogParents = await all(db, `
@@ -704,7 +713,7 @@ async function impactoComposicaoTenantCatalog(db, idComposicao) {
       LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
       WHERE UPPER(COALESCE(ic.tipo_item, '')) = 'COMPOSICAO'
         AND ic.codigo_item IN (${qs})
-        AND ${visibleCatalogClause('c')}`, variantesOrigem);
+        AND ${visibleCatalogClause('c', hasOverrides)}`, variantesOrigem);
     const tenantParents = await all(db, `
       SELECT ${compSelectColumns("'tenant:' || c.rowid", "'tenant'", 'c.tenant_catalog_id')}
       FROM tenant_itens_composicao ic
