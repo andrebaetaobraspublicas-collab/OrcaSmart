@@ -118,6 +118,64 @@ async function createOverrideTables(db) {
   return createdTables;
 }
 
+async function ensureColumn(db, table, columnName, definition) {
+  const cols = await all(db, `PRAGMA table_info(${quoteIdent(table)})`);
+  if (cols.some(col => col.name === columnName)) return false;
+  await run(db, `ALTER TABLE ${quoteIdent(table)} ADD COLUMN ${quoteIdent(columnName)} ${definition}`);
+  return true;
+}
+
+async function ensureOverrideTables(db, sourceTables = OVERRIDE_SOURCE_TABLES) {
+  const ensuredTables = [];
+  for (const sourceTable of sourceTables) {
+    const sourceExists = await get(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [sourceTable],
+    );
+    const targetTable = `tenant_${sourceTable}`;
+    const targetExists = await get(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      [targetTable],
+    );
+    if (!targetExists) {
+      if (!sourceExists) continue;
+      await run(db, `CREATE TABLE ${quoteIdent(targetTable)} AS SELECT * FROM ${quoteIdent(sourceTable)} WHERE 0`);
+    }
+    await ensureColumn(db, targetTable, 'tenant_catalog_id', 'INTEGER');
+    await ensureColumn(db, targetTable, 'tenant_override_action', "TEXT NOT NULL DEFAULT 'create'");
+    await ensureColumn(db, targetTable, 'tenant_override_status', "TEXT NOT NULL DEFAULT 'active'");
+    await ensureColumn(db, targetTable, 'tenant_created_at', 'TEXT');
+    await ensureColumn(db, targetTable, 'tenant_updated_at', 'TEXT');
+    await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_catalog`)} ON ${quoteIdent(targetTable)} (tenant_catalog_id)`);
+    await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_status`)} ON ${quoteIdent(targetTable)} (tenant_override_status)`);
+    ensuredTables.push(targetTable);
+  }
+
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS tenant_referential_overrides (
+      id_override INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL,
+      catalog_table TEXT NOT NULL,
+      catalog_id INTEGER,
+      tenant_table TEXT,
+      tenant_rowid INTEGER,
+      action TEXT NOT NULL CHECK(action IN ('create','update','delete','preserve')),
+      impact_policy TEXT NOT NULL DEFAULT 'preserve',
+      payload_json TEXT,
+      impact_json TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT
+    )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_tenant_referential_overrides_domain ON tenant_referential_overrides (domain, catalog_table, catalog_id)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_tenant_referential_overrides_status ON tenant_referential_overrides (status)');
+  ensuredTables.push('tenant_referential_overrides');
+
+  return ensuredTables;
+}
+
 async function createTenantMetadata(db, manifest, droppedTables, clearedTables, createdOverrideTables = []) {
   await run(db, `
     CREATE TABLE IF NOT EXISTS orcasmart_tenant_meta (
@@ -209,4 +267,11 @@ async function buildTenantTemplate(options) {
 
 module.exports = {
   buildTenantTemplate,
+  ensureOverrideTables,
+  createTenantMetadata,
+  quoteIdent,
+  run,
+  all,
+  get,
+  OVERRIDE_SOURCE_TABLES,
 };

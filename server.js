@@ -628,7 +628,14 @@ app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenan
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
-app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')({ all: allMaster }));
+app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
+  { all: allMaster },
+  {
+    sqlite3: getSqlite3(),
+    catalogPath: SHARED_CATALOG_DB_PATH,
+    backupDir: path.join(DATA_DIR, 'backups', 'phase2_1'),
+  },
+));
 
 app.use('/api', apiNotFound);
 
