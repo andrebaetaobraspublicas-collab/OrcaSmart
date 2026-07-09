@@ -42,7 +42,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-admin-phase3';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-admin-actions';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -244,6 +244,18 @@ async function initMasterDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (id_user) REFERENCES users(id_user)
     )`);
+  await runMaster(`
+    CREATE TABLE IF NOT EXISTS admin_audit_log (
+      id_log INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_admin INTEGER,
+      admin_email TEXT,
+      acao TEXT NOT NULL,
+      entidade_tipo TEXT NOT NULL,
+      entidade_id TEXT NOT NULL,
+      antes TEXT,
+      depois TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
   if (ADMIN_EMAILS.size) {
     const placeholders = [...ADMIN_EMAILS].map(() => '?').join(',');
     await runMaster(`UPDATE users SET role = 'admin' WHERE lower(email) IN (${placeholders})`, [...ADMIN_EMAILS]);
@@ -393,7 +405,8 @@ function slugFromEmail(email) {
 async function loadUserById(idUser) {
   if (!idUser) return null;
   const user = await getMaster(`
-    SELECT u.*, t.nome AS tenant_nome, t.slug AS tenant_slug, t.db_path AS tenant_db_path,
+    SELECT u.*, t.nome AS tenant_nome, t.slug AS tenant_slug, t.status AS tenant_status,
+           t.db_path AS tenant_db_path,
            s.status AS subscription_status, s.current_period_end
     FROM users u
     JOIN tenants t ON t.id_tenant = u.id_tenant
@@ -405,6 +418,7 @@ async function loadUserById(idUser) {
 function subscriptionAllowsAccess(user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
+  if (user.tenant_status && user.tenant_status !== 'ativo') return false;
   const status = user.subscription_status || 'trial';
   if (['active', 'trialing', 'trial', 'past_due'].includes(status)) return true;
   return false;
@@ -744,7 +758,7 @@ app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
-  { all: allMaster },
+  { all: allMaster, get: getMaster, run: runMaster },
   {
     sqlite3: getSqlite3(),
     catalogPath: SHARED_CATALOG_DB_PATH,

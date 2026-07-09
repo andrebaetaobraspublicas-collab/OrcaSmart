@@ -21,6 +21,10 @@ module.exports = function adminRoutes(master, options = {}) {
     }));
   }));
 
+  router.patch('/users/:id', asyncHandler(async (req, res) => {
+    res.json(await service.updateUser(master, req.user, req.params.id, req.body || {}));
+  }));
+
   router.get('/tenants', asyncHandler(async (req, res) => {
     const tenants = await service.listTenants(master, {
       ...options,
@@ -28,6 +32,18 @@ module.exports = function adminRoutes(master, options = {}) {
       status: req.query.status || null,
     });
     res.json({ total: tenants.length, tenants });
+  }));
+
+  router.patch('/tenants/:id', asyncHandler(async (req, res) => {
+    res.json(await service.updateTenant(master, req.user, req.params.id, req.body || {}));
+  }));
+
+  router.get('/audit-log', asyncHandler(async (req, res) => {
+    res.json(await service.listAuditLogs(master, {
+      entidade_tipo: req.query.entidade_tipo || null,
+      entidade_id: req.query.entidade_id || null,
+      limit: req.query.limit || 100,
+    }));
   }));
 
   router.get('/phase2/tenants/audit', asyncHandler(async (req, res) => {

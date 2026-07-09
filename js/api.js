@@ -48,9 +48,15 @@ const API = {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/users${q ? '?' + q : ''}`);
     },
+    updateUser: (id, data) => API._req('PATCH', `/admin/users/${id}`, data),
     tenants: (params = {}) => {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/tenants${q ? '?' + q : ''}`);
+    },
+    updateTenant: (id, data) => API._req('PATCH', `/admin/tenants/${id}`, data),
+    auditLog: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/admin/audit-log${q ? '?' + q : ''}`);
     },
     auditTenants: (params = {}) => {
       const q = new URLSearchParams(params).toString();

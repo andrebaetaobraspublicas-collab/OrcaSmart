@@ -74,4 +74,104 @@ async function listTenants(master, filters = {}) {
   return master.all(sql, params);
 }
 
-module.exports = { overview, listUsers, listTenants };
+async function getUser(master, idUser) {
+  return master.get(`
+    SELECT u.id_user, u.id_tenant, u.nome, u.email, u.role, u.status,
+           t.nome AS tenant, s.status AS subscription_status
+    FROM users u
+    JOIN tenants t ON t.id_tenant = u.id_tenant
+    LEFT JOIN subscriptions s ON s.id_user = u.id_user
+    WHERE u.id_user = ?`, [idUser]);
+}
+
+async function updateUser(master, idUser, data = {}) {
+  const fields = [];
+  const params = [];
+  if (data.role) {
+    fields.push('role = ?');
+    params.push(data.role);
+  }
+  if (data.status) {
+    fields.push('status = ?');
+    params.push(data.status);
+  }
+  if (!fields.length) return { changes: 0 };
+  params.push(idUser);
+  return master.run(`UPDATE users SET ${fields.join(', ')} WHERE id_user = ?`, params);
+}
+
+async function getTenant(master, idTenant) {
+  return master.get(`
+    SELECT t.id_tenant, t.nome, t.slug, t.db_path, t.status, t.created_at,
+           COUNT(u.id_user) AS users_count
+    FROM tenants t
+    LEFT JOIN users u ON u.id_tenant = t.id_tenant
+    WHERE t.id_tenant = ?
+    GROUP BY t.id_tenant`, [idTenant]);
+}
+
+async function updateTenant(master, idTenant, data = {}) {
+  const fields = [];
+  const params = [];
+  if (data.status) {
+    fields.push('status = ?');
+    params.push(data.status);
+  }
+  if (!fields.length) return { changes: 0 };
+  params.push(idTenant);
+  return master.run(`UPDATE tenants SET ${fields.join(', ')} WHERE id_tenant = ?`, params);
+}
+
+async function countAdmins(master) {
+  const row = await master.get(`SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND status = 'ativo'`);
+  return row ? row.total : 0;
+}
+
+async function logAdminAction(master, actor, action) {
+  return master.run(`
+    INSERT INTO admin_audit_log
+      (id_admin, admin_email, acao, entidade_tipo, entidade_id, antes, depois)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+      actor && actor.id_user ? actor.id_user : null,
+      actor && actor.email ? actor.email : null,
+      action.acao,
+      action.entidade_tipo,
+      String(action.entidade_id),
+      action.antes ? JSON.stringify(action.antes) : null,
+      action.depois ? JSON.stringify(action.depois) : null,
+    ]);
+}
+
+async function listAuditLogs(master, filters = {}) {
+  let sql = `
+    SELECT id_log, id_admin, admin_email, acao, entidade_tipo, entidade_id,
+           antes, depois, created_at
+    FROM admin_audit_log`;
+  const where = [];
+  const params = [];
+  if (filters.entidade_tipo) {
+    where.push('entidade_tipo = ?');
+    params.push(filters.entidade_tipo);
+  }
+  if (filters.entidade_id) {
+    where.push('entidade_id = ?');
+    params.push(String(filters.entidade_id));
+  }
+  if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
+  sql += ' ORDER BY created_at DESC, id_log DESC LIMIT ?';
+  params.push(Math.min(Math.max(Number(filters.limit || 100), 1), 300));
+  return master.all(sql, params);
+}
+
+module.exports = {
+  overview,
+  listUsers,
+  listTenants,
+  getUser,
+  updateUser,
+  getTenant,
+  updateTenant,
+  countAdmins,
+  logAdminAction,
+  listAuditLogs,
+};

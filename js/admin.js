@@ -5,6 +5,8 @@ const AdminPage = {
     tab: 'usuarios',
     users: [],
     tenants: [],
+    logs: [],
+    me: null,
     overview: {},
     audit: null,
   },
@@ -51,14 +53,18 @@ const AdminPage = {
   },
 
   async loadAll() {
-    const [overview, users, tenants] = await Promise.all([
+    const [me, overview, users, tenants, logs] = await Promise.all([
+      API.auth.me(),
       API.admin.overview(),
       API.admin.users(),
       API.admin.tenants(),
+      API.admin.auditLog({ limit: 80 }),
     ]);
+    this.state.me = me || null;
     this.state.overview = overview || {};
     this.state.users = Array.isArray(users) ? users : [];
     this.state.tenants = tenants && Array.isArray(tenants.tenants) ? tenants.tenants : [];
+    this.state.logs = Array.isArray(logs) ? logs : [];
   },
 
   card(value, label, tone = 'blue') {
@@ -88,21 +94,37 @@ const AdminPage = {
       <div class="toolbar" style="padding:12px 20px">
         ${btn('usuarios', 'Usuarios')}
         ${btn('tenants', 'Tenants')}
+        ${btn('logs', 'Auditoria admin')}
         ${btn('auditoria', 'Auditoria Fase 2')}
         <button class="btn btn-ghost btn-sm" id="adminRefresh" style="margin-left:auto">${Utils.icons.refresh} Atualizar</button>
       </div>`;
   },
 
+  roleOptions(role) {
+    return ['owner', 'admin'].map(value =>
+      `<option value="${value}" ${value === role ? 'selected' : ''}>${value === 'admin' ? 'Admin' : 'Owner'}</option>`
+    ).join('');
+  },
+
+  statusOptions(status) {
+    return ['ativo', 'suspenso', 'inativo'].map(value =>
+      `<option value="${value}" ${value === status ? 'selected' : ''}>${value}</option>`
+    ).join('');
+  },
+
   renderUsers() {
     const rows = this.state.users.map(user => `
       <tr>
-        <td class="fw-500">${Utils.esc(user.nome)}</td>
+        <td class="fw-500">${Utils.esc(user.nome)}${this.state.me && this.state.me.id_user === user.id_user ? ' <span class="badge badge-info">voce</span>' : ''}</td>
         <td>${Utils.esc(user.email)}</td>
-        <td>${this.roleBadge(user.role)}</td>
-        <td>${this.statusBadge(user.status)}</td>
+        <td><select class="filter-select" data-admin-user-role="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled' : ''}>${this.roleOptions(user.role)}</select></td>
+        <td><select class="filter-select" data-admin-user-status="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled' : ''}>${this.statusOptions(user.status || 'ativo')}</select></td>
         <td>${this.statusBadge(user.subscription_status || 'sem_assinatura')}</td>
         <td>${Utils.esc(user.tenant || '-')}</td>
         <td class="text-3 text-sm">${Utils.esc(user.created_at || '-')}</td>
+        <td>
+          <button class="btn btn-primary btn-sm" data-admin-user-save="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled' : ''}>Salvar</button>
+        </td>
       </tr>`).join('');
     return `
       <div class="section-card">
@@ -114,9 +136,9 @@ const AdminPage = {
           <table>
             <thead><tr>
               <th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th>
-              <th>Assinatura</th><th>Tenant</th><th>Criado em</th>
+              <th>Assinatura</th><th>Tenant</th><th>Criado em</th><th>Acoes</th>
             </tr></thead>
-            <tbody>${rows || `<tr><td colspan="7" class="text-center text-3">Nenhum usuario encontrado.</td></tr>`}</tbody>
+            <tbody>${rows || `<tr><td colspan="8" class="text-center text-3">Nenhum usuario encontrado.</td></tr>`}</tbody>
           </table>
         </div>
       </div>`;
@@ -139,6 +161,10 @@ const AdminPage = {
           <td>${this.fmtInt(stats.insumos_usuario)}</td>
           <td>${this.fmtInt(stats.composicoes_usuario)}</td>
           <td class="text-3 text-sm">${Utils.esc(tenant.created_at || '-')}</td>
+          <td>
+            <select class="filter-select" data-admin-tenant-status="${tenant.id_tenant}">${this.statusOptions(tenant.status || 'ativo')}</select>
+            <button class="btn btn-primary btn-sm" data-admin-tenant-save="${tenant.id_tenant}" style="margin-left:6px">Salvar</button>
+          </td>
         </tr>`;
     }).join('');
     return `
@@ -152,9 +178,51 @@ const AdminPage = {
             <thead><tr>
               <th>ID</th><th>Tenant</th><th>Status</th><th>Usuarios</th><th>Banco</th>
               <th>Tamanho</th><th>Obras</th><th>Orc.</th><th>Insumos proprios</th>
-              <th>Composicoes proprias</th><th>Criado em</th>
+              <th>Composicoes proprias</th><th>Criado em</th><th>Acoes</th>
             </tr></thead>
-            <tbody>${rows || `<tr><td colspan="11" class="text-center text-3">Nenhum tenant encontrado.</td></tr>`}</tbody>
+            <tbody>${rows || `<tr><td colspan="12" class="text-center text-3">Nenhum tenant encontrado.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
+  },
+
+  logSummary(log) {
+    const before = log.antes || {};
+    const after = log.depois || {};
+    if (log.entidade_tipo === 'user') {
+      const bits = [];
+      if (before.role !== after.role) bits.push(`papel: ${before.role || '-'} -> ${after.role || '-'}`);
+      if (before.status !== after.status) bits.push(`status: ${before.status || '-'} -> ${after.status || '-'}`);
+      return bits.join(' | ') || 'Sem mudanca detectada';
+    }
+    if (log.entidade_tipo === 'tenant') {
+      return before.status !== after.status
+        ? `status: ${before.status || '-'} -> ${after.status || '-'}`
+        : 'Sem mudanca detectada';
+    }
+    return log.acao || '-';
+  },
+
+  renderLogs() {
+    const rows = this.state.logs.map(log => `
+      <tr>
+        <td class="text-3 text-sm">${Utils.esc(log.created_at || '-')}</td>
+        <td>${Utils.esc(log.admin_email || '-')}</td>
+        <td>${this.badge(log.entidade_tipo, log.entidade_tipo === 'user' ? 'blue' : 'green')}</td>
+        <td>#${Utils.esc(log.entidade_id)}</td>
+        <td>${Utils.esc(log.acao)}</td>
+        <td>${Utils.esc(this.logSummary(log))}</td>
+      </tr>`).join('');
+    return `
+      <div class="section-card">
+        <div class="section-card-header">
+          <h2>Trilha de auditoria administrativa</h2>
+          <span class="text-3 text-sm">${this.fmtInt(this.state.logs.length)} evento(s)</span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Data</th><th>Admin</th><th>Tipo</th><th>ID</th><th>Acao</th><th>Resumo</th></tr></thead>
+            <tbody>${rows || `<tr><td colspan="6" class="text-center text-3">Nenhum evento administrativo registrado.</td></tr>`}</tbody>
           </table>
         </div>
       </div>`;
@@ -199,6 +267,7 @@ const AdminPage = {
 
   renderContent() {
     if (this.state.tab === 'tenants') return this.renderTenants();
+    if (this.state.tab === 'logs') return this.renderLogs();
     if (this.state.tab === 'auditoria') return this.renderAudit();
     return this.renderUsers();
   },
@@ -230,7 +299,7 @@ const AdminPage = {
               <div class="text-3 text-sm">Assinaturas</div>
               <div class="fw-500">${this.subscriptionText(ov.subscriptions || [])}</div>
             </div>
-            <div class="text-3 text-sm">Acoes destrutivas e troca de papeis ficam fora desta primeira entrega da Fase 3.</div>
+            <div class="text-3 text-sm">Mudancas administrativas sao registradas em trilha de auditoria.</div>
           </div>
         </div>
 
@@ -259,6 +328,49 @@ const AdminPage = {
     });
     const refresh = document.getElementById('adminRefresh');
     if (refresh) refresh.addEventListener('click', () => this.render());
+    document.querySelectorAll('[data-admin-user-save]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.adminUserSave;
+        const role = document.querySelector(`[data-admin-user-role="${id}"]`).value;
+        const status = document.querySelector(`[data-admin-user-status="${id}"]`).value;
+        const user = this.state.users.find(item => String(item.id_user) === String(id));
+        const ok = await Confirm.ask(
+          `Alterar o usuario ${user ? user.email : '#' + id} para papel "${role}" e status "${status}"?`,
+          { title: 'Confirmar alteracao de usuario', okText: 'Salvar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await API.admin.updateUser(id, { role, status });
+          Toast.success('Usuario atualizado.');
+          await this.render();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao atualizar usuario.');
+          btn.disabled = false;
+        }
+      });
+    });
+    document.querySelectorAll('[data-admin-tenant-save]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.adminTenantSave;
+        const status = document.querySelector(`[data-admin-tenant-status="${id}"]`).value;
+        const tenant = this.state.tenants.find(item => String(item.id_tenant) === String(id));
+        const ok = await Confirm.ask(
+          `Alterar o tenant ${tenant ? tenant.nome : '#' + id} para status "${status}"?`,
+          { title: 'Confirmar alteracao de tenant', okText: 'Salvar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await API.admin.updateTenant(id, { status });
+          Toast.success('Tenant atualizado.');
+          await this.render();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao atualizar tenant.');
+          btn.disabled = false;
+        }
+      });
+    });
     document.querySelectorAll('#adminRunAudit').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
