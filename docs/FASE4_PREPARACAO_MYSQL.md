@@ -80,6 +80,33 @@ Ele gera:
 
 Esses arquivos documentam bancos analisados, tabelas, dominios, colunas, chaves primarias, contagens e tabelas pendentes de classificacao.
 
+## Schema MySQL/MariaDB inicial
+
+Foi criado o comando:
+
+```bash
+npm run phase4:generate-mysql-schema
+```
+
+Ele usa o inventario gerado pela auditoria e cria os arquivos:
+
+- `database/mysql/00_master_saas.sql`
+- `database/mysql/10_catalogo_global.sql`
+- `database/mysql/20_tenant_privado.sql`
+- `database/mysql/30_override_tenant.sql`
+- `database/mysql/40_metadados.sql`
+- `docs/generated/fase4-mysql-schema-summary.md`
+
+Esses scripts ainda nao fazem migracao de dados. Eles sao a primeira versao revisavel do DDL MySQL/MariaDB.
+
+Premissas adotadas nesta versao:
+
+- tabelas privadas e de override recebem `tenant_id`;
+- tabelas sem chave primaria explicita recebem chave sintetica;
+- campos numericos `REAL` do SQLite viram `DECIMAL(20,8)`;
+- defaults SQLite incompativeis sao normalizados ou removidos;
+- chaves estrangeiras serao refinadas depois da validacao das relacoes reais.
+
 ## Criterios para estar pronto para MySQL
 
 O OrcaSmart2 estara pronto para iniciar a migracao real quando:
@@ -89,13 +116,13 @@ O OrcaSmart2 estara pronto para iniciar a migracao real quando:
 3. O backend tiver uma interface de banco capaz de operar sem SQL especifico de SQLite em rotas criticas.
 4. Existir schema MySQL equivalente, versionado no repositorio.
 5. Existir script de migracao SQLite -> MySQL com validacao de contagens.
-6. O ambiente de teste OrçaSmart2-MySQL estiver separado do OrçaSmart2 SQLite.
+6. O ambiente de teste OrcaSmart2-MySQL estiver separado do OrcaSmart2 SQLite.
 
 ## Proximas etapas sugeridas
 
 1. Executar e revisar o inventario do modelo.
 2. Resolver tabelas pendentes de classificacao.
-3. Criar o primeiro schema MySQL para `master_saas` e `catalogo_global`.
+3. Revisar o schema MySQL gerado e ajustar tipos/indices criticos.
 4. Criar adaptador de banco inicial para consultas administrativas.
 5. Migrar primeiro o `master_saas` em ambiente de teste.
 6. Migrar o `catalogo_global`.
