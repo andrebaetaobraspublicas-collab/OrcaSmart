@@ -13,7 +13,8 @@
         "build:shared-catalog": "node scripts/buildSharedCatalog.js --force",
         "build:tenant-template": "node scripts/buildTenantTemplate.js --force",
         "phase4:audit-model": "node scripts/phase4DataModelAudit.js",
-        "phase4:generate-mysql-schema": "node scripts/phase4GenerateMysqlSchema.js"
+        "phase4:generate-mysql-schema": "node scripts/phase4GenerateMysqlSchema.js",
+        "phase4:validate-mysql-schema": "node scripts/phase4ValidateMysqlSchema.js"
     },
     "dependencies": {
         "cors": "^2.8.5",

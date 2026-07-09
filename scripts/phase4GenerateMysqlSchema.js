@@ -43,6 +43,87 @@ const MANUAL_TABLES = {
   },
 };
 
+const EXTRA_INDEXES = {
+  tenants: [
+    'UNIQUE KEY `uq_tenants_slug` (`slug`)',
+    'KEY `idx_tenants_status` (`status`)',
+  ],
+  users: [
+    'UNIQUE KEY `uq_users_email` (`email`)',
+    'KEY `idx_users_tenant_status` (`id_tenant`, `status`)',
+    'KEY `idx_users_role` (`role`)',
+  ],
+  subscriptions: [
+    'KEY `idx_subscriptions_status` (`status`)',
+    'KEY `idx_subscriptions_stripe_subscription` (`stripe_subscription_id`)',
+    'KEY `idx_subscriptions_stripe_customer` (`stripe_customer_id`)',
+  ],
+  composicoes: [
+    'KEY `idx_composicoes_fonte_ref` (`fonte`, `uf_referencia`, `mes_referencia`)',
+    'KEY `idx_composicoes_codigo` (`codigo`)',
+    'KEY `idx_composicoes_formato` (`formato`)',
+  ],
+  insumos: [
+    'KEY `idx_insumos_origem_tipo` (`origem`, `tipo_insumo`)',
+    'KEY `idx_insumos_codigo` (`codigo_insumo`)',
+    'KEY `idx_insumos_situacao` (`situacao`)',
+  ],
+  precos_insumos: [
+    'KEY `idx_precos_insumos_ref` (`id_insumo`, `id_data_base`, `uf_referencia`)',
+    'KEY `idx_precos_insumos_fonte` (`id_fonte`)',
+  ],
+  precos_equipamentos: [
+    'KEY `idx_precos_equipamentos_ref` (`id_equip`, `id_data_base`, `uf_referencia`, `id_fonte`)',
+  ],
+  perfis_bdi: [
+    'KEY `idx_perfis_bdi_filtros` (`ano_orcamento`, `tipo_obra`, `regime_previdenciario`, `quartil`)',
+  ],
+  perfis_encargos: [
+    'KEY `idx_perfis_encargos_filtros` (`fonte_referencia`, `uf_referencia`, `categoria`, `regime`, `vigencia_inicio`, `vigencia_fim`)',
+  ],
+  municipios: [
+    'KEY `idx_municipios_uf_nome` (`uf`, `nome_municipio`)',
+    'KEY `idx_municipios_codigo_ibge` (`codigo_ibge_municipio`)',
+  ],
+  municipio_aliquotas_anuais: [
+    'UNIQUE KEY `uq_municipio_ano` (`id_municipio`, `ano`)',
+  ],
+  orcamentos: [
+    'KEY `idx_orcamentos_tenant_status` (`tenant_id`, `status`)',
+    'KEY `idx_orcamentos_tenant_obra` (`tenant_id`, `id_obra`)',
+  ],
+  orcamento_sintetico: [
+    'KEY `idx_orcamento_sintetico_tenant_orcamento` (`tenant_id`, `id_orcamento`)',
+    'KEY `idx_orcamento_sintetico_composicao` (`tenant_id`, `id_composicao`)',
+    'KEY `idx_orcamento_sintetico_insumo` (`tenant_id`, `id_insumo`)',
+  ],
+  obras: [
+    'KEY `idx_obras_tenant_situacao` (`tenant_id`, `situacao`)',
+    'KEY `idx_obras_tenant_uf` (`tenant_id`, `uf`)',
+  ],
+  tenant_referential_overrides: [
+    'KEY `idx_tenant_ref_overrides_lookup` (`tenant_id`, `domain`, `catalog_table`, `catalog_id`, `status`)',
+  ],
+};
+
+const MANUAL_COLUMN_TYPES = {
+  tenants: {
+    nome: 'VARCHAR(255)',
+    slug: 'VARCHAR(191)',
+    db_path: 'VARCHAR(500)',
+  },
+  users: {
+    nome: 'VARCHAR(255)',
+    email: 'VARCHAR(191)',
+    password_hash: 'VARCHAR(255)',
+    stripe_customer_id: 'VARCHAR(191)',
+  },
+  subscriptions: {
+    stripe_subscription_id: 'VARCHAR(191)',
+    stripe_customer_id: 'VARCHAR(191)',
+  },
+};
+
 function readInventory() {
   if (!fs.existsSync(INVENTORY_PATH)) {
     throw new Error(`Inventario nao encontrado: ${INVENTORY_PATH}. Execute npm run phase4:audit-model primeiro.`);
@@ -85,17 +166,47 @@ function mysqlType(column, table) {
   const isPk = Number(column.pk || 0) > 0;
   const defaultValue = normalizeDefault(column.default_value);
 
+  if (MANUAL_COLUMN_TYPES[table] && MANUAL_COLUMN_TYPES[table][column.name]) {
+    return MANUAL_COLUMN_TYPES[table][column.name];
+  }
   if (looksLikeDateColumn(name, defaultValue)) return 'DATETIME';
   if (isPk && sqliteType.includes('INT')) return 'BIGINT UNSIGNED';
   if (isPk && sqliteType.includes('TEXT')) return 'VARCHAR(191)';
-  if (sqliteType.includes('INT')) return 'BIGINT';
+  if (sqliteType.includes('INT')) return looksLikeIdentifier(name) ? 'BIGINT UNSIGNED' : 'BIGINT';
   if (sqliteType.includes('REAL') || sqliteType.includes('FLOA') || sqliteType.includes('DOUB')) return 'DECIMAL(20,8)';
   if (sqliteType.includes('NUM') || sqliteType.includes('DEC')) return 'DECIMAL(20,8)';
   if (sqliteType.includes('BLOB')) return 'LONGBLOB';
   if (name.endsWith('_json') || table === 'admin_audit_log') return 'JSON';
   if (hasTextDefault(column)) return 'VARCHAR(255)';
-  if (sqliteType.includes('CHAR') || sqliteType.includes('CLOB') || sqliteType.includes('TEXT')) return 'TEXT';
+  if (sqliteType.includes('CHAR') || sqliteType.includes('CLOB') || sqliteType.includes('TEXT')) {
+    return varcharTypeForTextColumn(name);
+  }
   return 'VARCHAR(255)';
+}
+
+function looksLikeIdentifier(name) {
+  return name === 'id'
+    || name.startsWith('id_')
+    || name.endsWith('_id')
+    || /^id[A-Z_]/.test(name);
+}
+
+function varcharTypeForTextColumn(name) {
+  if (name === 'descricao' || name === 'observacoes' || name.includes('obs')) return 'TEXT';
+  if (name.includes('json')) return 'JSON';
+  if (name === 'email') return 'VARCHAR(191)';
+  if (name === 'uf' || name.endsWith('_uf')) return 'VARCHAR(2)';
+  if (name.includes('slug')) return 'VARCHAR(191)';
+  if (name.includes('path')) return 'VARCHAR(500)';
+  if (name.startsWith('codigo') || name.endsWith('_codigo')) return 'VARCHAR(120)';
+  if (name === 'codigo' || name === 'fonte' || name === 'origem' || name === 'sistema') return 'VARCHAR(120)';
+  if (name === 'domain' || name === 'catalog_table' || name === 'tenant_table') return 'VARCHAR(120)';
+  if (name === 'action' || name === 'impact_policy') return 'VARCHAR(80)';
+  if (name.includes('referencia') || name.includes('vigencia')) return 'VARCHAR(32)';
+  if (name.includes('situacao') || name.includes('status') || name.includes('regime') || name.includes('categoria')) return 'VARCHAR(80)';
+  if (name.includes('tipo') || name.includes('formato') || name.includes('grupo') || name.includes('unidade') || name.includes('quartil')) return 'VARCHAR(120)';
+  if (name.includes('nome')) return 'VARCHAR(255)';
+  return 'TEXT';
 }
 
 function mysqlDefault(column, type) {
@@ -161,6 +272,10 @@ function tableStatements(table) {
   for (const fk of table.foreign_keys || []) {
     if (!fk.from || !fk.table || !fk.to) continue;
     constraints.push(`  KEY ${q(`idx_${table.name}_${fk.from}`)} (${q(fk.from)})`);
+  }
+
+  for (const index of EXTRA_INDEXES[table.name] || []) {
+    constraints.push(`  ${index}`);
   }
 
   return createTableSql(table.name, [...lines, ...constraints, ...indexes]);
@@ -246,6 +361,9 @@ function writeSummary(inventory, written) {
     '- O schema e um ponto de partida para revisao, ainda sem migracao de dados.',
     '- Tabelas `tenant_privado` e `override_tenant` recebem `tenant_id` para isolamento logico no MySQL.',
     '- Tabelas sem chave primaria explicita recebem chave sintetica `id_<tabela>`.',
+    '- Colunas de identificadores sao normalizadas para `BIGINT UNSIGNED`.',
+    '- Campos curtos usados em filtros e indices sao mapeados para `VARCHAR`.',
+    '- Indices iniciais cobrem filtros de catalogo, tenants, orcamentos, obras, precos, BDI, encargos e overrides.',
     '- Campos numericos `REAL` do SQLite foram mapeados para `DECIMAL(20,8)`.',
     '- Campos de data/hora com `CURRENT_TIMESTAMP` foram mapeados para `DATETIME`.',
     '- Chaves estrangeiras serao refinadas na etapa de migracao apos validar relacionamentos reais e cascatas.',

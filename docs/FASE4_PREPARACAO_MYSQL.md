@@ -99,10 +99,32 @@ Ele usa o inventario gerado pela auditoria e cria os arquivos:
 
 Esses scripts ainda nao fazem migracao de dados. Eles sao a primeira versao revisavel do DDL MySQL/MariaDB.
 
+Foi criado tambem o comando:
+
+```bash
+npm run phase4:validate-mysql-schema
+```
+
+Ele verifica automaticamente:
+
+- se ainda existe default SQLite incompativel no DDL;
+- se ha coluna `TEXT` com `DEFAULT`;
+- se indices referenciam colunas inexistentes;
+- se indices foram criados sobre `TEXT`, `JSON` ou `LONGBLOB`;
+- se tabelas privadas ou de override possuem `tenant_id`;
+- se ha indicio de problema de encoding nos arquivos SQL.
+
+O relatorio da validacao fica em:
+
+- `docs/generated/fase4-mysql-schema-validation.md`
+
 Premissas adotadas nesta versao:
 
 - tabelas privadas e de override recebem `tenant_id`;
 - tabelas sem chave primaria explicita recebem chave sintetica;
+- colunas de identificadores foram normalizadas para `BIGINT UNSIGNED`;
+- campos curtos usados em filtros/indices foram convertidos para `VARCHAR`;
+- indices iniciais foram criados para filtros de catalogo, orcamentos, obras, precos, BDI, encargos e overrides;
 - campos numericos `REAL` do SQLite viram `DECIMAL(20,8)`;
 - defaults SQLite incompativeis sao normalizados ou removidos;
 - chaves estrangeiras serao refinadas depois da validacao das relacoes reais.
