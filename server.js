@@ -27,6 +27,7 @@ const {
 } = require('./utils/dataModelManifest');
 const { ensureSharedCatalog } = require('./utils/sharedCatalog');
 const { buildTenantTemplate } = require('./utils/tenantTemplate');
+const { ensureRuntimeTenantSchema } = require('./utils/runtimeTenantSchema');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -65,11 +66,56 @@ const bootState = {
   tenantTemplateStats: null,
 };
 
+function defaultDataDir() {
+  if (process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR) {
+    return process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR;
+  }
+  if (process.env.HOME) return path.join(process.env.HOME, 'orcasmart2-data');
+  return path.join(path.dirname(APP_DIR), 'orcasmart2-data');
+}
+
+function copyFileIfMissing(source, target) {
+  if (!fs.existsSync(source) || fs.existsSync(target)) return false;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+  return true;
+}
+
+function copyDirFilesIfMissing(sourceDir, targetDir) {
+  if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) return 0;
+  fs.mkdirSync(targetDir, { recursive: true });
+  let copied = 0;
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const source = path.join(sourceDir, entry.name);
+    const target = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) copied += copyDirFilesIfMissing(source, target);
+    else if (copyFileIfMissing(source, target)) copied += 1;
+  }
+  return copied;
+}
+
+function migrateLegacyDataDir(targetDir) {
+  const legacyDir = APP_DIR;
+  if (path.resolve(targetDir) === path.resolve(legacyDir)) return;
+  const migrated = [];
+  for (const name of [
+    'saas_master.db', 'saas_master.db-wal', 'saas_master.db-shm',
+    'shared_catalog.db', 'shared_catalog.db-wal', 'shared_catalog.db-shm',
+    'orcamento_obras_template.db',
+  ]) {
+    if (copyFileIfMissing(path.join(legacyDir, name), path.join(targetDir, name))) migrated.push(name);
+  }
+  const tenantFiles = copyDirFilesIfMissing(path.join(legacyDir, 'tenant_dbs'), path.join(targetDir, 'tenant_dbs'));
+  if (tenantFiles) migrated.push(`${tenantFiles} arquivo(s) de tenant_dbs`);
+  if (migrated.length) console.log(`Dados legados copiados para DATA_DIR persistente: ${migrated.join(', ')}`);
+}
+
 function ensureDataDir() {
-  const requestedDir = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || __dirname;
+  const requestedDir = defaultDataDir();
   try {
     fs.mkdirSync(requestedDir, { recursive: true });
     fs.mkdirSync(path.join(requestedDir, 'tenant_dbs'), { recursive: true });
+    migrateLegacyDataDir(requestedDir);
     return requestedDir;
   } catch (err) {
     const fallbackDir = path.join(os.tmpdir(), 'orcasmart2-data');
@@ -210,6 +256,21 @@ function createTenantDatabase(idTenant) {
     fs.copyFileSync(template, target);
   }
   return target;
+}
+
+const tenantSchemaReady = new Set();
+
+async function ensureTenantDatabaseReady(dbPath) {
+  const resolvedPath = path.resolve(dbPath || '');
+  if (!resolvedPath || tenantSchemaReady.has(resolvedPath)) return;
+  if (!resolvedPath.startsWith(path.resolve(TENANT_DB_DIR)) || !fs.existsSync(resolvedPath)) return;
+  const db = openSqlite(resolvedPath);
+  try {
+    await ensureRuntimeTenantSchema(db, resolvedPath);
+    tenantSchemaReady.add(resolvedPath);
+  } finally {
+    await new Promise(resolve => db.close(resolve));
+  }
 }
 
 function normalizeEmail(email) {
@@ -431,6 +492,9 @@ async function requireLogin(req, res, next) {
   const user = await loadUserById(req.session.userId).catch(() => null);
   if (!user) return res.status(401).json({ erro: 'Autenticação necessária.' });
   if (!subscriptionAllowsAccess(user)) return res.status(402).json({ erro: 'Assinatura inativa.' });
+  await ensureTenantDatabaseReady(user.tenant_db_path).catch(err => {
+    console.error(`Falha ao preparar schema runtime do tenant ${user.id_tenant}:`, err);
+  });
   req.user = user;
   return requestDb.run({ dbPath: user.tenant_db_path }, next);
 }
