@@ -62,6 +62,33 @@ Use `--reset` somente quando o banco de teste puder ser limpo antes da carga:
 npm run phase4:migrate-master-mysql -- --execute --reset --confirm=orcasmart2-master
 ```
 
-## 5. Premissa importante
+## 5. Migrar o catalogo global compartilhado
+
+O catalogo global contem os dados comuns a todos os usuarios: fontes referenciais, insumos, composicoes, encargos, BDI, municipios, custos horarios e tabelas auxiliares.
+
+Primeiro rode sem gravar dados:
+
+```bash
+npm run phase4:migrate-catalog-mysql
+```
+
+Depois rode a gravacao no banco de teste:
+
+```bash
+npm run phase4:migrate-catalog-mysql -- --execute --confirm=orcasmart2-catalog
+```
+
+Use `--reset` somente quando o banco de teste puder ser limpo antes da carga:
+
+```bash
+npm run phase4:migrate-catalog-mysql -- --execute --reset --confirm=orcasmart2-catalog
+```
+
+O plano da carga e gravado em:
+
+- `docs/generated/fase4-catalog-migration-plan.json`
+- `docs/generated/fase4-catalog-migration-plan.md`
+
+## 6. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.

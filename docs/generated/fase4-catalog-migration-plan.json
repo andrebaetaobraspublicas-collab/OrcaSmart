@@ -1,0 +1,296 @@
+{
+  "generated_at": "2026-07-09T23:48:00.510Z",
+  "sqlite_catalog_path": "C:\\SistemaOrcamentoObras\\saas\\shared_catalog.db",
+  "mysql": {
+    "host": null,
+    "port": 3306,
+    "database": null,
+    "user": null,
+    "configured": false
+  },
+  "batch_size": 500,
+  "tables": [
+    {
+      "table": "componentes_bdi",
+      "exists": true,
+      "rows": 13311,
+      "sqlite_columns": 11,
+      "mysql_columns": 11,
+      "migrated_columns": 11,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "composicoes",
+      "exists": true,
+      "rows": 35600,
+      "sqlite_columns": 20,
+      "mysql_columns": 20,
+      "migrated_columns": 20,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "composicoes_secao_itens",
+      "exists": true,
+      "rows": 137958,
+      "sqlite_columns": 21,
+      "mysql_columns": 21,
+      "migrated_columns": 21,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "composicoes_secoes",
+      "exists": true,
+      "rows": 39219,
+      "sqlite_columns": 6,
+      "mysql_columns": 6,
+      "migrated_columns": 6,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "datas_base",
+      "exists": true,
+      "rows": 10,
+      "sqlite_columns": 5,
+      "mysql_columns": 5,
+      "migrated_columns": 5,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "encargos_goinfra_profissionais",
+      "exists": true,
+      "rows": 58,
+      "sqlite_columns": 11,
+      "mysql_columns": 11,
+      "migrated_columns": 11,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "encargos_sicro_profissionais",
+      "exists": true,
+      "rows": 290,
+      "sqlite_columns": 11,
+      "mysql_columns": 11,
+      "migrated_columns": 11,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "equipamentos_sinapi",
+      "exists": true,
+      "rows": 581,
+      "sqlite_columns": 20,
+      "mysql_columns": 20,
+      "migrated_columns": 20,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "estados",
+      "exists": true,
+      "rows": 27,
+      "sqlite_columns": 4,
+      "mysql_columns": 4,
+      "migrated_columns": 4,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "familias_equipamentos",
+      "exists": true,
+      "rows": 11,
+      "sqlite_columns": 3,
+      "mysql_columns": 3,
+      "migrated_columns": 3,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "fontes_referencia",
+      "exists": true,
+      "rows": 9,
+      "sqlite_columns": 6,
+      "mysql_columns": 6,
+      "migrated_columns": 6,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "grupos_composicoes",
+      "exists": true,
+      "rows": 178,
+      "sqlite_columns": 3,
+      "mysql_columns": 3,
+      "migrated_columns": 3,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "grupos_encargos",
+      "exists": true,
+      "rows": 968,
+      "sqlite_columns": 5,
+      "mysql_columns": 5,
+      "migrated_columns": 5,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "grupos_insumos",
+      "exists": true,
+      "rows": 7,
+      "sqlite_columns": 3,
+      "mysql_columns": 3,
+      "migrated_columns": 3,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "insumos",
+      "exists": true,
+      "rows": 23602,
+      "sqlite_columns": 11,
+      "mysql_columns": 11,
+      "migrated_columns": 11,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "itens_composicao",
+      "exists": true,
+      "rows": 148924,
+      "sqlite_columns": 11,
+      "mysql_columns": 11,
+      "migrated_columns": 11,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "itens_encargo",
+      "exists": true,
+      "rows": 6006,
+      "sqlite_columns": 7,
+      "mysql_columns": 7,
+      "migrated_columns": 7,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "municipio_aliquotas_anuais",
+      "exists": true,
+      "rows": 44568,
+      "sqlite_columns": 8,
+      "mysql_columns": 8,
+      "migrated_columns": 8,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "municipios",
+      "exists": true,
+      "rows": 5571,
+      "sqlite_columns": 9,
+      "mysql_columns": 9,
+      "migrated_columns": 9,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "pem_equipamentos",
+      "exists": true,
+      "rows": 7996,
+      "sqlite_columns": 10,
+      "mysql_columns": 10,
+      "migrated_columns": 10,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "pem_servicos",
+      "exists": true,
+      "rows": 3350,
+      "sqlite_columns": 6,
+      "mysql_columns": 6,
+      "migrated_columns": 6,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "pem_variaveis",
+      "exists": true,
+      "rows": 32244,
+      "sqlite_columns": 6,
+      "mysql_columns": 6,
+      "migrated_columns": 6,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "perfis_bdi",
+      "exists": true,
+      "rows": 1261,
+      "sqlite_columns": 27,
+      "mysql_columns": 27,
+      "migrated_columns": 27,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "perfis_encargos",
+      "exists": true,
+      "rows": 242,
+      "sqlite_columns": 19,
+      "mysql_columns": 19,
+      "migrated_columns": 19,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "precos_equipamentos",
+      "exists": true,
+      "rows": 908,
+      "sqlite_columns": 18,
+      "mysql_columns": 18,
+      "migrated_columns": 18,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "precos_insumos",
+      "exists": true,
+      "rows": 308803,
+      "sqlite_columns": 16,
+      "mysql_columns": 16,
+      "migrated_columns": 16,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    },
+    {
+      "table": "unidades_medida",
+      "exists": true,
+      "rows": 76,
+      "sqlite_columns": 4,
+      "mysql_columns": 4,
+      "migrated_columns": 4,
+      "missing_in_mysql": [],
+      "missing_in_sqlite": []
+    }
+  ],
+  "validation": {
+    "ok": true,
+    "issues": []
+  },
+  "execution": {
+    "mode": "dry-run",
+    "requested_execute": false,
+    "requested_reset": false,
+    "confirm": false,
+    "mysql": null,
+    "skipped_reason": "Migracao nao executada: flag --execute nao informada; variaveis MYSQL_HOST, MYSQL_USER e MYSQL_DATABASE nao configuradas."
+  }
+}
