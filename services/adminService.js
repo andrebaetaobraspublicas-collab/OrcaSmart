@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
 
@@ -194,11 +195,119 @@ function backupRoot(options = {}) {
   return options.backupDir || path.join(options.dataDir || process.cwd(), 'backups', 'admin');
 }
 
+function archivePathFor(root, id) {
+  return path.join(root, 'archives', `${id}.tar.gz`);
+}
+
+function backupDirForId(options = {}, id) {
+  const backupId = String(id || '').trim();
+  if (!/^[A-Za-z0-9_.-]+$/.test(backupId)) {
+    const err = new Error('Snapshot invalido.');
+    err.status = 400;
+    throw err;
+  }
+  const root = path.resolve(backupRoot(options));
+  const dir = path.resolve(path.join(root, backupId));
+  if (!dir.startsWith(root) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    const err = new Error('Snapshot nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  return { root, dir, id: backupId };
+}
+
+function octal(value, size) {
+  const text = Math.max(0, Number(value) || 0).toString(8);
+  return `${text}`.padStart(size - 1, '0').slice(-(size - 1)) + '\0';
+}
+
+function tarHeader(name, stat) {
+  const header = Buffer.alloc(512, 0);
+  const safeName = name.replace(/\\/g, '/').replace(/^\/+/, '').slice(0, 100);
+  header.write(safeName, 0, 100, 'utf8');
+  header.write(octal(stat.mode & 0o777, 8), 100, 8, 'ascii');
+  header.write(octal(0, 8), 108, 8, 'ascii');
+  header.write(octal(0, 8), 116, 8, 'ascii');
+  header.write(octal(stat.size, 12), 124, 12, 'ascii');
+  header.write(octal(Math.floor(stat.mtimeMs / 1000), 12), 136, 12, 'ascii');
+  header.fill(' ', 148, 156);
+  header.write('0', 156, 1, 'ascii');
+  header.write('ustar', 257, 5, 'ascii');
+  header.write('00', 263, 2, 'ascii');
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(octal(sum, 8), 148, 8, 'ascii');
+  return header;
+}
+
+function listFilesRecursive(rootDir) {
+  const files = [];
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else if (entry.isFile()) files.push(fullPath);
+    }
+  };
+  visit(rootDir);
+  return files;
+}
+
+function writeStream(stream, buffer) {
+  return new Promise((resolve, reject) => {
+    stream.write(buffer, err => (err ? reject(err) : resolve()));
+  });
+}
+
+async function createTarGzFromDirectory(sourceDir, archivePath) {
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  const tempPath = `${archivePath}.tmp`;
+  const output = fs.createWriteStream(tempPath);
+  const gzip = zlib.createGzip({ level: 9 });
+  gzip.pipe(output);
+
+  try {
+    const files = listFilesRecursive(sourceDir);
+    for (const filePath of files) {
+      const stat = fs.statSync(filePath);
+      const relativeName = path.relative(sourceDir, filePath).replace(/\\/g, '/');
+      await writeStream(gzip, tarHeader(relativeName, stat));
+      for await (const chunk of fs.createReadStream(filePath)) {
+        await writeStream(gzip, chunk);
+      }
+      const remainder = stat.size % 512;
+      if (remainder) await writeStream(gzip, Buffer.alloc(512 - remainder, 0));
+    }
+    await writeStream(gzip, Buffer.alloc(1024, 0));
+    await new Promise((resolve, reject) => {
+      output.on('finish', resolve);
+      output.on('error', reject);
+      gzip.on('error', reject);
+      gzip.end();
+    });
+    fs.renameSync(tempPath, archivePath);
+    return fileInfo(archivePath);
+  } catch (err) {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_unlinkErr) {}
+    throw err;
+  }
+}
+
+async function ensureBackupArchive(id, options = {}) {
+  const { root, dir } = backupDirForId(options, id);
+  const archivePath = archivePathFor(root, path.basename(dir));
+  const manifest = path.join(dir, 'manifest.json');
+  if (fs.existsSync(archivePath) && (!fs.existsSync(manifest) || fs.statSync(archivePath).mtimeMs >= fs.statSync(manifest).mtimeMs)) {
+    return fileInfo(archivePath);
+  }
+  return createTarGzFromDirectory(dir, archivePath);
+}
+
 async function listBackups(_master, options = {}) {
   const root = backupRoot(options);
   if (!fs.existsSync(root)) return { root, total: 0, backups: [] };
   const backups = fs.readdirSync(root, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
+    .filter(entry => entry.isDirectory() && entry.name !== 'archives')
     .map((entry) => {
       const dir = path.join(root, entry.name);
       const manifestPath = path.join(dir, 'manifest.json');
@@ -217,6 +326,7 @@ async function listBackups(_master, options = {}) {
         build: manifest && manifest.build ? manifest.build : null,
         files: manifest && manifest.files ? manifest.files.length : 0,
         tenants: manifest && manifest.tenants ? manifest.tenants.length : 0,
+        archive: fileInfo(archivePathFor(root, entry.name)),
       };
     })
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
@@ -263,6 +373,8 @@ async function createBackup(master, actor, options = {}) {
     tenants: tenantFiles,
   };
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+  manifest.archive = await ensureBackupArchive(manifest.id, options);
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
   await repo.logAdminAction(master, actor, {
     acao: 'admin.backup.create',
@@ -272,6 +384,29 @@ async function createBackup(master, actor, options = {}) {
     depois: { id: manifest.id, files: files.length, tenants: tenantFiles.length },
   });
   return manifest;
+}
+
+async function getBackupManifest(_master, id, options = {}) {
+  const { dir } = backupDirForId(options, id);
+  const manifestPath = path.join(dir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    const err = new Error('Manifesto do snapshot nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  manifest.archive = await ensureBackupArchive(id, options);
+  return manifest;
+}
+
+async function getBackupArchivePath(_master, id, options = {}) {
+  const archive = await ensureBackupArchive(id, options);
+  if (!archive.exists) {
+    const err = new Error('Arquivo compactado nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  return archive.path;
 }
 
 async function overview(master) {
@@ -456,6 +591,8 @@ module.exports = {
   tenantDiagnostics,
   listBackups,
   createBackup,
+  getBackupManifest,
+  getBackupArchivePath,
   listUsers,
   listTenants,
   updateUser,

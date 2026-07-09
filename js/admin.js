@@ -314,15 +314,22 @@ const AdminPage = {
 
   renderBackups() {
     const data = this.state.backups || {};
-    const rows = (data.backups || []).map(item => `
-      <tr>
-        <td class="fw-500">${Utils.esc(item.id)}</td>
-        <td>${Utils.esc(item.created_at || '-')}</td>
-        <td>${Utils.esc(item.build || '-')}</td>
-        <td>${this.fmtInt(item.tenants)}</td>
-        <td>${this.fmtInt(item.files)}</td>
-        <td class="text-3 text-sm" style="word-break:break-all">${Utils.esc(item.path || '-')}</td>
-      </tr>`).join('');
+    const rows = (data.backups || []).map(item => {
+      const archive = item.archive || {};
+      return `
+        <tr>
+          <td class="fw-500">${Utils.esc(item.id)}</td>
+          <td>${Utils.esc(item.created_at || '-')}</td>
+          <td>${Utils.esc(item.build || '-')}</td>
+          <td>${this.fmtInt(item.tenants)}</td>
+          <td>${this.fmtInt(item.files)}</td>
+          <td>${archive.exists ? this.badge(this.fmtBytes(archive.size_bytes), 'green') : this.badge('Gerar ao baixar', 'yellow')}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" data-admin-backup-manifest="${Utils.esc(item.id)}">Manifesto</button>
+            <a class="btn btn-primary btn-sm" href="${API.admin.backupDownload(item.id)}" style="margin-left:6px">Baixar</a>
+          </td>
+        </tr>`;
+    }).join('');
 
     return `
       <div class="section-card">
@@ -337,12 +344,65 @@ const AdminPage = {
           <div class="text-3 text-sm" style="margin-bottom:12px">Diretorio: ${Utils.esc(data.root || '-')}</div>
           <div class="table-wrapper">
             <table>
-              <thead><tr><th>Snapshot</th><th>Criado em</th><th>Build</th><th>Tenants</th><th>Arquivos</th><th>Caminho</th></tr></thead>
-              <tbody>${rows || `<tr><td colspan="6" class="text-center text-3">Nenhum snapshot administrativo criado.</td></tr>`}</tbody>
+              <thead><tr><th>Snapshot</th><th>Criado em</th><th>Build</th><th>Tenants</th><th>Arquivos</th><th>Pacote</th><th>Acoes</th></tr></thead>
+              <tbody>${rows || `<tr><td colspan="7" class="text-center text-3">Nenhum snapshot administrativo criado.</td></tr>`}</tbody>
             </table>
           </div>
         </div>
       </div>`;
+  },
+
+  async openBackupManifest(id) {
+    try {
+      const manifest = await API.admin.backupManifest(id);
+      const tenantRows = (manifest.tenants || []).map(item => `
+        <tr>
+          <td>#${item.id_tenant}</td>
+          <td>${Utils.esc(item.nome || '-')}</td>
+          <td>${this.statusBadge(item.status)}</td>
+          <td>${item.copied ? this.badge('Copiado', 'green') : this.badge('Ausente', 'red')}</td>
+          <td>${this.fmtInt((item.files || []).length)}</td>
+        </tr>`).join('');
+      const archive = manifest.archive || {};
+      Modal.open({
+        title: `Manifesto do snapshot ${manifest.id || id}`,
+        body: `
+          <div class="section-card-body">
+            <div class="cards-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+              ${this.card((manifest.files || []).length, 'Arquivos copiados', 'blue')}
+              ${this.card((manifest.tenants || []).length, 'Tenants incluidos', 'green')}
+              ${this.fileStatusCard('Pacote tar.gz', archive, 'yellow')}
+              ${this.card(manifest.build ? 1 : 0, 'Build registrado', 'blue')}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+              <div>
+                <div class="text-3 text-sm">Criado em</div>
+                <div class="fw-500">${Utils.esc(manifest.created_at || '-')}</div>
+              </div>
+              <div>
+                <div class="text-3 text-sm">Build</div>
+                <div class="fw-500">${Utils.esc(manifest.build || '-')}</div>
+              </div>
+              <div style="grid-column:1 / -1">
+                <div class="text-3 text-sm">Caminho no servidor</div>
+                <div class="fw-500" style="word-break:break-all">${Utils.esc(manifest.root || '-')}</div>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Tenant</th><th>Nome</th><th>Status</th><th>Banco</th><th>Arquivos</th></tr></thead>
+                <tbody>${tenantRows || `<tr><td colspan="5" class="text-center text-3">Nenhum tenant listado no manifesto.</td></tr>`}</tbody>
+              </table>
+            </div>
+          </div>`,
+        footer: `
+          <button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>
+          <a class="btn btn-primary" href="${API.admin.backupDownload(id)}">Baixar pacote</a>`,
+        size: 'xl',
+      });
+    } catch (err) {
+      Toast.error(err.message || 'Falha ao abrir manifesto.');
+    }
   },
 
   tableRows(items = []) {
@@ -615,6 +675,9 @@ const AdminPage = {
         }
       });
     }
+    document.querySelectorAll('[data-admin-backup-manifest]').forEach(btn => {
+      btn.addEventListener('click', () => this.openBackupManifest(btn.dataset.adminBackupManifest));
+    });
     document.querySelectorAll('#adminRunAudit').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;

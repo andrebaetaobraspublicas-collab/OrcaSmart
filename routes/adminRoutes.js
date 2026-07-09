@@ -54,6 +54,15 @@ module.exports = function adminRoutes(master, options = {}) {
     res.status(201).json(await service.createBackup(master, req.user, options));
   }));
 
+  router.get('/backups/:id/manifest', asyncHandler(async (req, res) => {
+    res.json(await service.getBackupManifest(master, req.params.id, options));
+  }));
+
+  router.get('/backups/:id/download', asyncHandler(async (req, res) => {
+    const archivePath = await service.getBackupArchivePath(master, req.params.id, options);
+    res.download(archivePath, `${req.params.id}.tar.gz`);
+  }));
+
   router.get('/audit-log', asyncHandler(async (req, res) => {
     res.json(await service.listAuditLogs(master, {
       entidade_tipo: req.query.entidade_tipo || null,

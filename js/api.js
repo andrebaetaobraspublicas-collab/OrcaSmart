@@ -58,6 +58,8 @@ const API = {
     updateTenant: (id, data) => API._req('PATCH', `/admin/tenants/${id}`, data),
     backups: () => API.get('/admin/backups'),
     createBackup: () => API.post('/admin/backups', {}),
+    backupManifest: (id) => API.get(`/admin/backups/${id}/manifest`),
+    backupDownload: (id) => `${API.BASE}/admin/backups/${encodeURIComponent(id)}/download`,
     auditLog: (params = {}) => {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/audit-log${q ? '?' + q : ''}`);
