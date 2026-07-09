@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-07-09T23:26:39.522Z",
+  "sqlite_master_path": "C:\\SistemaOrcamentoObras\\saas\\saas_master.db",
+  "mysql": {
+    "host": null,
+    "port": 3306,
+    "database": null,
+    "user": null,
+    "configured": false
+  },
+  "sqlite_counts": {
+    "tenants": 5,
+    "users": 5,
+    "subscriptions": 5,
+    "admin_audit_log": 0
+  },
+  "validation": {
+    "ok": true,
+    "issues": []
+  },
+  "execution": {
+    "mode": "dry-run",
+    "requested_execute": false,
+    "requested_reset": false,
+    "confirm": false,
+    "mysql": null,
+    "skipped_reason": "Migracao nao executada: flag --execute nao informada; variaveis MYSQL_HOST, MYSQL_USER e MYSQL_DATABASE nao configuradas."
+  }
+}

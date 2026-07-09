@@ -129,6 +129,44 @@ Premissas adotadas nesta versao:
 - defaults SQLite incompativeis sao normalizados ou removidos;
 - chaves estrangeiras serao refinadas depois da validacao das relacoes reais.
 
+## Migracao piloto do master_saas
+
+Foi criado o comando:
+
+```bash
+npm run phase4:migrate-master-mysql
+```
+
+Sem parametros, ele roda em modo `dry-run`: le o `saas_master.db`, mapeia `tenants`, `users`, `subscriptions` e `admin_audit_log`, valida relacionamentos basicos e gera:
+
+- `docs/generated/fase4-master-migration-plan.json`
+- `docs/generated/fase4-master-migration-plan.md`
+
+Para executar contra um MySQL/MariaDB de teste, as variaveis devem estar configuradas:
+
+```bash
+MYSQL_HOST=
+MYSQL_PORT=3306
+MYSQL_USER=
+MYSQL_PASSWORD=
+MYSQL_DATABASE=
+MYSQL_SSL=false
+```
+
+A execucao real exige confirmacao explicita:
+
+```bash
+npm run phase4:migrate-master-mysql -- --execute --confirm=orcasmart2-master
+```
+
+Para limpar as tabelas master no banco MySQL de teste antes da carga:
+
+```bash
+npm run phase4:migrate-master-mysql -- --execute --reset --confirm=orcasmart2-master
+```
+
+Essa rotina aplica o schema `database/mysql/00_master_saas.sql`, faz upsert dos registros e compara as contagens finais no MySQL.
+
 ## Criterios para estar pronto para MySQL
 
 O OrcaSmart2 estara pronto para iniciar a migracao real quando:
@@ -145,8 +183,9 @@ O OrcaSmart2 estara pronto para iniciar a migracao real quando:
 1. Executar e revisar o inventario do modelo.
 2. Resolver tabelas pendentes de classificacao.
 3. Revisar o schema MySQL gerado e ajustar tipos/indices criticos.
-4. Criar adaptador de banco inicial para consultas administrativas.
-5. Migrar primeiro o `master_saas` em ambiente de teste.
-6. Migrar o `catalogo_global`.
-7. Migrar um tenant piloto.
-8. Rodar comparador SQLite x MySQL.
+4. Configurar um banco MySQL/MariaDB vazio de teste na Hostinger.
+5. Executar a migracao piloto do `master_saas` no MySQL de teste.
+6. Criar adaptador de banco inicial para consultas administrativas.
+7. Migrar o `catalogo_global`.
+8. Migrar um tenant piloto.
+9. Rodar comparador SQLite x MySQL.
