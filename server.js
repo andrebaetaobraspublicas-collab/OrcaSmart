@@ -42,7 +42,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-overrides-fallback';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-runtime-schema-read';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -497,23 +497,28 @@ function runTenantCatalogReadMethod(method, sql, params, cb) {
     });
   };
 
-  if (!fs.existsSync(SHARED_CATALOG_DB_PATH)) {
-    return db[method](sql, params || [], function onRead(err, result) {
-      finish(this, err, result);
-    });
-  }
-
-  return db.run('ATTACH DATABASE ? AS catalog', [SHARED_CATALOG_DB_PATH], (attachErr) => {
-    if (attachErr) {
+  const executeRead = () => {
+    if (!fs.existsSync(SHARED_CATALOG_DB_PATH)) {
       return db[method](sql, params || [], function onRead(err, result) {
         finish(this, err, result);
       });
     }
-    return db[method](sql, params || [], function onCatalogRead(err, result) {
-      const context = this;
-      db.run('DETACH DATABASE catalog', [], () => finish(context, err, result));
+
+    return db.run('ATTACH DATABASE ? AS catalog', [SHARED_CATALOG_DB_PATH], (attachErr) => {
+      if (attachErr) {
+        return db[method](sql, params || [], function onRead(err, result) {
+          finish(this, err, result);
+        });
+      }
+      return db[method](sql, params || [], function onCatalogRead(err, result) {
+        const context = this;
+        db.run('DETACH DATABASE catalog', [], () => finish(context, err, result));
+      });
     });
-  });
+  };
+
+  ensureRuntimeTenantSchema(db, dbPath).then(executeRead).catch(err => finish({}, err));
+  return undefined;
 }
 
 async function requireLogin(req, res, next) {
