@@ -44,6 +44,7 @@ module.exports = function adminRoutes(master, options = {}) {
   router.get('/tenants', asyncHandler(async (req, res) => {
     const tenants = await service.listTenants(master, {
       ...options,
+      q: req.query.q || null,
       id_tenant: req.query.id_tenant || null,
       status: req.query.status || null,
     });

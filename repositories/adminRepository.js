@@ -134,6 +134,11 @@ async function listTenants(master, filters = {}) {
     LEFT JOIN users u ON u.id_tenant = t.id_tenant`;
   const params = [];
   const where = [];
+  if (filters.q) {
+    where.push('(LOWER(t.nome) LIKE ? OR LOWER(t.slug) LIKE ? OR LOWER(t.db_path) LIKE ?)');
+    const q = `%${String(filters.q).toLowerCase()}%`;
+    params.push(q, q, q);
+  }
   if (filters.id_tenant) {
     where.push('t.id_tenant = ?');
     params.push(filters.id_tenant);

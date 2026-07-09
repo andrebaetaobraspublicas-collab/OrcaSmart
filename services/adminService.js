@@ -491,6 +491,7 @@ async function updateUserSubscription(master, actor, idUser, data = {}) {
 
 async function listTenants(master, options = {}) {
   const tenants = await repo.listTenants(master, {
+    q: options.q || null,
     id_tenant: options.id_tenant || null,
     status: options.status || null,
   });

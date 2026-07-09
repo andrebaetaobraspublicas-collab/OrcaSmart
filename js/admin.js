@@ -12,6 +12,10 @@ const AdminPage = {
     me: null,
     overview: {},
     audit: null,
+    tenantFilters: {
+      q: '',
+      status: '',
+    },
   },
 
   fmtInt(value) {
@@ -79,13 +83,21 @@ const AdminPage = {
     return items.map(item => `${Utils.esc(item.status)}: ${this.fmtInt(item.total)}`).join(' | ');
   },
 
+  activeTenantFilters() {
+    const filters = this.state.tenantFilters || {};
+    const params = {};
+    if (filters.q) params.q = filters.q;
+    if (filters.status) params.status = filters.status;
+    return params;
+  },
+
   async loadAll() {
     const [me, overview, users, subscriptions, tenants, logs, health, backups] = await Promise.all([
       API.auth.me(),
       API.admin.overview(),
       API.admin.users(),
       API.admin.subscriptions(),
-      API.admin.tenants(),
+      API.admin.tenants(this.activeTenantFilters()),
       API.admin.auditLog({ limit: 80 }),
       API.admin.health(),
       API.admin.backups(),
@@ -237,6 +249,11 @@ const AdminPage = {
   },
 
   renderTenants() {
+    const filters = this.state.tenantFilters || {};
+    const active = this.state.tenants.filter(item => item.status === 'ativo').length;
+    const suspended = this.state.tenants.filter(item => item.status === 'suspenso').length;
+    const inactive = this.state.tenants.filter(item => item.status === 'inativo').length;
+    const totalDbBytes = this.state.tenants.reduce((acc, tenant) => acc + Number(tenant.stats && tenant.stats.db_size_bytes || 0), 0);
     const rows = this.state.tenants.map(tenant => {
       const stats = tenant.stats || {};
       const dbStatus = stats.db_exists ? this.badge('OK', 'green') : this.badge('Sem arquivo', 'red');
@@ -256,15 +273,35 @@ const AdminPage = {
           <td>
             <select class="filter-select" data-admin-tenant-status="${tenant.id_tenant}">${this.statusOptions(tenant.status || 'ativo')}</select>
             <button class="btn btn-primary btn-sm" data-admin-tenant-save="${tenant.id_tenant}" style="margin-left:6px">Salvar</button>
-            <button class="btn btn-ghost btn-sm" data-admin-tenant-diagnostics="${tenant.id_tenant}" style="margin-left:6px">Diagnostico</button>
+            <button class="btn btn-ghost btn-sm" data-admin-tenant-diagnostics="${tenant.id_tenant}" style="margin-left:6px">Painel</button>
           </td>
         </tr>`;
     }).join('');
     return `
+      <div class="cards-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+        ${this.card(active, 'Tenants ativos', 'green')}
+        ${this.card(suspended, 'Tenants suspensos', 'yellow')}
+        ${this.card(inactive, 'Tenants inativos', 'red')}
+        ${this.card(Math.round(totalDbBytes / 1024 / 1024), 'MB em bancos privados', 'blue')}
+      </div>
       <div class="section-card">
         <div class="section-card-header">
-          <h2>Tenants e bancos privados</h2>
+          <div>
+            <h2>Tenants e bancos privados</h2>
+            <p class="text-3 text-sm">Localize tenants, revise uso do banco e altere o status operacional.</p>
+          </div>
           <span class="text-3 text-sm">${this.fmtInt(this.state.tenants.length)} tenant(s)</span>
+        </div>
+        <div class="toolbar" style="padding:12px 20px">
+          <input class="search-input" id="adminTenantSearch" placeholder="Buscar tenant, slug ou banco..." value="${Utils.esc(filters.q || '')}" style="max-width:360px">
+          <select class="filter-select" id="adminTenantFilterStatus">
+            <option value="" ${!filters.status ? 'selected' : ''}>Todos os status</option>
+            <option value="ativo" ${filters.status === 'ativo' ? 'selected' : ''}>Ativos</option>
+            <option value="suspenso" ${filters.status === 'suspenso' ? 'selected' : ''}>Suspensos</option>
+            <option value="inativo" ${filters.status === 'inativo' ? 'selected' : ''}>Inativos</option>
+          </select>
+          <button class="btn btn-primary btn-sm" id="adminApplyTenantFilters">Filtrar</button>
+          <button class="btn btn-ghost btn-sm" id="adminClearTenantFilters">Limpar</button>
         </div>
         <div class="table-wrapper">
           <table>
@@ -558,6 +595,20 @@ const AdminPage = {
               </div>
             </div>
 
+            <div class="section-card" style="margin-bottom:16px">
+              <div class="section-card-header">
+                <div>
+                  <h3>Acoes operacionais</h3>
+                  <p class="text-3 text-sm">O status do tenant controla o acesso dos usuarios comuns vinculados a ele.</p>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-success btn-sm" data-admin-tenant-panel-status="${tenant.id_tenant}" data-status="ativo">Ativar</button>
+                  <button class="btn btn-warning btn-sm" data-admin-tenant-panel-status="${tenant.id_tenant}" data-status="suspenso">Suspender</button>
+                  <button class="btn btn-danger btn-sm" data-admin-tenant-panel-status="${tenant.id_tenant}" data-status="inativo">Inativar</button>
+                </div>
+              </div>
+            </div>
+
             <h3 style="margin:12px 0">Usuarios do tenant</h3>
             <div class="table-wrapper" style="margin-bottom:16px">
               <table>
@@ -592,6 +643,30 @@ const AdminPage = {
           </div>`,
         footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>`,
         size: 'xl',
+      });
+      document.querySelectorAll('[data-admin-tenant-panel-status]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.adminTenantPanelStatus;
+          const status = btn.dataset.status;
+          const ok = await Confirm.ask(
+            `Alterar o tenant ${tenant.nome || '#' + id} para status "${status}"?`,
+            { title: 'Alterar status do tenant', okText: 'Confirmar', okClass: 'btn btn-primary' }
+          );
+          if (!ok) return;
+          btn.disabled = true;
+          try {
+            await API.admin.updateTenant(id, { status });
+            Toast.success('Status do tenant atualizado.');
+            Modal.close();
+            await this.render();
+            this.state.tab = 'tenants';
+            document.getElementById('adminPanelBody').innerHTML = this.renderTenants();
+            this.bind();
+          } catch (err) {
+            Toast.error(err.message || 'Falha ao atualizar tenant.');
+            btn.disabled = false;
+          }
+        });
       });
     } catch (err) {
       Toast.error(err.message || 'Falha ao carregar diagnostico.');
@@ -701,6 +776,35 @@ const AdminPage = {
     });
     const refresh = document.getElementById('adminRefresh');
     if (refresh) refresh.addEventListener('click', () => this.render());
+    const applyTenantFilters = document.getElementById('adminApplyTenantFilters');
+    if (applyTenantFilters) {
+      applyTenantFilters.addEventListener('click', async () => {
+        this.state.tenantFilters = {
+          q: document.getElementById('adminTenantSearch').value.trim(),
+          status: document.getElementById('adminTenantFilterStatus').value,
+        };
+        await this.render();
+        this.state.tab = 'tenants';
+        document.getElementById('adminPanelBody').innerHTML = this.renderTenants();
+        this.bind();
+      });
+    }
+    const tenantSearch = document.getElementById('adminTenantSearch');
+    if (tenantSearch) {
+      tenantSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && applyTenantFilters) applyTenantFilters.click();
+      });
+    }
+    const clearTenantFilters = document.getElementById('adminClearTenantFilters');
+    if (clearTenantFilters) {
+      clearTenantFilters.addEventListener('click', async () => {
+        this.state.tenantFilters = { q: '', status: '' };
+        await this.render();
+        this.state.tab = 'tenants';
+        document.getElementById('adminPanelBody').innerHTML = this.renderTenants();
+        this.bind();
+      });
+    }
     document.querySelectorAll('[data-admin-user-save]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.adminUserSave;
