@@ -2,8 +2,9 @@ const express = require('express');
 const insumosService = require('../services/insumosService');
 const equipamentosService = require('../services/equipamentosService');
 
-module.exports = function compatRoutes(db) {
+module.exports = function compatRoutes(db, options = {}) {
   const router = express.Router();
+  const readDb = options.readDb || db;
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
@@ -11,7 +12,7 @@ module.exports = function compatRoutes(db) {
 
   // Caminhos historicos usados pelo frontend. As rotas canonicas ficam em /api/insumos.
   router.get('/grupos-insumos', asyncHandler(async (_req, res) => {
-    res.json(await insumosService.listGrupos(db));
+    res.json(await insumosService.listGrupos(readDb));
   }));
 
   router.post('/grupos-insumos', asyncHandler(async (req, res) => {
