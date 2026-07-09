@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-07-09T23:39:38.830Z",
+  "mysql": {
+    "host": null,
+    "port": 3306,
+    "database": null,
+    "user": null,
+    "ssl": false
+  },
+  "environment": {
+    "required": [
+      {
+        "name": "MYSQL_HOST",
+        "configured": false
+      },
+      {
+        "name": "MYSQL_USER",
+        "configured": false
+      },
+      {
+        "name": "MYSQL_PASSWORD",
+        "configured": false
+      },
+      {
+        "name": "MYSQL_DATABASE",
+        "configured": false
+      }
+    ],
+    "optional": [
+      {
+        "name": "MYSQL_PORT",
+        "configured": false,
+        "value": null
+      },
+      {
+        "name": "MYSQL_SSL",
+        "configured": false,
+        "value": "false"
+      }
+    ]
+  },
+  "schema_files": [
+    "00_master_saas.sql",
+    "10_catalogo_global.sql",
+    "20_tenant_privado.sql",
+    "30_override_tenant.sql",
+    "40_metadados.sql"
+  ],
+  "connection": {
+    "ok": false,
+    "skipped": true,
+    "reason": "Teste de conexao ignorado porque faltam variaveis: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+  }
+}

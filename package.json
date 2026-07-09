@@ -15,6 +15,7 @@
         "phase4:audit-model": "node scripts/phase4DataModelAudit.js",
         "phase4:generate-mysql-schema": "node scripts/phase4GenerateMysqlSchema.js",
         "phase4:validate-mysql-schema": "node scripts/phase4ValidateMysqlSchema.js",
+        "phase4:mysql-readiness": "node scripts/phase4MysqlReadiness.js",
         "phase4:migrate-master-mysql": "node scripts/phase4MigrateMasterToMysql.js"
     },
     "dependencies": {
