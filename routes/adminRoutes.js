@@ -12,6 +12,10 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.overview(master));
   }));
 
+  router.get('/health', asyncHandler(async (_req, res) => {
+    res.json(await service.systemHealth(master, options));
+  }));
+
   router.get('/users', asyncHandler(async (req, res) => {
     res.json(await service.listUsers(master, {
       q: req.query.q || null,

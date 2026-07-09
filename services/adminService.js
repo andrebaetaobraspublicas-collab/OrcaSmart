@@ -59,6 +59,66 @@ async function tenantStats(sqlite3, tenant) {
   return stats;
 }
 
+function fileInfo(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { path: filePath || null, exists: false, size_bytes: 0, modified_at: null };
+  }
+  const stat = fs.statSync(filePath);
+  return {
+    path: filePath,
+    exists: true,
+    size_bytes: stat.size,
+    modified_at: stat.mtime.toISOString(),
+  };
+}
+
+async function catalogStats(sqlite3, catalogPath, tableNames = []) {
+  const info = fileInfo(catalogPath);
+  if (!info.exists || !sqlite3) {
+    return { ...info, tables: [] };
+  }
+  const tables = [];
+  for (const tableName of tableNames) {
+    try {
+      tables.push({ table: tableName, rows: await tableCount(sqlite3, catalogPath, tableName), error: null });
+    } catch (err) {
+      tables.push({ table: tableName, rows: null, error: err.message });
+    }
+  }
+  return { ...info, tables };
+}
+
+async function systemHealth(master, options = {}) {
+  const [tenants, catalog] = await Promise.all([
+    repo.listTenants(master),
+    catalogStats(options.sqlite3, options.catalogPath, options.catalogTables || []),
+  ]);
+  const tenantFiles = tenants.map(tenant => ({
+    id_tenant: tenant.id_tenant,
+    nome: tenant.nome,
+    status: tenant.status,
+    db: fileInfo(tenant.db_path),
+  }));
+  const missingTenantDbs = tenantFiles.filter(item => !item.db.exists);
+
+  return {
+    app: options.app || null,
+    build: options.build || null,
+    version: options.version || null,
+    runtime: 'node',
+    data_dir: options.dataDir || null,
+    master_db: fileInfo(options.masterPath),
+    shared_catalog: catalog,
+    tenant_template: fileInfo(options.tenantTemplatePath),
+    tenant_files: {
+      total: tenantFiles.length,
+      missing: missingTenantDbs.length,
+      rows: tenantFiles,
+    },
+    phase2: options.phase2Manifest || null,
+  };
+}
+
 async function overview(master) {
   return repo.overview(master);
 }
@@ -237,6 +297,7 @@ async function migratePhase2Tenants(master, data = {}, options = {}) {
 
 module.exports = {
   overview,
+  systemHealth,
   listUsers,
   listTenants,
   updateUser,

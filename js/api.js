@@ -44,6 +44,7 @@ const API = {
   },
   admin: {
     overview: () => API.get('/admin/overview'),
+    health: () => API.get('/admin/health'),
     users: (params = {}) => {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/users${q ? '?' + q : ''}`);

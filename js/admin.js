@@ -6,6 +6,7 @@ const AdminPage = {
     users: [],
     tenants: [],
     logs: [],
+    health: null,
     me: null,
     overview: {},
     audit: null,
@@ -53,18 +54,20 @@ const AdminPage = {
   },
 
   async loadAll() {
-    const [me, overview, users, tenants, logs] = await Promise.all([
+    const [me, overview, users, tenants, logs, health] = await Promise.all([
       API.auth.me(),
       API.admin.overview(),
       API.admin.users(),
       API.admin.tenants(),
       API.admin.auditLog({ limit: 80 }),
+      API.admin.health(),
     ]);
     this.state.me = me || null;
     this.state.overview = overview || {};
     this.state.users = Array.isArray(users) ? users : [];
     this.state.tenants = tenants && Array.isArray(tenants.tenants) ? tenants.tenants : [];
     this.state.logs = Array.isArray(logs) ? logs : [];
+    this.state.health = health || null;
   },
 
   card(value, label, tone = 'blue') {
@@ -94,6 +97,7 @@ const AdminPage = {
       <div class="toolbar" style="padding:12px 20px">
         ${btn('usuarios', 'Usuarios')}
         ${btn('tenants', 'Tenants')}
+        ${btn('saude', 'Saude')}
         ${btn('logs', 'Auditoria admin')}
         ${btn('auditoria', 'Auditoria Fase 2')}
         <button class="btn btn-ghost btn-sm" id="adminRefresh" style="margin-left:auto">${Utils.icons.refresh} Atualizar</button>
@@ -228,6 +232,81 @@ const AdminPage = {
       </div>`;
   },
 
+  fileStatusCard(title, info, tone = 'blue') {
+    const file = info || {};
+    return `
+      <div class="card">
+        <div class="card-stat">
+          <div>
+            <div class="card-stat-value" style="font-size:1.35rem">${file.exists ? 'OK' : 'Ausente'}</div>
+            <div class="card-stat-label">${Utils.esc(title)}</div>
+            <div class="text-3 text-sm" style="margin-top:8px">${this.fmtBytes(file.size_bytes)}</div>
+          </div>
+          <div class="card-stat-icon ${file.exists ? tone : 'red'}">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M4 6c0-2 4-3 8-3s8 1 8 3-4 3-8 3-8-1-8-3zM4 6v12c0 2 4 3 8 3s8-1 8-3V6M4 12c0 2 4 3 8 3s8-1 8-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  renderHealth() {
+    const health = this.state.health || {};
+    const catalog = health.shared_catalog || {};
+    const tables = Array.isArray(catalog.tables) ? catalog.tables : [];
+    const missing = health.tenant_files ? health.tenant_files.missing : 0;
+    const rows = tables.map(item => `
+      <tr>
+        <td class="fw-500">${Utils.esc(item.table)}</td>
+        <td>${item.error ? this.badge('Erro', 'red') : this.badge('OK', 'green')}</td>
+        <td>${item.rows === null || item.rows === undefined ? '-' : this.fmtInt(item.rows)}</td>
+        <td class="text-3 text-sm">${Utils.esc(item.error || '')}</td>
+      </tr>`).join('');
+
+    return `
+      <div class="cards-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+        ${this.fileStatusCard('Master SaaS', health.master_db, 'blue')}
+        ${this.fileStatusCard('Catalogo compartilhado', catalog, 'green')}
+        ${this.fileStatusCard('Template dos tenants', health.tenant_template, 'yellow')}
+        ${this.card(missing, 'Bancos de tenants ausentes', missing ? 'red' : 'green')}
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px">
+        <div class="section-card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div>
+            <div class="text-3 text-sm">Build</div>
+            <div class="fw-500">${Utils.esc(health.build || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Diretorio persistente</div>
+            <div class="fw-500" style="word-break:break-all">${Utils.esc(health.data_dir || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Versao</div>
+            <div class="fw-500">${Utils.esc(health.version || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Tenants monitorados</div>
+            <div class="fw-500">${this.fmtInt(health.tenant_files && health.tenant_files.total)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-card-header">
+          <h2>Catalogo comum - contagem por tabela</h2>
+          <span class="text-3 text-sm">${this.fmtInt(tables.length)} tabela(s)</span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Tabela</th><th>Status</th><th>Registros</th><th>Detalhe</th></tr></thead>
+            <tbody>${rows || `<tr><td colspan="4" class="text-center text-3">Nenhuma tabela de catalogo informada.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
+  },
+
   renderAudit() {
     const audit = this.state.audit;
     const body = !audit ? `
@@ -267,6 +346,7 @@ const AdminPage = {
 
   renderContent() {
     if (this.state.tab === 'tenants') return this.renderTenants();
+    if (this.state.tab === 'saude') return this.renderHealth();
     if (this.state.tab === 'logs') return this.renderLogs();
     if (this.state.tab === 'auditoria') return this.renderAudit();
     return this.renderUsers();
