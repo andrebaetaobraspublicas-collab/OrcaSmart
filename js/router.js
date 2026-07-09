@@ -37,6 +37,7 @@ const Router = {
       'municipios':            'Municípios — Alíquotas ISS / IBS / CBS',
       'eventograma':           'Eventograma — Tabela de Eventos Geradores de Pagamento',
       'dimensionamento-pavimentos': 'Dimensionamento de Pavimentos',
+      'admin':                'Administracao SaaS',
     };
     document.getElementById('breadcrumb').textContent = labels[page] || page;
 

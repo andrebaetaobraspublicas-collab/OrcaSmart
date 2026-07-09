@@ -8,8 +8,26 @@ module.exports = function adminRoutes(master, options = {}) {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
-  router.get('/users', asyncHandler(async (_req, res) => {
-    res.json(await service.listUsers(master));
+  router.get('/overview', asyncHandler(async (_req, res) => {
+    res.json(await service.overview(master));
+  }));
+
+  router.get('/users', asyncHandler(async (req, res) => {
+    res.json(await service.listUsers(master, {
+      q: req.query.q || null,
+      role: req.query.role || null,
+      status: req.query.status || null,
+      subscription_status: req.query.subscription_status || null,
+    }));
+  }));
+
+  router.get('/tenants', asyncHandler(async (req, res) => {
+    const tenants = await service.listTenants(master, {
+      ...options,
+      id_tenant: req.query.id_tenant || null,
+      status: req.query.status || null,
+    });
+    res.json({ total: tenants.length, tenants });
   }));
 
   router.get('/phase2/tenants/audit', asyncHandler(async (req, res) => {

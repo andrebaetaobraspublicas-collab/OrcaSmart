@@ -39,6 +39,24 @@ const API = {
   // Dashboard
   dashboard: () => API.get('/dashboard'),
   status:    () => API.get('/status'),
+  auth: {
+    me: () => API.get('/auth/me'),
+  },
+  admin: {
+    overview: () => API.get('/admin/overview'),
+    users: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/admin/users${q ? '?' + q : ''}`);
+    },
+    tenants: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/admin/tenants${q ? '?' + q : ''}`);
+    },
+    auditTenants: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return API.get(`/admin/phase2/tenants/audit${q ? '?' + q : ''}`);
+    },
+  },
 
   // Estados e Municípios
   estados: {

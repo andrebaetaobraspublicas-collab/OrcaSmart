@@ -7,6 +7,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   Toast.init();
   Router.init();
 
+  try {
+    const me = await API.auth.me();
+    const isAdmin = me && me.role === 'admin';
+    document.querySelectorAll('.nav-admin-only').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
+    const badge = document.getElementById('topbar-badge');
+    if (isAdmin && badge) {
+      badge.textContent = 'Admin';
+      badge.style.display = '';
+    }
+  } catch (_) {
+    document.querySelectorAll('.nav-admin-only').forEach(el => { el.style.display = 'none'; });
+  }
+
   // ─── Toggle da sidebar ──────────────────────────────────────
   const sidebar  = document.getElementById('sidebar');
   const wrapper  = document.querySelector('.main-wrapper');

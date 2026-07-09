@@ -42,7 +42,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-attached-catalog-only';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-admin-phase3';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -51,6 +51,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
+const ADMIN_EMAILS = new Set(
+  String(process.env.ORCASMART_ADMIN_EMAILS || 'andrebaeta@hotmail.com,admin@hotmail.com')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const stripe = Stripe && STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const requestDb = new AsyncLocalStorage();
@@ -238,6 +244,10 @@ async function initMasterDb() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (id_user) REFERENCES users(id_user)
     )`);
+  if (ADMIN_EMAILS.size) {
+    const placeholders = [...ADMIN_EMAILS].map(() => '?').join(',');
+    await runMaster(`UPDATE users SET role = 'admin' WHERE lower(email) IN (${placeholders})`, [...ADMIN_EMAILS]);
+  }
 }
 
 function tenantDbPath(idTenant) {
@@ -304,6 +314,10 @@ async function ensureTenantDatabaseReady(dbPath) {
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
+}
+
+function isConfiguredAdminEmail(email) {
+  return ADMIN_EMAILS.has(normalizeEmail(email));
 }
 
 function hashPassword(password) {
@@ -536,7 +550,7 @@ async function requireLogin(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.user || !['admin', 'owner'].includes(req.user.role)) {
+  if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ erro: 'Acesso não autorizado.' });
   }
   return next();
@@ -621,9 +635,10 @@ app.post('/api/auth/register', async (req, res) => {
     const dbPath = createTenantDatabase(tenant.lastID);
     await runMaster('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [dbPath, tenant.lastID]);
     const passwordHash = hashPassword(senha);
+    const role = isConfiguredAdminEmail(email) ? 'admin' : 'owner';
     const user = await runMaster(
       'INSERT INTO users (id_tenant, nome, email, password_hash, role) VALUES (?, ?, ?, ?, ?)',
-      [tenant.lastID, nome, email, passwordHash, 'owner']
+      [tenant.lastID, nome, email, passwordHash, role]
     );
     await runMaster('INSERT INTO subscriptions (id_user, status) VALUES (?, ?)', [user.lastID, 'trial']);
     setSession(res, user.lastID);
