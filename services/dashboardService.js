@@ -1,7 +1,7 @@
 const repo = require('../repositories/dashboardRepository');
 
-async function stats(db) {
-  return repo.stats(db);
+async function stats(db, options = {}) {
+  return repo.stats(db, options);
 }
 
 module.exports = { stats };
