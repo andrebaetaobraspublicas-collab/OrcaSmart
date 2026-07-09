@@ -258,6 +258,34 @@ function createTenantDatabase(idTenant) {
   return target;
 }
 
+function copyTenantSidecarsIfMissing(sourceDb, targetDb) {
+  copyFileIfMissing(sourceDb, targetDb);
+  for (const suffix of ['-wal', '-shm']) {
+    copyFileIfMissing(`${sourceDb}${suffix}`, `${targetDb}${suffix}`);
+  }
+}
+
+function normalizeTenantDatabasePath(idTenant, storedPath) {
+  const target = tenantDbPath(idTenant);
+  const stored = path.resolve(storedPath || '');
+  if (fs.existsSync(target)) return target;
+  if (stored && fs.existsSync(stored)) {
+    copyTenantSidecarsIfMissing(stored, target);
+    if (fs.existsSync(target)) return target;
+  }
+  return storedPath || target;
+}
+
+async function normalizeUserTenantDatabase(user) {
+  if (!user) return user;
+  const normalizedPath = normalizeTenantDatabasePath(user.id_tenant, user.tenant_db_path);
+  if (normalizedPath && normalizedPath !== user.tenant_db_path) {
+    await runMaster('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [normalizedPath, user.id_tenant]).catch(() => {});
+    user.tenant_db_path = normalizedPath;
+  }
+  return user;
+}
+
 const tenantSchemaReady = new Set();
 
 async function ensureTenantDatabaseReady(dbPath) {
@@ -349,13 +377,14 @@ function slugFromEmail(email) {
 
 async function loadUserById(idUser) {
   if (!idUser) return null;
-  return getMaster(`
+  const user = await getMaster(`
     SELECT u.*, t.nome AS tenant_nome, t.slug AS tenant_slug, t.db_path AS tenant_db_path,
            s.status AS subscription_status, s.current_period_end
     FROM users u
     JOIN tenants t ON t.id_tenant = u.id_tenant
     LEFT JOIN subscriptions s ON s.id_user = u.id_user
     WHERE u.id_user = ? AND u.status = 'ativo'`, [idUser]);
+  return normalizeUserTenantDatabase(user);
 }
 
 function subscriptionAllowsAccess(user) {
