@@ -114,6 +114,12 @@ Router.register('orcamento-sintetico', async () => {
     if (input && percentual !== null) input.value = percentual.toFixed(4);
     return percentual;
   }
+  function percentualDoPerfilBdi(idPerfil) {
+    const id = parseInt(idPerfil, 10) || null;
+    if (!id) return null;
+    const perfil = bdis.find(b => Number(b.id_perfil_bdi) === id);
+    return perfil ? (parseFloat(perfil.bdi_percentual) || 0) : null;
+  }
   function valorItem(item) {
     if (item.tipo_linha === 'section') return 0;
     return precoUnit(item) * (parseFloat(item.quantidade) || 0);
@@ -204,6 +210,11 @@ Router.register('orcamento-sintetico', async () => {
 
   /* ═══════════════════ RENDER PÁGINA ════════════════════════════════════════ */
   function renderPage() {
+    const pctPerfilSelecionado = percentualDoPerfilBdi(orc.id_bdi_perfil);
+    if (pctPerfilSelecionado !== null && Math.abs((parseFloat(bdiPct) || 0) - pctPerfilSelecionado) > 0.00001) {
+      bdiPct = pctPerfilSelecionado;
+      orc.bdi_percentual = pctPerfilSelecionado;
+    }
     const gt = totalGeral();
     const bdiOpts = bdis.map(b =>
       `<option value="${b.id_perfil_bdi}" ${orc.id_bdi_perfil == b.id_perfil_bdi ? 'selected' : ''}>` +
