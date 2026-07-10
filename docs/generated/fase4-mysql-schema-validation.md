@@ -6,4 +6,3 @@ Tabelas analisadas: 53
 Problemas encontrados: 0
 
 Nenhum problema bloqueante encontrado nas validacoes automaticas atuais.
-

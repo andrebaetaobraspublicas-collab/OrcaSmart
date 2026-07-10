@@ -445,6 +445,10 @@ const AdminPage = {
             <div class="fw-500">${Utils.esc(phase4.databaseEngine || 'sqlite')}</div>
           </div>
           <div>
+            <div class="text-3 text-sm">Motor do master SaaS</div>
+            <div class="fw-500">${Utils.esc(phase4.masterDatabaseEngine || 'sqlite')}</div>
+          </div>
+          <div>
             <div class="text-3 text-sm">MySQL configurado</div>
             <div class="fw-500">${phase4.mysqlConfigured ? 'Sim' : 'Nao'}</div>
           </div>

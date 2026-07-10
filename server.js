@@ -29,6 +29,11 @@ const { ensureSharedCatalog } = require('./utils/sharedCatalog');
 const { buildTenantTemplate } = require('./utils/tenantTemplate');
 const { ensureRuntimeTenantSchema } = require('./utils/runtimeTenantSchema');
 const {
+  masterDatabaseEngine,
+  createMasterDatabase,
+  initializeMasterDatabase,
+} = require('./utils/masterDatabase');
+const {
   databaseEngine,
   mysqlConfig,
   mysqlConfigStatus,
@@ -155,6 +160,7 @@ const DATA_DIR = ensureDataDir();
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const SHARED_CATALOG_DB_PATH = path.join(DATA_DIR, 'shared_catalog.db');
+const MASTER_DB_ENGINE = masterDatabaseEngine();
 const phase2Manifest = {
   modelVersion: PHASE2_MODEL_VERSION,
   catalogTables: CATALOG_TABLES,
@@ -194,91 +200,17 @@ function openSqlite(filePath) {
   return db;
 }
 
-function runMaster(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = openSqlite(MASTER_DB_PATH);
-    db.run(sql, params, function onRun(err) {
-      db.close();
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
-}
+const masterDb = createMasterDatabase({
+  engine: MASTER_DB_ENGINE,
+  sqlite3: getSqlite3(),
+  dbPath: MASTER_DB_PATH,
+  mysqlConfig: mysqlConfig(),
+});
 
-function getMaster(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = openSqlite(MASTER_DB_PATH);
-    db.get(sql, params, (err, row) => {
-      db.close();
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
-}
-
-function allMaster(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = openSqlite(MASTER_DB_PATH);
-    db.all(sql, params, (err, rows) => {
-      db.close();
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-}
-
-async function initMasterDb() {
-  await runMaster(`
-    CREATE TABLE IF NOT EXISTS tenants (
-      id_tenant INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      db_path TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'ativo',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`);
-  await runMaster(`
-    CREATE TABLE IF NOT EXISTS users (
-      id_user INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_tenant INTEGER NOT NULL,
-      nome TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'owner',
-      status TEXT NOT NULL DEFAULT 'ativo',
-      stripe_customer_id TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (id_tenant) REFERENCES tenants(id_tenant)
-    )`);
-  await runMaster(`
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id_subscription INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_user INTEGER NOT NULL,
-      stripe_subscription_id TEXT UNIQUE,
-      stripe_customer_id TEXT,
-      status TEXT NOT NULL DEFAULT 'trial',
-      current_period_end INTEGER,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (id_user) REFERENCES users(id_user)
-    )`);
-  await runMaster(`
-    CREATE TABLE IF NOT EXISTS admin_audit_log (
-      id_log INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_admin INTEGER,
-      admin_email TEXT,
-      acao TEXT NOT NULL,
-      entidade_tipo TEXT NOT NULL,
-      entidade_id TEXT NOT NULL,
-      antes TEXT,
-      depois TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`);
-  if (ADMIN_EMAILS.size) {
-    const placeholders = [...ADMIN_EMAILS].map(() => '?').join(',');
-    await runMaster(`UPDATE users SET role = 'admin' WHERE lower(email) IN (${placeholders})`, [...ADMIN_EMAILS]);
-  }
-}
+const runMaster = (sql, params = []) => masterDb.run(sql, params);
+const getMaster = (sql, params = []) => masterDb.get(sql, params);
+const allMaster = (sql, params = []) => masterDb.all(sql, params);
+const initMasterDb = () => initializeMasterDatabase(masterDb, ADMIN_EMAILS);
 
 function tenantDbPath(idTenant) {
   const name = `tenant_${String(idTenant).padStart(6, '0')}.db`;
@@ -625,6 +557,7 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 function buildPhase4Status() {
   return {
     databaseEngine: bootState.mysql.engine,
+    masterDatabaseEngine: masterDb.engine,
     mysqlEnabled: bootState.mysql.enabled,
     mysqlConfigured: bootState.mysql.configured,
     mysqlReady: bootState.mysql.ready,

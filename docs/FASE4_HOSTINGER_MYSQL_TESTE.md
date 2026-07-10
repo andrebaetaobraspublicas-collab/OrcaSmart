@@ -18,6 +18,7 @@ No app Node.js de teste do OrçaSmart2, configure:
 
 ```env
 ORCASMART_DB_ENGINE=mysql-pilot
+ORCASMART_MASTER_DB_ENGINE=sqlite
 MYSQL_HOST=host-do-banco
 MYSQL_PORT=3306
 MYSQL_USER=usuario-do-banco
@@ -29,6 +30,8 @@ MYSQL_SSL=false
 As mesmas variaveis tambem podem ser definidas com prefixo `ORCASMART_`, por exemplo `ORCASMART_MYSQL_HOST`.
 
 Enquanto `ORCASMART_DB_ENGINE=mysql-pilot`, o sistema testa e informa a saude do MySQL no endpoint `/api/status`, mas as rotas de negocio continuam usando SQLite. Essa e a configuracao recomendada para validar a migracao sem mudar a operacao do ambiente de teste.
+
+Mantenha `ORCASMART_MASTER_DB_ENGINE=sqlite` ate a migracao do banco `saas_master` ser executada e conferida. Essa variavel existe para permitir a troca controlada do master SaaS em uma etapa posterior, sem misturar com o piloto de conexao MySQL.
 
 ## 3. Validar a prontidao
 
