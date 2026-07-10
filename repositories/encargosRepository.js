@@ -720,7 +720,58 @@ async function findPerfil(db, data = {}) {
   ]);
 }
 
+async function findTenantPerfil(db, data = {}) {
+  if (!(await hasTenantEncargosOverrides(db))) return null;
+  return one(db, `
+    SELECT rowid, *, 'tenant:' || rowid AS id_perfil
+    FROM tenant_perfis_encargos
+    WHERE fonte_referencia = ?
+      AND COALESCE(uf_referencia, '') = COALESCE(?, '')
+      AND categoria = ?
+      AND regime = ?
+      AND COALESCE(vigencia_inicio, '') = COALESCE(?, '')
+      AND COALESCE(vigencia_fim, '') = COALESCE(?, '')
+      AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY rowid DESC
+    LIMIT 1`, [
+    normFonte(data.fonte_referencia || 'SINAPI'),
+    data.uf_referencia || null,
+    data.categoria || 'Horista',
+    data.regime || 'Normal',
+    data.vigencia_inicio || null,
+    data.vigencia_fim || null,
+  ]);
+}
+
 async function replacePerfilTotais(db, idPerfil, totais = {}) {
+  const scoped = scopedId(idPerfil);
+  if ((await hasTenantEncargosOverrides(db)) && scoped.scope === 'tenant') {
+    const grupos = await all(db, `
+      SELECT rowid AS id_grupo_enc, letra
+      FROM tenant_grupos_encargos
+      WHERE id_perfil = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY letra`, [scoped.value]);
+    const now = new Date().toISOString();
+    for (const grupo of grupos) {
+      await run(db, `
+        UPDATE tenant_itens_encargo
+        SET tenant_override_status='deleted', tenant_updated_at=?
+        WHERE id_grupo_enc = ? AND COALESCE(tenant_override_status,'active')='active'`, [now, grupo.id_grupo_enc]);
+      const valor = toNum(totais[grupo.letra]);
+      if (valor) {
+        await insertTenantItem(db, {
+          id_grupo_enc: grupo.id_grupo_enc,
+          descricao: `Grupo ${grupo.letra} - total importado`,
+          base_legal: 'Tabela referencial de encargos sociais',
+          percentual: valor,
+          observacoes: 'Importado pelo backend Node SaaS.',
+          ordem: 1,
+        });
+      }
+    }
+    await calcEncargos(db, idPerfil);
+    return getPerfil(db, idPerfil);
+  }
   await ensureSchema(db);
   const grupos = await all(db, 'SELECT * FROM grupos_encargos WHERE id_perfil = ?', [idPerfil]);
   for (const grupo of grupos) {
@@ -744,8 +795,6 @@ async function replacePerfilTotais(db, idPerfil, totais = {}) {
 }
 
 async function upsertPerfilComTotais(db, data = {}, totais = {}) {
-  await ensureSchema(db);
-  const perfilExistente = await findPerfil(db, data);
   const payload = {
     nome_perfil: data.nome_perfil,
     categoria: data.categoria || 'Horista',
@@ -761,6 +810,19 @@ async function upsertPerfilComTotais(db, data = {}, totais = {}) {
     vigencia_fim: data.vigencia_fim || null,
     encargo_original_percentual: data.encargo_original_percentual,
   };
+  if (await hasTenantEncargosOverrides(db)) {
+    const perfilExistente = await findTenantPerfil(db, data);
+    let perfil;
+    if (perfilExistente) {
+      await updateTenantPerfil(db, perfilExistente.rowid, payload);
+      perfil = await getPerfil(db, `tenant:${perfilExistente.rowid}`);
+    } else {
+      perfil = await createPerfil(db, payload);
+    }
+    return replacePerfilTotais(db, perfil.id_perfil, totais);
+  }
+  await ensureSchema(db);
+  const perfilExistente = await findPerfil(db, data);
   const perfil = perfilExistente
     ? await updatePerfil(db, perfilExistente.id_perfil, payload)
     : await createPerfil(db, payload);

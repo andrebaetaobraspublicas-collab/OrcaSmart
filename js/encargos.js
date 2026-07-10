@@ -1,6 +1,24 @@
 /* js/encargos.js — Módulo 3: Encargos Sociais (SINAPI 27 UFs) */
 
 /* ── API helpers ────────────────────────────────────────────────────────────── */
+async function fetchEncargosImport(url, formData, timeoutMs = 180000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { method: 'POST', body: formData, signal: controller.signal });
+    const data = await r.json().catch(() => ({ erro: 'Resposta invalida do servidor.' }));
+    if (!r.ok) throw new Error(data.erro || `Erro ${r.status}`);
+    return data;
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('A importacao demorou demais e foi interrompida. Tente novamente com um arquivo menor ou verifique o servidor.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 Object.assign(API, {
   encargos: {
     perfis: {
@@ -51,6 +69,12 @@ Object.assign(API, {
     },
   },
 });
+
+API.encargos.perfis.importarSeinfra = (formData) => fetchEncargosImport(`${API.BASE}/encargos/importar-seinfra`, formData);
+API.encargos.perfis.importarSudecap = (formData) => fetchEncargosImport(`${API.BASE}/encargos/importar-sudecap`, formData);
+API.encargos.perfis.importarSinapi = (formData) => fetchEncargosImport(`${API.BASE}/encargos/importar-sinapi`, formData);
+API.encargos.perfis.importarSicro = (formData) => fetchEncargosImport(`${API.BASE}/encargos/importar-sicro`, formData);
+API.encargos.perfis.importarGoinfra = (formData) => fetchEncargosImport(`${API.BASE}/encargos/importar-goinfra`, formData);
 
 const COR_G = { A:'var(--c-primary)', B:'var(--c-success)', C:'var(--c-warning)', D:'var(--c-text-2)' };
 const BG_G  = { A:'var(--c-primary-l)', B:'var(--c-success-l)', C:'var(--c-warning-l)', D:'#f8fafc' };
