@@ -1214,11 +1214,6 @@ const AdminPage = {
     const runPhase4MysqlMigration = document.getElementById('adminRunPhase4MysqlMigration');
     if (runPhase4MysqlMigration) {
       runPhase4MysqlMigration.addEventListener('click', async () => {
-        const typed = window.prompt('Digite MIGRAR_MYSQL_ORCASMART2 para executar a carga real no banco MySQL de teste.');
-        if (typed !== 'MIGRAR_MYSQL_ORCASMART2') {
-          Toast.warning('Migracao MySQL cancelada: frase de confirmacao invalida.');
-          return;
-        }
         const ok = await Confirm.ask(
           'Executar a migracao real para MySQL agora? O processo recria as tabelas MySQL de teste e carrega master, catalogo e tenants. O runtime continua em SQLite ate uma virada separada.',
           { title: 'Executar migracao MySQL', okText: 'Executar migracao', okClass: 'btn btn-danger' }
