@@ -73,6 +73,7 @@ const API = {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/phase2/tenants/audit${q ? '?' + q : ''}`);
     },
+    runPhase4MysqlReadiness: () => API.post('/admin/phase4/mysql-readiness', {}),
     runPhase4Rehearsal: () => API.post('/admin/phase4/rehearsal', {}),
     phase4ReportDownload: (name) => `${API.BASE}/admin/phase4/reports/${encodeURIComponent(name)}/download`,
   },

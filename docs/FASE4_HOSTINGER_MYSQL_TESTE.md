@@ -41,10 +41,14 @@ No diretorio do OrçaSmart2, execute:
 npm run phase4:mysql-readiness
 ```
 
+O mesmo teste tambem pode ser executado pela interface administrativa em **Admin > Saude > Fase 4 - MySQL > Testar conexao**. Esse comando apenas valida variaveis e conexao, gera relatorio e nao altera dados no SQLite nem no MySQL.
+
 O comando gera:
 
 - `docs/generated/fase4-mysql-readiness.json`
 - `docs/generated/fase4-mysql-readiness.md`
+
+Na tela **Admin > Saude**, os botoes `Baixar MD` e `JSON` permitem baixar o ultimo relatorio de prontidao MySQL gerado.
 
 Se a conexao estiver correta, o relatorio informara a versao do servidor MySQL/MariaDB e as tabelas master ja existentes.
 

@@ -407,6 +407,8 @@ const AdminPage = {
     const missing = health.tenant_files ? health.tenant_files.missing : 0;
     const phase4 = health.phase4 || {};
     const mysql = phase4.mysql || {};
+    const mysqlReadiness = phase4.mysql_readiness || {};
+    const mysqlReadinessConnection = mysqlReadiness.connection || {};
     const rehearsal = phase4.rehearsal || {};
     const cutover = phase4.cutover || {};
     const rehearsalSteps = Array.isArray(rehearsal.steps) ? rehearsal.steps : [];
@@ -467,7 +469,12 @@ const AdminPage = {
             <h2>Fase 4 - MySQL</h2>
             <p class="text-3 text-sm">Diagnostico do motor de banco sem alterar as rotas de negocio.</p>
           </div>
-          ${phase4.mysqlReady ? this.badge('MySQL pronto', 'green') : this.badge(phase4.mysqlEnabled ? 'MySQL pendente' : 'SQLite ativo', phase4.mysqlEnabled ? 'yellow' : 'blue')}
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${phase4.mysqlReady ? this.badge('MySQL pronto', 'green') : this.badge(phase4.mysqlEnabled ? 'MySQL pendente' : 'SQLite ativo', phase4.mysqlEnabled ? 'yellow' : 'blue')}
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('mysql-readiness-md')}" download>Baixar MD</a>
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('mysql-readiness-json')}" download>JSON</a>
+            <button class="btn btn-primary btn-sm" id="adminRunPhase4MysqlReadiness">${Utils.icons.refresh} Testar conexao</button>
+          </div>
         </div>
         <div class="section-card-body" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
           <div>
@@ -505,6 +512,26 @@ const AdminPage = {
           <div>
             <div class="text-3 text-sm">Politica atual</div>
             <div class="fw-500">${Utils.esc(phase4.runtimePolicy || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Ultimo teste MySQL</div>
+            <div class="fw-500">${Utils.esc(this.fmtDateTime(mysqlReadiness.generated_at))}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Resultado do teste</div>
+            <div class="fw-500">${
+              !mysqlReadiness.report_exists
+                ? this.badge('Nao testado', 'gray')
+                : mysqlReadiness.connection_ok
+                ? this.badge('Conexao OK', 'green')
+                : mysqlReadinessConnection.skipped
+                  ? this.badge('Pendente', 'yellow')
+                  : this.badge('Nao conectado', 'red')
+            }</div>
+          </div>
+          <div style="grid-column:span 2">
+            <div class="text-3 text-sm">Detalhe do teste</div>
+            <div class="fw-500">${Utils.esc(mysqlReadinessConnection.reason || mysqlReadinessConnection.error || mysqlReadiness.error || '-')}</div>
           </div>
           ${phase4.mysqlError ? `<div style="grid-column:1 / -1">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(phase4.mysqlError)}</span></div>` : ''}
         </div>
@@ -1095,6 +1122,35 @@ const AdminPage = {
         } catch (err) {
           Toast.error(err.message || 'Falha ao executar ensaio da Fase 4.');
           runPhase4Rehearsal.disabled = false;
+        }
+      });
+    }
+    const runPhase4MysqlReadiness = document.getElementById('adminRunPhase4MysqlReadiness');
+    if (runPhase4MysqlReadiness) {
+      runPhase4MysqlReadiness.addEventListener('click', async () => {
+        const ok = await Confirm.ask(
+          'Testar a configuracao e a conexao MySQL agora? A operacao apenas gera relatorio e nao altera dados.',
+          { title: 'Testar conexao MySQL', okText: 'Testar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        runPhase4MysqlReadiness.disabled = true;
+        runPhase4MysqlReadiness.textContent = 'Testando...';
+        try {
+          const result = await API.admin.runPhase4MysqlReadiness();
+          if (result && result.report && result.report.connection_ok) {
+            Toast.success('Conexao MySQL validada.');
+          } else if (result && result.report && result.report.connection && result.report.connection.skipped) {
+            Toast.warning('Teste MySQL pendente: configure as variaveis de ambiente.');
+          } else {
+            Toast.warning('Teste MySQL concluido com pendencias. Veja a aba Saude.');
+          }
+          await this.render();
+          this.state.tab = 'saude';
+          document.getElementById('adminPanelBody').innerHTML = this.renderHealth();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao testar MySQL.');
+          runPhase4MysqlReadiness.disabled = false;
         }
       });
     }

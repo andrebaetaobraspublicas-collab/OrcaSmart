@@ -38,6 +38,8 @@ function readJsonFile(filePath) {
 }
 
 const PHASE4_REPORT_FILES = Object.freeze({
+  'mysql-readiness-json': 'fase4-mysql-readiness.json',
+  'mysql-readiness-md': 'fase4-mysql-readiness.md',
   'migration-rehearsal-json': 'fase4-migration-rehearsal.json',
   'migration-rehearsal-md': 'fase4-migration-rehearsal.md',
   'cutover-readiness-json': 'fase4-cutover-readiness.json',
@@ -111,6 +113,49 @@ function phase4CutoverStatus(options = {}) {
   };
 }
 
+function phase4MysqlReadinessStatus(options = {}) {
+  const reportPath = phase4ReportPath('mysql-readiness-json', options);
+  const report = readJsonFile(reportPath);
+  if (!report.exists) {
+    return {
+      ok: false,
+      connection_ok: false,
+      report_exists: false,
+      report_path: reportPath,
+      generated_at: null,
+      mysql: null,
+      environment: null,
+      connection: null,
+      error: null,
+    };
+  }
+  if (report.error) {
+    return {
+      ok: false,
+      connection_ok: false,
+      report_exists: true,
+      report_path: reportPath,
+      generated_at: null,
+      mysql: null,
+      environment: null,
+      connection: null,
+      error: report.error,
+    };
+  }
+  const connection = report.data && report.data.connection ? report.data.connection : {};
+  return {
+    ok: Boolean(connection.ok || connection.skipped),
+    connection_ok: Boolean(connection.ok),
+    report_exists: true,
+    report_path: reportPath,
+    generated_at: report.data ? report.data.generated_at || null : null,
+    mysql: report.data ? report.data.mysql || null : null,
+    environment: report.data ? report.data.environment || null : null,
+    connection,
+    error: connection.error || null,
+  };
+}
+
 function phase4RehearsalStatus(options = {}) {
   const reportPath = phase4ReportPath('migration-rehearsal-json', options);
   const report = readJsonFile(reportPath);
@@ -145,6 +190,50 @@ function phase4RehearsalStatus(options = {}) {
     steps: report.data && Array.isArray(report.data.steps) ? report.data.steps : [],
     error: null,
   };
+}
+
+async function runPhase4MysqlReadiness(master, actor, options = {}) {
+  const appDir = options.appDir || process.cwd();
+  const scriptPath = path.join(appDir, 'scripts', 'phase4MysqlReadiness.js');
+  if (!fs.existsSync(scriptPath)) {
+    const err = new Error('Script de prontidao MySQL nao encontrado.');
+    err.status = 500;
+    throw err;
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: appDir,
+    env: process.env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: Number(options.phase4MysqlReadinessTimeoutMs || 60000),
+    maxBuffer: 1024 * 1024 * 2,
+  });
+  const report = phase4MysqlReadinessStatus(options);
+  const response = {
+    ok: result.status === 0,
+    exit_code: typeof result.status === 'number' ? result.status : 1,
+    signal: result.signal || null,
+    stdout: String(result.stdout || '').slice(-4000),
+    stderr: String(result.stderr || '').slice(-4000),
+    error: result.error ? result.error.message : null,
+    report,
+  };
+
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.phase4.mysql_readiness',
+    entidade_tipo: 'phase4',
+    entidade_id: 'mysql-readiness',
+    antes: null,
+    depois: {
+      ok: response.ok,
+      exit_code: response.exit_code,
+      connection_ok: report.connection_ok,
+      generated_at: report.generated_at,
+    },
+  });
+
+  return response;
 }
 
 async function runPhase4Rehearsal(master, actor, options = {}) {
@@ -304,6 +393,7 @@ async function systemHealth(master, options = {}) {
   const missingTenantDbs = tenantFiles.filter(item => !item.db.exists);
   const phase4 = typeof options.phase4Status === 'function' ? options.phase4Status() : null;
   if (phase4) {
+    phase4.mysql_readiness = phase4MysqlReadinessStatus(options);
     phase4.cutover = phase4CutoverStatus(options);
     phase4.rehearsal = phase4RehearsalStatus(options);
   }
@@ -857,6 +947,7 @@ module.exports = {
   listAuditLogs,
   auditPhase2Tenants,
   migratePhase2Tenants,
+  runPhase4MysqlReadiness,
   runPhase4Rehearsal,
   getPhase4ReportFile,
 };
