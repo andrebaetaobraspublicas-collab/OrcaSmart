@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-tenant-read-catalog';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-qualify-catalog-reads';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -545,7 +545,7 @@ function runTenantMethod(method, sql, params, cb) {
       if (cb) requestDb.run({ dbPath }, () => cb.call(context, err, result));
     });
   };
-  const execute = () => db[method](sql, params || [], function onDbResult(err, result) {
+  const execute = (sqlToRun = sql) => db[method](sqlToRun, params || [], function onDbResult(err, result) {
     finish(this, err, result);
   });
 
@@ -555,7 +555,8 @@ function runTenantMethod(method, sql, params, cb) {
 
   return db.run('ATTACH DATABASE ? AS catalog', [SHARED_CATALOG_DB_PATH], (attachErr) => {
     if (attachErr) return execute();
-    return db[method](sql, params || [], function onCatalogDbResult(err, result) {
+    const sqlToRun = qualifyCatalogTablesForAttachedCatalog(sql);
+    return db[method](sqlToRun, params || [], function onCatalogDbResult(err, result) {
       const context = this;
       db.run('DETACH DATABASE catalog', [], () => finish(context, err, result));
     });
@@ -573,6 +574,21 @@ function sqlReferencesCatalogTable(sql) {
     const pattern = new RegExp(`\\b(FROM|JOIN|UPDATE|INTO|REFERENCES)\\s+(?:main\\.)?(?:["'\`\\[])?${escaped}(?:["'\`\\]])?\\b`, 'i');
     return pattern.test(text);
   });
+}
+
+function qualifyCatalogTablesForAttachedCatalog(sql) {
+  let text = String(sql || '');
+  for (const table of CATALOG_TABLES) {
+    const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const quotedPattern = new RegExp(`\\b(FROM|JOIN)\\s+(?!catalog\\.)(?!main\\.)(["'\`])${escaped}\\2\\b`, 'gi');
+    const bracketPattern = new RegExp(`\\b(FROM|JOIN)\\s+(?!catalog\\.)(?!main\\.)\\[${escaped}\\]\\b`, 'gi');
+    const barePattern = new RegExp(`\\b(FROM|JOIN)\\s+(?!catalog\\.)(?!main\\.)${escaped}\\b`, 'gi');
+    text = text
+      .replace(quotedPattern, (_match, keyword, quote) => `${keyword} catalog.${quote}${table}${quote}`)
+      .replace(bracketPattern, (_match, keyword) => `${keyword} catalog.[${table}]`)
+      .replace(barePattern, (_match, keyword) => `${keyword} catalog.${table}`);
+  }
+  return text;
 }
 
 function runSharedCatalogReadMethod(method, sql, params, cb) {
@@ -645,7 +661,8 @@ function runTenantCatalogReadMethod(method, sql, params, cb) {
           finish(this, err, result);
         });
       }
-      return db[method](sql, params || [], function onCatalogRead(err, result) {
+      const sqlToRun = qualifyCatalogTablesForAttachedCatalog(sql);
+      return db[method](sqlToRun, params || [], function onCatalogRead(err, result) {
         const context = this;
         db.run('DETACH DATABASE catalog', [], () => finish(context, err, result));
       });
