@@ -73,6 +73,7 @@ const API = {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/phase2/tenants/audit${q ? '?' + q : ''}`);
     },
+    runPhase4Rehearsal: () => API.post('/admin/phase4/rehearsal', {}),
   },
 
   // Estados e Municípios

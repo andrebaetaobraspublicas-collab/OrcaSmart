@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { spawnSync } = require('child_process');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
 
@@ -109,6 +110,50 @@ function phase4RehearsalStatus(options = {}) {
     steps: report.data && Array.isArray(report.data.steps) ? report.data.steps : [],
     error: null,
   };
+}
+
+async function runPhase4Rehearsal(master, actor, options = {}) {
+  const appDir = options.appDir || process.cwd();
+  const scriptPath = path.join(appDir, 'scripts', 'phase4MigrationRehearsal.js');
+  if (!fs.existsSync(scriptPath)) {
+    const err = new Error('Script de ensaio da Fase 4 nao encontrado.');
+    err.status = 500;
+    throw err;
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: appDir,
+    env: process.env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: Number(options.phase4RehearsalTimeoutMs || 180000),
+    maxBuffer: 1024 * 1024 * 5,
+  });
+  const report = phase4RehearsalStatus(options);
+  const response = {
+    ok: result.status === 0,
+    exit_code: typeof result.status === 'number' ? result.status : 1,
+    signal: result.signal || null,
+    stdout: String(result.stdout || '').slice(-8000),
+    stderr: String(result.stderr || '').slice(-8000),
+    error: result.error ? result.error.message : null,
+    report,
+  };
+
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.phase4.rehearsal',
+    entidade_tipo: 'phase4',
+    entidade_id: 'mysql-rehearsal',
+    antes: null,
+    depois: {
+      ok: response.ok,
+      exit_code: response.exit_code,
+      cutover_ready: report.cutover_ready,
+      generated_at: report.generated_at,
+    },
+  });
+
+  return response;
 }
 
 function openReadOnly(sqlite3, dbPath) {
@@ -777,4 +822,5 @@ module.exports = {
   listAuditLogs,
   auditPhase2Tenants,
   migratePhase2Tenants,
+  runPhase4Rehearsal,
 };

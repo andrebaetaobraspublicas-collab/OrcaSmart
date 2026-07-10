@@ -96,5 +96,9 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.migratePhase2Tenants(master, req.body || {}, options));
   }));
 
+  router.post('/phase4/rehearsal', asyncHandler(async (req, res) => {
+    res.json(await service.runPhase4Rehearsal(master, req.user, options));
+  }));
+
   return router;
 };

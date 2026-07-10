@@ -516,7 +516,10 @@ const AdminPage = {
             <h2>Ensaio completo da migracao MySQL</h2>
             <p class="text-3 text-sm">Execucao auditavel dos passos de preparacao, dry-run e validacao antes da virada.</p>
           </div>
-          ${rehearsal.ok ? this.badge(rehearsal.cutover_ready ? 'Pronto para virada' : 'Ensaio OK, virada pendente', rehearsal.cutover_ready ? 'green' : 'yellow') : this.badge('Ensaio pendente', 'red')}
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${rehearsal.ok ? this.badge(rehearsal.cutover_ready ? 'Pronto para virada' : 'Ensaio OK, virada pendente', rehearsal.cutover_ready ? 'green' : 'yellow') : this.badge('Ensaio pendente', 'red')}
+            <button class="btn btn-primary btn-sm" id="adminRunPhase4Rehearsal">${Utils.icons.refresh} Executar ensaio</button>
+          </div>
         </div>
         <div class="section-card-body">
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">
@@ -1062,6 +1065,33 @@ const AdminPage = {
         }
       });
     });
+    const runPhase4Rehearsal = document.getElementById('adminRunPhase4Rehearsal');
+    if (runPhase4Rehearsal) {
+      runPhase4Rehearsal.addEventListener('click', async () => {
+        const ok = await Confirm.ask(
+          'Executar o ensaio completo da Fase 4 agora? A operacao pode levar alguns segundos e nao ativa MySQL no runtime.',
+          { title: 'Executar ensaio MySQL', okText: 'Executar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        runPhase4Rehearsal.disabled = true;
+        runPhase4Rehearsal.textContent = 'Executando...';
+        try {
+          const result = await API.admin.runPhase4Rehearsal();
+          if (result && result.ok) {
+            Toast.success('Ensaio da Fase 4 executado.');
+          } else {
+            Toast.warning('Ensaio concluido com pendencias. Veja a aba Saude.');
+          }
+          await this.render();
+          this.state.tab = 'saude';
+          document.getElementById('adminPanelBody').innerHTML = this.renderHealth();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao executar ensaio da Fase 4.');
+          runPhase4Rehearsal.disabled = false;
+        }
+      });
+    }
   },
 };
 
