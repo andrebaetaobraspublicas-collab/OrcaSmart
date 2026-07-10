@@ -178,6 +178,21 @@ npm run phase4:cutover-readiness
 
 O resultado so deve ser considerado pronto quando todas as checagens aparecerem como OK. Enquanto qualquer item estiver pendente, mantenha o runtime em SQLite.
 
-## 8. Premissa importante
+## 8. Ensaio completo auditavel
+
+Para executar a sequencia completa em modo seguro, sem habilitar MySQL no runtime e sem gravar dados nas etapas de migracao, use:
+
+```bash
+npm run phase4:rehearsal
+```
+
+O comando gera:
+
+- `docs/generated/fase4-migration-rehearsal.json`
+- `docs/generated/fase4-migration-rehearsal.md`
+
+Use esse relatorio como checklist operacional antes de qualquer mudanca de variavel de runtime.
+
+## 9. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.

@@ -1,0 +1,130 @@
+{
+  "generated_at": "2026-07-10T01:47:14.565Z",
+  "ok": true,
+  "cutover_ready": false,
+  "steps": [
+    {
+      "key": "audit_model",
+      "label": "Auditoria do modelo SQLite",
+      "command": "node scripts/phase4DataModelAudit.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 1018,
+      "stdout": "{\n  \"ok\": true,\n  \"json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-data-model-inventory.json\",\n  \"markdown\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-data-model-inventory.md\",\n  \"tables\": 53,\n  \"pending\": []\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "generate_schema",
+      "label": "Geracao do schema MySQL",
+      "command": "node scripts/phase4GenerateMysqlSchema.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 260,
+      "stdout": "{\n  \"ok\": true,\n  \"outputDir\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\database\\\\mysql\",\n  \"summary\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-mysql-schema-summary.md\",\n  \"files\": [\n    {\n      \"file\": \"00_master_saas.sql\",\n      \"domain\": \"master_saas\",\n      \"tables\": 4\n    },\n    {\n      \"file\": \"10_catalogo_global.sql\",\n      \"domain\": \"catalogo_global\",\n      \"tables\": 27\n    },\n    {\n      \"file\": \"20_tenant_privado.sql\",\n      \"domain\": \"tenant_privado\",\n      \"tables\": 7\n    },\n    {\n      \"file\": \"30_override_tenant.sql\",\n      \"domain\": \"override_tenant\",\n      \"tables\": 13\n    },\n    {\n      \"file\": \"40_metadados.sql\",\n      \"domain\": \"metadados\",\n      \"tables\": 2\n    }\n  ]\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "validate_schema",
+      "label": "Validacao do schema MySQL",
+      "command": "node scripts/phase4ValidateMysqlSchema.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 192,
+      "stdout": "{\n  \"ok\": true,\n  \"tables\": 53,\n  \"issues\": [],\n  \"report\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-mysql-schema-validation.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "mysql_readiness",
+      "label": "Prontidao de conexao MySQL",
+      "command": "node scripts/phase4MysqlReadiness.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 124,
+      "stdout": "{\n  \"ok\": true,\n  \"connection_ok\": false,\n  \"skipped\": true,\n  \"missing\": [\n    \"MYSQL_HOST\",\n    \"MYSQL_USER\",\n    \"MYSQL_PASSWORD\",\n    \"MYSQL_DATABASE\"\n  ],\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-mysql-readiness.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-mysql-readiness.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "master_dry_run",
+      "label": "Plano de migracao do master",
+      "command": "node scripts/phase4MigrateMasterToMysql.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 224,
+      "stdout": "{\n  \"ok\": true,\n  \"mode\": \"dry-run\",\n  \"sqlite_counts\": {\n    \"tenants\": 5,\n    \"users\": 5,\n    \"subscriptions\": 5,\n    \"admin_audit_log\": 0\n  },\n  \"validation\": {\n    \"ok\": true,\n    \"issues\": []\n  },\n  \"mysql_executed\": false,\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-master-migration-plan.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-master-migration-plan.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "catalog_dry_run",
+      "label": "Plano de migracao do catalogo global",
+      "command": "node scripts/phase4MigrateCatalogToMysql.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 309,
+      "stdout": "{\n  \"ok\": true,\n  \"mode\": \"dry-run\",\n  \"sqlite_catalog_path\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\shared_catalog.db\",\n  \"tables\": 27,\n  \"total_rows\": 811778,\n  \"validation\": {\n    \"ok\": true,\n    \"issues\": []\n  },\n  \"mysql_executed\": false,\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-catalog-migration-plan.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-catalog-migration-plan.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "tenant_dry_run",
+      "label": "Plano de migracao dos tenants",
+      "command": "node scripts/phase4MigrateTenantToMysql.js --all",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 332,
+      "stdout": "{\n  \"ok\": true,\n  \"mode\": \"dry-run\",\n  \"tenants\": [\n    1,\n    2,\n    3,\n    4,\n    5\n  ],\n  \"total_private_rows\": 9111,\n  \"total_override_rows\": 0,\n  \"validation\": {\n    \"ok\": true,\n    \"issues\": []\n  },\n  \"mysql_executed\": false,\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-tenant-migration-plan.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-tenant-migration-plan.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "master_parity",
+      "label": "Validacao de paridade do master",
+      "command": "node scripts/phase4ValidateMasterMysql.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 308,
+      "stdout": "{\n  \"ok\": true,\n  \"skipped\": true,\n  \"missing\": [\n    \"MYSQL_HOST\",\n    \"MYSQL_USER\",\n    \"MYSQL_PASSWORD\",\n    \"MYSQL_DATABASE\"\n  ],\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-master-mysql-validation.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-master-mysql-validation.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "catalog_parity",
+      "label": "Validacao de paridade do catalogo",
+      "command": "node scripts/phase4ValidateCatalogMysql.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 19222,
+      "stdout": "{\n  \"ok\": true,\n  \"skipped\": true,\n  \"missing\": [\n    \"MYSQL_HOST\",\n    \"MYSQL_USER\",\n    \"MYSQL_PASSWORD\",\n    \"MYSQL_DATABASE\"\n  ],\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-catalog-mysql-validation.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-catalog-mysql-validation.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "tenant_parity",
+      "label": "Validacao de paridade dos tenants",
+      "command": "node scripts/phase4ValidateTenantMysql.js --all",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 497,
+      "stdout": "{\n  \"ok\": true,\n  \"skipped\": true,\n  \"missing\": [\n    \"MYSQL_HOST\",\n    \"MYSQL_USER\",\n    \"MYSQL_PASSWORD\",\n    \"MYSQL_DATABASE\"\n  ],\n  \"tenants\": [\n    1,\n    2,\n    3,\n    4,\n    5\n  ],\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-tenant-mysql-validation.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-tenant-mysql-validation.md\"\n}",
+      "stderr": "",
+      "error": null
+    },
+    {
+      "key": "cutover_readiness",
+      "label": "Gate consolidado de virada",
+      "command": "node scripts/phase4CutoverReadiness.js",
+      "exit_code": 0,
+      "ok": true,
+      "duration_ms": 119,
+      "stdout": "{\n  \"ok\": true,\n  \"ready\": false,\n  \"checks\": [\n    {\n      \"key\": \"mysql_connection\",\n      \"ok\": false,\n      \"skipped\": true\n    },\n    {\n      \"key\": \"master_parity\",\n      \"ok\": false,\n      \"skipped\": true\n    },\n    {\n      \"key\": \"catalog_parity\",\n      \"ok\": false,\n      \"skipped\": true\n    },\n    {\n      \"key\": \"tenant_parity\",\n      \"ok\": false,\n      \"skipped\": true\n    }\n  ],\n  \"report_json\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-cutover-readiness.json\",\n  \"report_md\": \"C:\\\\SistemaOrcamentoObras\\\\saas\\\\docs\\\\generated\\\\fase4-cutover-readiness.md\"\n}",
+      "stderr": "",
+      "error": null
+    }
+  ],
+  "report_json": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-migration-rehearsal.json",
+  "report_md": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-migration-rehearsal.md"
+}
