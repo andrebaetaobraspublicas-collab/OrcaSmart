@@ -23,7 +23,8 @@
         "phase4:migrate-tenant-mysql": "node scripts/phase4MigrateTenantToMysql.js",
         "phase4:validate-tenant-mysql": "node scripts/phase4ValidateTenantMysql.js",
         "phase4:cutover-readiness": "node scripts/phase4CutoverReadiness.js",
-        "phase4:rehearsal": "node scripts/phase4MigrationRehearsal.js"
+        "phase4:rehearsal": "node scripts/phase4MigrationRehearsal.js",
+        "phase4:execute-mysql": "node scripts/phase4ExecuteMysqlMigration.js"
     },
     "dependencies": {
         "cors": "^2.8.5",

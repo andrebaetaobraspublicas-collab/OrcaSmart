@@ -199,6 +199,37 @@ O comando gera:
 
 Use esse relatorio como checklist operacional antes de qualquer mudanca de variavel de runtime.
 
-## 9. Premissa importante
+## 9. Executar a migracao real no MySQL de teste
+
+Depois que a conexao MySQL estiver configurada e validada, a carga real pode ser feita pela interface administrativa:
+
+```text
+Admin > Saude > Execucao da migracao MySQL > Executar migracao
+```
+
+Por seguranca, o sistema exige a frase:
+
+```text
+MIGRAR_MYSQL_ORCASMART2
+```
+
+Essa acao executa a carga real do master SaaS, catalogo global e tenants no banco MySQL de teste. Por padrao, ela recria as tabelas MySQL antes da carga, para manter o teste reexecutavel e evitar duplicidades.
+
+O mesmo procedimento pode ser executado por linha de comando:
+
+```bash
+npm run phase4:execute-mysql -- --confirm=MIGRAR_MYSQL_ORCASMART2 --reset
+```
+
+O comando gera:
+
+- `docs/generated/fase4-mysql-execution.json`
+- `docs/generated/fase4-mysql-execution.md`
+
+Se alguma variavel MySQL estiver ausente, a execucao sera bloqueada antes de alterar qualquer dado e o relatorio mostrara os motivos do bloqueio.
+
+Importante: essa carga ainda nao muda automaticamente o runtime do OrçaSmart2. A troca para leitura/escrita em MySQL deve ser feita apenas depois que o relatorio de prontidao indicar que master, catalogo e tenants foram migrados e validados.
+
+## 10. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.

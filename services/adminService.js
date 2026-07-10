@@ -40,6 +40,8 @@ function readJsonFile(filePath) {
 const PHASE4_REPORT_FILES = Object.freeze({
   'mysql-readiness-json': 'fase4-mysql-readiness.json',
   'mysql-readiness-md': 'fase4-mysql-readiness.md',
+  'mysql-execution-json': 'fase4-mysql-execution.json',
+  'mysql-execution-md': 'fase4-mysql-execution.md',
   'migration-rehearsal-json': 'fase4-migration-rehearsal.json',
   'migration-rehearsal-md': 'fase4-migration-rehearsal.md',
   'cutover-readiness-json': 'fase4-cutover-readiness.json',
@@ -153,6 +155,48 @@ function phase4MysqlReadinessStatus(options = {}) {
     environment: report.data ? report.data.environment || null : null,
     connection,
     error: connection.error || null,
+  };
+}
+
+function phase4MysqlExecutionStatus(options = {}) {
+  const reportPath = phase4ReportPath('mysql-execution-json', options);
+  const report = readJsonFile(reportPath);
+  if (!report.exists) {
+    return {
+      ok: false,
+      cutover_ready: false,
+      report_exists: false,
+      report_path: reportPath,
+      generated_at: null,
+      reset: false,
+      blocked_reasons: [],
+      steps: [],
+      error: null,
+    };
+  }
+  if (report.error) {
+    return {
+      ok: false,
+      cutover_ready: false,
+      report_exists: true,
+      report_path: reportPath,
+      generated_at: null,
+      reset: false,
+      blocked_reasons: [],
+      steps: [],
+      error: report.error,
+    };
+  }
+  return {
+    ok: Boolean(report.data && report.data.ok),
+    cutover_ready: Boolean(report.data && report.data.cutover_ready),
+    report_exists: true,
+    report_path: reportPath,
+    generated_at: report.data ? report.data.generated_at || null : null,
+    reset: Boolean(report.data && report.data.reset),
+    blocked_reasons: report.data && Array.isArray(report.data.blocked_reasons) ? report.data.blocked_reasons : [],
+    steps: report.data && Array.isArray(report.data.steps) ? report.data.steps : [],
+    error: null,
   };
 }
 
@@ -274,6 +318,59 @@ async function runPhase4CutoverReadiness(master, actor, options = {}) {
       exit_code: response.exit_code,
       ready: report.ready,
       generated_at: report.generated_at,
+    },
+  });
+
+  return response;
+}
+
+async function runPhase4MysqlMigration(master, actor, data = {}, options = {}) {
+  if (data.confirm !== 'MIGRAR_MYSQL_ORCASMART2') {
+    const err = new Error('Confirme a migracao enviando confirm=MIGRAR_MYSQL_ORCASMART2.');
+    err.status = 400;
+    throw err;
+  }
+  const appDir = options.appDir || process.cwd();
+  const scriptPath = path.join(appDir, 'scripts', 'phase4ExecuteMysqlMigration.js');
+  if (!fs.existsSync(scriptPath)) {
+    const err = new Error('Script de execucao da migracao MySQL nao encontrado.');
+    err.status = 500;
+    throw err;
+  }
+
+  const args = [scriptPath, '--confirm=MIGRAR_MYSQL_ORCASMART2'];
+  if (data.reset !== false) args.push('--reset');
+  const result = spawnSync(process.execPath, args, {
+    cwd: appDir,
+    env: process.env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: Number(options.phase4MysqlMigrationTimeoutMs || 1800000),
+    maxBuffer: 1024 * 1024 * 20,
+  });
+  const report = phase4MysqlExecutionStatus(options);
+  const response = {
+    ok: result.status === 0,
+    exit_code: typeof result.status === 'number' ? result.status : 1,
+    signal: result.signal || null,
+    stdout: String(result.stdout || '').slice(-8000),
+    stderr: String(result.stderr || '').slice(-8000),
+    error: result.error ? result.error.message : null,
+    report,
+  };
+
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.phase4.mysql_migration_execute',
+    entidade_tipo: 'phase4',
+    entidade_id: 'mysql-execution',
+    antes: null,
+    depois: {
+      ok: response.ok,
+      exit_code: response.exit_code,
+      reset: report.reset,
+      cutover_ready: report.cutover_ready,
+      generated_at: report.generated_at,
+      blocked_reasons: report.blocked_reasons,
     },
   });
 
@@ -438,6 +535,7 @@ async function systemHealth(master, options = {}) {
   const phase4 = typeof options.phase4Status === 'function' ? options.phase4Status() : null;
   if (phase4) {
     phase4.mysql_readiness = phase4MysqlReadinessStatus(options);
+    phase4.mysql_execution = phase4MysqlExecutionStatus(options);
     phase4.cutover = phase4CutoverStatus(options);
     phase4.rehearsal = phase4RehearsalStatus(options);
   }
@@ -992,6 +1090,7 @@ module.exports = {
   auditPhase2Tenants,
   migratePhase2Tenants,
   runPhase4MysqlReadiness,
+  runPhase4MysqlMigration,
   runPhase4CutoverReadiness,
   runPhase4Rehearsal,
   getPhase4ReportFile,

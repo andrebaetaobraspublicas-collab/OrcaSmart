@@ -409,8 +409,17 @@ const AdminPage = {
     const mysql = phase4.mysql || {};
     const mysqlReadiness = phase4.mysql_readiness || {};
     const mysqlReadinessConnection = mysqlReadiness.connection || {};
+    const mysqlExecution = phase4.mysql_execution || {};
     const rehearsal = phase4.rehearsal || {};
     const cutover = phase4.cutover || {};
+    const mysqlExecutionSteps = Array.isArray(mysqlExecution.steps) ? mysqlExecution.steps : [];
+    const mysqlExecutionRows = mysqlExecutionSteps.map(step => `
+      <tr>
+        <td class="fw-500">${Utils.esc(step.label || step.key || '-')}</td>
+        <td>${step.ok ? this.badge('OK', 'green') : step.skipped ? this.badge('Ignorada', 'yellow') : this.badge('Falha', 'red')}</td>
+        <td>${this.fmtInt(step.duration_ms)} ms</td>
+        <td class="text-3 text-sm">${Utils.esc(step.command || '')}</td>
+      </tr>`).join('');
     const rehearsalSteps = Array.isArray(rehearsal.steps) ? rehearsal.steps : [];
     const rehearsalRows = rehearsalSteps.map(step => `
       <tr>
@@ -459,6 +468,53 @@ const AdminPage = {
           <div>
             <div class="text-3 text-sm">Tenants monitorados</div>
             <div class="fw-500">${this.fmtInt(health.tenant_files && health.tenant_files.total)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px;border-color:#fed7aa">
+        <div class="section-card-header">
+          <div>
+            <h2>Execucao da migracao MySQL</h2>
+            <p class="text-3 text-sm">Carga real do master SaaS, catalogo comum e tenants no banco MySQL de teste. Nao ativa o runtime automaticamente.</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${
+              mysqlExecution.ok
+                ? this.badge(mysqlExecution.cutover_ready ? 'Migrado e validado' : 'Migrado com pendencias', mysqlExecution.cutover_ready ? 'green' : 'yellow')
+                : this.badge(mysqlExecution.report_exists ? 'Bloqueado ou falhou' : 'Nao executado', mysqlExecution.report_exists ? 'red' : 'gray')
+            }
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('mysql-execution-md')}" download>Baixar MD</a>
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('mysql-execution-json')}" download>JSON</a>
+            <button class="btn btn-danger btn-sm" id="adminRunPhase4MysqlMigration">Executar migracao</button>
+          </div>
+        </div>
+        <div class="section-card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">
+            <div>
+              <div class="text-3 text-sm">Relatorio gerado em</div>
+              <div class="fw-500">${Utils.esc(this.fmtDateTime(mysqlExecution.generated_at))}</div>
+            </div>
+            <div>
+              <div class="text-3 text-sm">Reset MySQL solicitado</div>
+              <div class="fw-500">${mysqlExecution.reset ? 'Sim' : 'Nao'}</div>
+            </div>
+            <div>
+              <div class="text-3 text-sm">Gate apos execucao</div>
+              <div class="fw-500">${mysqlExecution.cutover_ready ? this.badge('Pronto', 'green') : this.badge('Pendente', 'yellow')}</div>
+            </div>
+          </div>
+          ${(mysqlExecution.blocked_reasons || []).length ? `
+            <div style="margin-bottom:12px">
+              ${this.badge('Bloqueio', 'red')}
+              <span class="text-3 text-sm">${Utils.esc(mysqlExecution.blocked_reasons.join(' | '))}</span>
+            </div>` : ''}
+          ${mysqlExecution.error ? `<div style="margin-bottom:12px">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(mysqlExecution.error)}</span></div>` : ''}
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>Etapa</th><th>Status</th><th>Duracao</th><th>Comando</th></tr></thead>
+              <tbody>${mysqlExecutionRows || `<tr><td colspan="4" class="text-center text-3">Execucao real da migracao ainda nao iniciada.</td></tr>`}</tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -1152,6 +1208,40 @@ const AdminPage = {
         } catch (err) {
           Toast.error(err.message || 'Falha ao testar MySQL.');
           runPhase4MysqlReadiness.disabled = false;
+        }
+      });
+    }
+    const runPhase4MysqlMigration = document.getElementById('adminRunPhase4MysqlMigration');
+    if (runPhase4MysqlMigration) {
+      runPhase4MysqlMigration.addEventListener('click', async () => {
+        const typed = window.prompt('Digite MIGRAR_MYSQL_ORCASMART2 para executar a carga real no banco MySQL de teste.');
+        if (typed !== 'MIGRAR_MYSQL_ORCASMART2') {
+          Toast.warning('Migracao MySQL cancelada: frase de confirmacao invalida.');
+          return;
+        }
+        const ok = await Confirm.ask(
+          'Executar a migracao real para MySQL agora? O processo recria as tabelas MySQL de teste e carrega master, catalogo e tenants. O runtime continua em SQLite ate uma virada separada.',
+          { title: 'Executar migracao MySQL', okText: 'Executar migracao', okClass: 'btn btn-danger' }
+        );
+        if (!ok) return;
+        runPhase4MysqlMigration.disabled = true;
+        runPhase4MysqlMigration.textContent = 'Migrando...';
+        try {
+          const result = await API.admin.runPhase4MysqlMigration({ confirm: 'MIGRAR_MYSQL_ORCASMART2', reset: true });
+          if (result && result.ok && result.report && result.report.cutover_ready) {
+            Toast.success('Migracao MySQL executada e validada.');
+          } else if (result && result.report && Array.isArray(result.report.blocked_reasons) && result.report.blocked_reasons.length) {
+            Toast.warning('Migracao MySQL bloqueada. Veja os motivos na aba Saude.');
+          } else {
+            Toast.warning('Migracao MySQL concluida com pendencias. Veja a aba Saude.');
+          }
+          await this.render();
+          this.state.tab = 'saude';
+          document.getElementById('adminPanelBody').innerHTML = this.renderHealth();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao executar migracao MySQL.');
+          runPhase4MysqlMigration.disabled = false;
         }
       });
     }

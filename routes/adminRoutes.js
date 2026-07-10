@@ -104,6 +104,10 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.runPhase4MysqlReadiness(master, req.user, options));
   }));
 
+  router.post('/phase4/mysql-migration', asyncHandler(async (req, res) => {
+    res.json(await service.runPhase4MysqlMigration(master, req.user, req.body || {}, options));
+  }));
+
   router.post('/phase4/cutover-readiness', asyncHandler(async (req, res) => {
     res.json(await service.runPhase4CutoverReadiness(master, req.user, options));
   }));
