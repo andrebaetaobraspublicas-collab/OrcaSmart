@@ -224,6 +224,7 @@ function readPhase4MysqlExecutionReport() {
   try {
     const report = JSON.parse(fs.readFileSync(PHASE4_MYSQL_EXECUTION_REPORT_PATH, 'utf8'));
     const steps = Array.isArray(report.steps) ? report.steps : [];
+    const failed = steps.filter(step => !step.ok && !step.skipped);
     return {
       ok: Boolean(report.ok),
       cutoverReady: Boolean(report.cutover_ready),
@@ -231,7 +232,16 @@ function readPhase4MysqlExecutionReport() {
       generatedAt: report.generated_at || null,
       reset: Boolean(report.reset),
       blockedReasons: Array.isArray(report.blocked_reasons) ? report.blocked_reasons : [],
-      failedSteps: steps.filter(step => !step.ok && !step.skipped).map(step => step.key || step.label || 'step'),
+      failedSteps: failed.map(step => step.key || step.label || 'step'),
+      failedStepDetails: failed.map(step => ({
+        key: step.key || null,
+        label: step.label || null,
+        command: step.command || null,
+        exitCode: typeof step.exit_code === 'number' ? step.exit_code : null,
+        stderr: step.stderr || null,
+        stdout: step.stdout || null,
+        error: step.error || null,
+      })),
       error: null,
     };
   } catch (err) {
