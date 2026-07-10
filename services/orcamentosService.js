@@ -240,6 +240,7 @@ module.exports = {
   reordenarSintetico,
   restoreSintetico,
   recalcularCustos: repo.recalcularCustos,
+  vincularComposicoesAutomaticamente: repo.vincularComposicoesAutomaticamente,
   importarSinteticoExcel,
   curvaAbcServicos,
   curvaAbcInsumos,

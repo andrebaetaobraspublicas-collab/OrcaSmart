@@ -31,6 +31,185 @@ function toNum(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+async function tableExists(db, table, schema = 'main') {
+  const row = await one(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+    [table],
+  ).catch(() => null);
+  return !!row;
+}
+
+function normalizarFonte(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return '';
+  if (raw.includes('SINAPI')) return 'SINAPI';
+  if (raw.includes('SICRO')) return 'SICRO';
+  if (raw.includes('SEINFRA')) return 'SEINFRA';
+  if (raw.includes('SUDECAP')) return 'SUDECAP';
+  if (raw.includes('GOINFRA')) return 'GOINFRA';
+  if (raw.includes('CDHU')) return 'CDHU';
+  if (raw.includes('USUARIO') || raw === 'CP' || raw.includes('PROPR')) return 'USUARIO';
+  return raw.replace(/[^A-Z0-9]+/g, '');
+}
+
+function fonteAliases(value) {
+  const fonte = normalizarFonte(value);
+  const aliases = {
+    SINAPI: ['SINAPI', 'SINAPI (Ajustada)'],
+    SICRO: ['SICRO', 'SICRO (Ajustado)'],
+    SEINFRA: ['SEINFRA', 'SEINFRA/CE'],
+    SUDECAP: ['SUDECAP', 'SUDECAP/MG', 'SUDECAP/BH'],
+    GOINFRA: ['GOINFRA', 'GOINFRA/GO'],
+    CDHU: ['CDHU', 'CDHU/SP'],
+    USUARIO: ['USUARIO', 'CP', 'PROPRIA', 'PROPRIO'],
+  };
+  return aliases[fonte] || (fonte ? [fonte] : []);
+}
+
+function codigoVariantesComposicao(codigo, fonte = '') {
+  const original = String(codigo || '').trim();
+  if (!original || original === '-') return [];
+  const fonteNorm = normalizarFonte(fonte);
+  const fontes = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
+  const bases = new Set([original]);
+  if (original.includes('.')) {
+    bases.add(original.split('.').pop());
+    bases.add(original.replace(/^[A-Z]+[./-]/i, ''));
+  }
+  if (original.includes('/')) bases.add(original.split('/').pop());
+
+  const out = new Set();
+  bases.forEach((base) => {
+    const b = String(base || '').trim();
+    if (!b) return;
+    out.add(b);
+    fontes.forEach((f) => out.add(`${f}.${b}`));
+    if (fonteNorm) out.add(`${fonteNorm}.${b}`);
+  });
+  return [...out].filter(Boolean);
+}
+
+function normalizarRegime(value) {
+  const s = String(value || '').toLowerCase();
+  if (s.includes('sem desoner') || s.includes('nao desoner') || s.includes('não desoner')) return 'Onerado';
+  if (s.includes('desoner')) return 'Desonerado';
+  if (s.includes('oner')) return 'Onerado';
+  return '';
+}
+
+function mesReferencia(row) {
+  const mes = Number(row?.mes || row?.data_base_mes || 0);
+  const ano = Number(row?.ano || row?.data_base_ano || 0);
+  if (!mes || !ano) return '';
+  return `${String(mes).padStart(2, '0')}/${ano}`;
+}
+
+async function getDataBaseRef(db, idDataBase) {
+  if (!idDataBase) return null;
+  const sources = [
+    { schema: 'main', table: 'datas_base' },
+    { schema: 'main', table: 'tenant_datas_base' },
+    { schema: 'catalog', table: 'datas_base' },
+  ];
+  for (const source of sources) {
+    if (!(await tableExists(db, source.table, source.schema))) continue;
+    const row = await one(
+      db,
+      `SELECT mes, ano FROM ${quoteIdent(source.schema)}.${quoteIdent(source.table)} WHERE id_data_base=? LIMIT 1`,
+      [idDataBase],
+    ).catch(() => null);
+    if (row) return row;
+  }
+  return null;
+}
+
+async function getOrcamentoContexto(db, idOrcamento) {
+  const orcamento = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento=?', [idOrcamento]);
+  if (!orcamento) return null;
+  const obra = orcamento.id_obra
+    ? await one(db, 'SELECT uf AS obra_uf FROM obras WHERE id_obra=?', [orcamento.id_obra]).catch(() => null)
+    : null;
+  const dbRef = await getDataBaseRef(db, orcamento.id_data_base);
+  return {
+    ...orcamento,
+    obra_uf: obra?.obra_uf || null,
+    data_base_mes: dbRef?.mes || null,
+    data_base_ano: dbRef?.ano || null,
+    mes_ref: mesReferencia(dbRef),
+    uf: orcamento.uf_referencia || obra?.obra_uf || null,
+    regime: normalizarRegime(orcamento.regime_previdenciario || orcamento.regime || orcamento.desonerado),
+  };
+}
+
+function compSelectForAuto(idExpr, scopeExpr, tableExpr, hasOverrides = true) {
+  const visible = hasOverrides
+    ? `NOT EXISTS (
+        SELECT 1 FROM tenant_referential_overrides r
+        WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+          AND r.catalog_id=c.id_composicao AND r.status='active'
+          AND r.action IN ('update','delete')
+      )`
+    : '1=1';
+  const isTenant = tableExpr === 'tenant_composicoes';
+  const statusClause = isTenant ? "COALESCE(c.tenant_override_status,'active')='active'" : visible;
+  return `
+    SELECT ${idExpr} AS id_composicao, c.codigo, c.fonte, c.formato, c.descricao,
+           c.unidade, c.mes_referencia, c.uf_referencia, c.situacao_ref,
+           COALESCE(c.custo_unitario,0) AS custo_unitario,
+           ${scopeExpr} AS _tenant_scope
+    FROM ${tableExpr} c
+    WHERE ${statusClause}`;
+}
+
+async function buscarComposicaoParaItem(db, item, contexto) {
+  const fonteNorm = normalizarFonte(item.fonte);
+  if (!fonteNorm || fonteNorm === 'USUARIO') return null;
+  const codigos = codigoVariantesComposicao(item.codigo, item.fonte);
+  if (!codigos.length || !contexto?.mes_ref) return null;
+  const fontes = fonteAliases(item.fonte).map(f => String(f || '').toUpperCase());
+  const hasTenant = await tableExists(db, 'tenant_composicoes');
+  const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
+  const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
+  const selects = [];
+
+  if (hasCatalog) selects.push(compSelectForAuto('CAST(c.id_composicao AS TEXT)', "'catalog'", 'catalog.composicoes', hasOverrides));
+  if (hasTenant) selects.push(compSelectForAuto("'tenant:' || c.rowid", "'tenant'", 'tenant_composicoes'));
+  if (!hasCatalog && (await tableExists(db, 'composicoes'))) {
+    selects.push(compSelectForAuto('CAST(c.id_composicao AS TEXT)', "'main'", 'composicoes', false));
+  }
+  if (!selects.length) return null;
+
+  const qCod = codigos.map(() => '?').join(',');
+  const qFonte = fontes.map(() => '?').join(',');
+  const params = [...codigos, ...fontes, contexto.mes_ref];
+  let where = `WHERE codigo IN (${qCod}) AND UPPER(COALESCE(fonte,'')) IN (${qFonte}) AND mes_referencia = ?`;
+  if (contexto.regime === 'Desonerado') {
+    where += " AND (LOWER(COALESCE(situacao_ref,'')) LIKE '%desonerado%' OR LOWER(COALESCE(situacao_ref,'')) LIKE '%com desoner%')";
+  } else if (contexto.regime === 'Onerado') {
+    where += ` AND (
+      LOWER(COALESCE(situacao_ref,'')) = 'onerado'
+      OR LOWER(COALESCE(situacao_ref,'')) LIKE '%sem desoner%'
+      OR (LOWER(COALESCE(situacao_ref,'')) LIKE '%onerado%' AND LOWER(COALESCE(situacao_ref,'')) NOT LIKE '%desonerado%')
+    )`;
+  }
+
+  const sql = `
+    SELECT *
+    FROM (${selects.join('\nUNION ALL\n')})
+    ${where}
+    ORDER BY
+      CASE WHEN COALESCE(uf_referencia,'') = ? THEN 0 WHEN COALESCE(uf_referencia,'') = '' THEN 1 ELSE 2 END,
+      CASE WHEN _tenant_scope='tenant' THEN 0 ELSE 1 END,
+      CASE WHEN COALESCE(custo_unitario,0) > 0 THEN 0 ELSE 1 END
+    LIMIT 1`;
+  return one(db, sql, [...params, contexto.uf || '']).catch(() => null);
+}
+
 const selectBase = `
   SELECT o.*, ob.nome_obra, ob.uf AS obra_uf,
          db.mes AS data_base_mes, db.ano AS data_base_ano,
@@ -327,6 +506,79 @@ async function recalcularCustos(db, idOrcamento) {
   }
   const rows = await listSintetico(db, idOrcamento);
   return { atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] };
+}
+
+async function vincularComposicoesAutomaticamente(db, idOrcamento) {
+  await ensureBdiLinha(db);
+  const contexto = await getOrcamentoContexto(db, idOrcamento);
+  if (!contexto) return null;
+
+  const itens = await all(db, `
+    SELECT *
+    FROM orcamento_sintetico
+    WHERE id_orcamento=?
+      AND tipo_linha='item'
+      AND COALESCE(tipo_item,'composicao') <> 'insumo'
+      AND (id_composicao IS NULL OR id_composicao = '')
+      AND TRIM(COALESCE(codigo,'')) <> ''
+      AND TRIM(COALESCE(fonte,'')) <> ''`, [idOrcamento]);
+
+  let vinculados = 0;
+  let semCorrespondencia = 0;
+  const detalhes = [];
+
+  for (const item of itens) {
+    const comp = await buscarComposicaoParaItem(db, item, contexto);
+    if (!comp) {
+      semCorrespondencia += 1;
+      detalhes.push({ id_item: item.id_item, codigo: item.codigo, fonte: item.fonte, status: 'nao_encontrada' });
+      continue;
+    }
+    const custoAtual = toNum(item.custo_unitario, 0);
+    const custoComp = toNum(comp.custo_unitario, 0);
+    const custo = custoComp > 0 ? custoComp : custoAtual;
+    await run(db, `
+      UPDATE orcamento_sintetico
+      SET tipo_item='composicao',
+          id_composicao=?,
+          id_insumo=NULL,
+          codigo=?,
+          fonte=?,
+          descricao=COALESCE(NULLIF(?,''), descricao),
+          unidade=COALESCE(NULLIF(?,''), unidade),
+          custo_unitario=?
+      WHERE id_item=?`, [
+      comp.id_composicao,
+      comp.codigo || item.codigo,
+      comp.fonte || item.fonte,
+      comp.descricao || item.descricao,
+      comp.unidade || item.unidade,
+      custo,
+      item.id_item,
+    ]);
+    vinculados += 1;
+    detalhes.push({
+      id_item: item.id_item,
+      codigo: item.codigo,
+      fonte: item.fonte,
+      id_composicao: comp.id_composicao,
+      codigo_composicao: comp.codigo,
+      fonte_composicao: comp.fonte,
+      status: 'vinculada',
+    });
+  }
+
+  const rows = await listSintetico(db, idOrcamento);
+  return {
+    vinculados,
+    sem_correspondencia: semCorrespondencia,
+    verificados: itens.length,
+    detalhes,
+    itens: rows || [],
+    mensagem: vinculados
+      ? `${vinculados} linha(s) vinculada(s) a composicoes cadastradas na data-base ${contexto.mes_ref}.`
+      : `Nenhuma composicao correspondente foi encontrada na data-base ${contexto.mes_ref}.`,
+  };
 }
 
 function abcClasse(acumulado) {
@@ -628,6 +880,7 @@ module.exports = {
   reordenarSintetico,
   restoreSintetico,
   recalcularCustos,
+  vincularComposicoesAutomaticamente,
   importarSinteticoRows,
   curvaAbcServicos,
   curvaAbcInsumos,

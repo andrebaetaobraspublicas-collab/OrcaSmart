@@ -5,6 +5,7 @@ Object.assign(API, {
   osSint: {
     completo:         (id)    => API.get(`/orcamentos/${id}/completo`),
     recalcularCustos: (id)    => API.post(`/orcamentos/${id}/recalcular-custos`),
+    vincularAuto:     (id)    => API.post(`/orcamentos/${id}/sintetico/vincular-composicoes`),
     list:      (id)       => API.get(`/orcamentos/${id}/sintetico`),
     create:    (id, d)    => API.post(`/orcamentos/${id}/sintetico`, d),
     update:    (id, d)    => API.put(`/orcamentos/sintetico/${id}`, d),
@@ -291,6 +292,11 @@ Router.register('orcamento-sintetico', async () => {
               style="background:#faf5ff;color:#7c3aed;border:1px solid #c4b5fd;font-size:.77rem">
               ⟳ Recalcular custos
             </button>
+            <button class="btn btn-sm" id="btnVincularAuto"
+              title="Vincula automaticamente linhas com codigo e fonte a composicoes cadastradas na mesma data-base"
+              style="background:#eff6ff;color:#1d4ed8;border:1px solid #93c5fd;font-size:.77rem">
+              Vincular automatico
+            </button>
             <button class="btn btn-sm" id="btnAbcServ"
               style="background:#fff1f2;color:#dc2626;border:1px solid #fca5a5;font-size:.77rem">
               ▦ ABC Serviços
@@ -354,7 +360,7 @@ Router.register('orcamento-sintetico', async () => {
                 <th class="os-th" style="text-align:right;width:108px">Custo Unit. (R$)</th>
                 <th class="os-th" style="text-align:right;width:108px">Preço Unit. (R$)</th>
                 <th class="os-th" style="text-align:right;width:118px">Valor (R$)</th>
-                <th class="os-th" style="width:62px"></th>
+                <th class="os-th" style="width:116px"></th>
               </tr>
             </thead>
             <tbody id="tblBody">${renderLinhas()}</tbody>
@@ -472,6 +478,16 @@ Router.register('orcamento-sintetico', async () => {
     const badge  = OS_FONTE_BADGE[item.fonte] || 'badge-gray';
     const bdiEfetivo = bdiLinhaPct(item);
     const bdiCustom = temBdiLinha(item);
+    const temCodigo = String(item.codigo || '').trim() && String(item.codigo || '').trim() !== '-';
+    const linkComp = item.id_composicao
+      ? `<button onclick="event.stopPropagation();window._osAbrirCompVinculada(${item.id_item})"
+            title="Composicao vinculada. Clique para ver detalhes."
+            style="background:#dcfce7;border:1px solid #86efac;color:#15803d;border-radius:6px;cursor:pointer;font-size:11px;padding:1px 5px;margin-left:4px">link</button>`
+      : (temCodigo
+        ? `<button onclick="event.stopPropagation();window._osVincularLinha(${item.id_item})"
+              title="Vincular ou cadastrar composicao para esta linha"
+              style="background:#fff7ed;border:1px solid #fdba74;color:#c2410c;border-radius:6px;cursor:pointer;font-size:11px;padding:1px 5px;margin-left:4px">buscar</button>`
+        : '');
     const ins_lbl = item.tipo_item === 'insumo'
       ? `<span class="badge badge-success" style="font-size:.6rem;padding:1px 5px;margin-left:4px">INS</span>` : '';
 
@@ -516,6 +532,7 @@ Router.register('orcamento-sintetico', async () => {
         <td class="os-td os-num" style="text-align:right;color:var(--c-primary);font-weight:500;font-size:.82rem" title="BDI aplicado: ${Utils.num(bdiEfetivo,4)}%">${Utils.num(pu)}</td>
         <td class="os-td os-num" style="text-align:right;font-weight:600;font-size:.85rem">${Utils.moeda(val)}</td>
         <td class="os-td" style="text-align:center;white-space:nowrap">
+          ${linkComp}
           <button onclick="event.stopPropagation();window._osBdiLinha(${item.id_item})"
             title="${bdiCustom ? `BDI especifico da linha: ${Utils.num(bdiEfetivo,4)}%` : 'Usar BDI especifico nesta linha'}"
             style="background:${bdiCustom ? '#fef3c7' : 'transparent'};border:1px solid ${bdiCustom ? '#f59e0b' : 'transparent'};border-radius:6px;cursor:pointer;color:${bdiCustom ? '#b45309' : '#94a3b8'};font-weight:800;font-size:12px;padding:1px 5px;margin-right:2px">%</button>
@@ -632,6 +649,35 @@ Router.register('orcamento-sintetico', async () => {
     window._osAddComp    = () => addRow('item', null, 'composicao');
     window._osAddIns     = () => addRow('item', null, 'insumo');
     window._osVincular   = abrirVincular;
+    window._osVincularLinha = (idItem) => {
+      selectedId = idItem;
+      const item = itens.find(i => i.id_item === idItem);
+      if (item) abrirBusca(item.tipo_item || 'composicao', idItem);
+    };
+    window._osAbrirCompVinculada = async (idItem) => {
+      const item = itens.find(i => i.id_item === idItem);
+      if (!item?.id_composicao) return;
+      try {
+        const comp = await API.composicoes.get(item.id_composicao);
+        Modal.open({
+          title: `Composicao vinculada - ${Utils.esc(comp.codigo || item.codigo || '')}`,
+          size: 'modal-lg',
+          body: `
+            <div class="card-soft" style="padding:14px">
+              <div class="text-xs text-3">Descricao</div>
+              <div style="font-weight:600;margin-bottom:10px">${Utils.esc(comp.descricao || item.descricao || '')}</div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+                <div><div class="text-xs text-3">Fonte</div><strong>${Utils.esc(comp.fonte || item.fonte || '')}</strong></div>
+                <div><div class="text-xs text-3">Data-base</div><strong>${Utils.esc(comp.mes_referencia || '')}</strong></div>
+                <div><div class="text-xs text-3">UF</div><strong>${Utils.esc(comp.uf_referencia || '')}</strong></div>
+                <div><div class="text-xs text-3">Custo</div><strong>${Utils.moeda(comp.custo_calculado || comp.custo_unitario || item.custo_unitario || 0)}</strong></div>
+              </div>
+            </div>
+          `,
+          footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>`,
+        });
+      } catch(e) { Toast.error(e.message); }
+    };
     window._osMoverCima  = () => moverItem(-1);
     window._osMoverBaixo = () => moverItem(1);
     window._osDesfazer   = desfazerUltimaAlteracao;
@@ -639,6 +685,7 @@ Router.register('orcamento-sintetico', async () => {
     window._osBdiLinha   = abrirBdiLinha;
     document.getElementById('btnImportar')?.addEventListener('click', abrirImportar);
     document.getElementById('btnImportarExcel')?.addEventListener('click', abrirImportarExcel);
+    document.getElementById('btnVincularAuto')?.addEventListener('click', vincularAutomaticamente);
     document.getElementById('btnVoltar')?.addEventListener('click', () => Router.navigate('orcamentos'));
 
     // ── Exportar dropdown ──────────────────────────────────────────────────
@@ -1440,11 +1487,15 @@ Router.register('orcamento-sintetico', async () => {
           </p>
         </div>
       `,
-      footer: `<button class="btn btn-ghost" id="btnFecharBusca">Fechar</button>`,
+      footer: `
+        ${isInsumo ? '' : '<button class="btn btn-sm" id="btnCriarCompLinha" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74">Criar composicao do usuario desta linha</button>'}
+        <button class="btn btn-ghost" id="btnFecharBusca">Fechar</button>
+      `,
     });
 
     setTimeout(() => {
       document.getElementById('btnFecharBusca')?.addEventListener('click', () => Modal.close());
+      document.getElementById('btnCriarCompLinha')?.addEventListener('click', criarComposicaoUsuarioDaLinha);
       document.getElementById('buscaQ')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') executarBusca(isInsumo);
       });
@@ -1569,6 +1620,95 @@ Router.register('orcamento-sintetico', async () => {
 
 
   /* ═══════════════════ IMPORTAR EXCEL DIRETO (SEM IA) ═══════════════════════ */
+  async function vincularAutomaticamente() {
+    const pendentes = itens.filter(i =>
+      i.tipo_linha === 'item'
+      && !i.id_composicao
+      && String(i.codigo || '').trim()
+      && String(i.fonte || '').trim()
+      && (i.tipo_item || 'composicao') !== 'insumo'
+    ).length;
+    if (!pendentes) {
+      Toast.info('Nao ha linhas de composicao pendentes com codigo e fonte.');
+      return;
+    }
+    const btn = document.getElementById('btnVincularAuto');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Vinculando...'; }
+    try {
+      const before = JSON.parse(JSON.stringify(itens));
+      const res = await API.osSint.vincularAuto(id_orc);
+      if (res?.vinculados > 0) {
+        undoState = { label: 'vinculo automatico', itens: before, bdiPct };
+        itens = res.itens || await API.osSint.list(id_orc);
+        rebuildTable();
+        atualizarUndoBtn();
+        Toast.success(res.mensagem || `${res.vinculados} linha(s) vinculada(s).`);
+      } else {
+        Toast.info(res?.mensagem || 'Nenhuma composicao correspondente foi encontrada.');
+      }
+    } catch(e) {
+      Toast.error(e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old || 'Vincular automatico'; }
+    }
+  }
+
+  function orcMesReferencia() {
+    const mes = Number(orc?.data_base_mes || 0);
+    const ano = Number(orc?.data_base_ano || 0);
+    return mes && ano ? `${String(mes).padStart(2, '0')}/${ano}` : '';
+  }
+
+  function toNumberLocal(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const n = Number(String(value || '0').replace(/\./g, '').replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  async function criarComposicaoUsuarioDaLinha() {
+    const idItem = buscaCallback;
+    const item = itens.find(i => i.id_item === idItem);
+    if (!item) return;
+    const codigoBase = String(item.codigo || '').trim().replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)[./-]/i, '');
+    const payload = {
+      codigo: codigoBase ? `USUARIO.${codigoBase}` : null,
+      fonte: 'USUARIO',
+      formato: 'UNITARIO',
+      descricao: item.descricao || 'Composicao do usuario',
+      unidade: item.unidade || null,
+      mes_referencia: orcMesReferencia(),
+      uf_referencia: orc?.uf_referencia || orc?.obra_uf || null,
+      custo_unitario: toNumberLocal(item.custo_unitario),
+      situacao: 'Ativo',
+      observacoes: `Criada a partir da linha ${item.item_num || ''} do orcamento sintetico.`,
+      itens: [],
+    };
+    try {
+      const createFn = API.composicoes?.create || ((data) => API.post('/composicoes', data));
+      const comp = await createFn(payload);
+      const updates = {
+        codigo: comp.codigo || payload.codigo || item.codigo,
+        fonte: comp.fonte || 'USUARIO',
+        descricao: comp.descricao || item.descricao,
+        unidade: comp.unidade || item.unidade,
+        custo_unitario: comp.custo_unitario || item.custo_unitario || 0,
+        tipo_item: 'composicao',
+        id_composicao: comp.id_composicao,
+        id_insumo: null,
+      };
+      guardarUndo('nova composicao');
+      await API.osSint.update(idItem, updates);
+      const idx = itens.findIndex(i => i.id_item === idItem);
+      if (idx >= 0) Object.assign(itens[idx], updates);
+      Modal.close();
+      rebuildTable();
+      Toast.success('Composicao do usuario criada e vinculada a linha.');
+    } catch(e) {
+      Toast.error(e.message);
+    }
+  }
+
   function abrirImportarExcel() {
     Modal.open({
       title: '⬆ Importar Excel — Sem uso de IA',

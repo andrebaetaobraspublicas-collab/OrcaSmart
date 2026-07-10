@@ -77,6 +77,10 @@ module.exports = function(db) {
     res.json(await orcamentosService.recalcularCustos(db, req.params.id));
   }));
 
+  router.post('/:id/sintetico/vincular-composicoes', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.vincularComposicoesAutomaticamente(db, req.params.id));
+  }));
+
   router.get('/:id/curva-abc-servicos', asyncHandler(async (req, res) => {
     res.json(await orcamentosService.curvaAbcServicos(db, req.params.id));
   }));
