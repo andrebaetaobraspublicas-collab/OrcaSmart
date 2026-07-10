@@ -19,6 +19,7 @@
         "phase4:migrate-master-mysql": "node scripts/phase4MigrateMasterToMysql.js",
         "phase4:validate-master-mysql": "node scripts/phase4ValidateMasterMysql.js",
         "phase4:migrate-catalog-mysql": "node scripts/phase4MigrateCatalogToMysql.js",
+        "phase4:validate-catalog-mysql": "node scripts/phase4ValidateCatalogMysql.js",
         "phase4:migrate-tenant-mysql": "node scripts/phase4MigrateTenantToMysql.js"
     },
     "dependencies": {

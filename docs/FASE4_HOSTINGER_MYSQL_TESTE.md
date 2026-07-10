@@ -111,6 +111,14 @@ O plano da carga e gravado em:
 - `docs/generated/fase4-catalog-migration-plan.json`
 - `docs/generated/fase4-catalog-migration-plan.md`
 
+Antes de usar o catalogo MySQL como fonte oficial de leitura, valide a paridade:
+
+```bash
+npm run phase4:validate-catalog-mysql
+```
+
+O relatorio deve indicar contagens e hashes iguais para as tabelas referenciais do catalogo comum.
+
 ## 6. Migrar dados privados dos tenants
 
 Os dados privados incluem obras, orcamentos, orcamento sintetico, eventogramas e aplicacoes especificas do usuario. As chaves dessas tabelas usam `tenant_id` junto com o ID local, porque diferentes usuarios podem ter registros com o mesmo `id_obra`, `id_orcamento` ou `id_item`.
