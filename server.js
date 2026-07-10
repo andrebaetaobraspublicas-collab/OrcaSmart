@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mysql-decimal-string-migration';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-catalog-read-routing';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -552,6 +552,15 @@ function isCatalogSchemaEnsure(sql) {
   return /^\s*CREATE\s+(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\b/i.test(String(sql || ''));
 }
 
+function sqlReferencesCatalogTable(sql) {
+  const text = String(sql || '');
+  return CATALOG_TABLES.some((table) => {
+    const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`\\b(FROM|JOIN|UPDATE|INTO|REFERENCES)\\s+(?:main\\.)?(?:["'\`\\[])?${escaped}(?:["'\`\\]])?\\b`, 'i');
+    return pattern.test(text);
+  });
+}
+
 function runSharedCatalogReadMethod(method, sql, params, cb) {
   if (typeof params === 'function') {
     cb = params;
@@ -564,6 +573,7 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
   }
 
   const canReadCatalog = bootState.sharedCatalogReady && fs.existsSync(SHARED_CATALOG_DB_PATH);
+  const referencesCatalogTable = sqlReferencesCatalogTable(sql);
   const tryCatalog = () => {
     if (!canReadCatalog) return undefined;
     const catalogDb = openSqlite(SHARED_CATALOG_DB_PATH);
@@ -574,6 +584,10 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
       });
     });
   };
+
+  if (canReadCatalog && method !== 'run' && referencesCatalogTable) {
+    return tryCatalog();
+  }
 
   return runTenantCatalogReadMethod(method, sql, params || [], function onTenantResult(tenantErr, tenantResult) {
     const context = this;
