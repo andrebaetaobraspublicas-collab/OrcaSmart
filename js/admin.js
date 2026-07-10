@@ -518,6 +518,8 @@ const AdminPage = {
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
             ${rehearsal.ok ? this.badge(rehearsal.cutover_ready ? 'Pronto para virada' : 'Ensaio OK, virada pendente', rehearsal.cutover_ready ? 'green' : 'yellow') : this.badge('Ensaio pendente', 'red')}
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('migration-rehearsal-md')}" download>Baixar MD</a>
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('migration-rehearsal-json')}" download>JSON</a>
             <button class="btn btn-primary btn-sm" id="adminRunPhase4Rehearsal">${Utils.icons.refresh} Executar ensaio</button>
           </div>
         </div>
@@ -552,7 +554,11 @@ const AdminPage = {
             <h2>Prontidao para virada MySQL</h2>
             <p class="text-3 text-sm">Gate operacional para liberar a troca do runtime somente apos validar master, catalogo e tenants.</p>
           </div>
-          ${cutover.ready ? this.badge('Pronto para teste', 'green') : this.badge('Nao habilitar runtime', 'red')}
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            ${cutover.ready ? this.badge('Pronto para teste', 'green') : this.badge('Nao habilitar runtime', 'red')}
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('cutover-readiness-md')}" download>Baixar MD</a>
+            <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('cutover-readiness-json')}" download>JSON</a>
+          </div>
         </div>
         <div class="section-card-body">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">

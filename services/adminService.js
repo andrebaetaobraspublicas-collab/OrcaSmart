@@ -37,11 +37,49 @@ function readJsonFile(filePath) {
   }
 }
 
+const PHASE4_REPORT_FILES = Object.freeze({
+  'migration-rehearsal-json': 'fase4-migration-rehearsal.json',
+  'migration-rehearsal-md': 'fase4-migration-rehearsal.md',
+  'cutover-readiness-json': 'fase4-cutover-readiness.json',
+  'cutover-readiness-md': 'fase4-cutover-readiness.md',
+});
+
+function generatedReportsDir(options = {}) {
+  return options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated');
+}
+
+function phase4ReportPath(reportName, options = {}) {
+  const fileName = PHASE4_REPORT_FILES[String(reportName || '')];
+  if (!fileName) {
+    const err = new Error('Relatorio da Fase 4 invalido.');
+    err.status = 400;
+    throw err;
+  }
+  const root = path.resolve(generatedReportsDir(options));
+  const filePath = path.resolve(path.join(root, fileName));
+  if (!filePath.startsWith(`${root}${path.sep}`)) {
+    const err = new Error('Caminho de relatorio invalido.');
+    err.status = 400;
+    throw err;
+  }
+  return filePath;
+}
+
+async function getPhase4ReportFile(_master, reportName, options = {}) {
+  const filePath = phase4ReportPath(reportName, options);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    const err = new Error('Relatorio da Fase 4 nao encontrado. Gere o ensaio ou a prontidao antes de baixar.');
+    err.status = 404;
+    throw err;
+  }
+  return {
+    path: filePath,
+    downloadName: path.basename(filePath),
+  };
+}
+
 function phase4CutoverStatus(options = {}) {
-  const reportPath = path.join(
-    options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated'),
-    'fase4-cutover-readiness.json',
-  );
+  const reportPath = phase4ReportPath('cutover-readiness-json', options);
   const report = readJsonFile(reportPath);
   if (!report.exists) {
     return {
@@ -74,10 +112,7 @@ function phase4CutoverStatus(options = {}) {
 }
 
 function phase4RehearsalStatus(options = {}) {
-  const reportPath = path.join(
-    options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated'),
-    'fase4-migration-rehearsal.json',
-  );
+  const reportPath = phase4ReportPath('migration-rehearsal-json', options);
   const report = readJsonFile(reportPath);
   if (!report.exists) {
     return {
@@ -823,4 +858,5 @@ module.exports = {
   auditPhase2Tenants,
   migratePhase2Tenants,
   runPhase4Rehearsal,
+  getPhase4ReportFile,
 };
