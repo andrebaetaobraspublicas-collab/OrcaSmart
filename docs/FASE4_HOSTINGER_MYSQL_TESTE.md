@@ -180,6 +180,8 @@ Depois de validar conexao, schema, master, catalogo e tenants, rode a checagem c
 npm run phase4:cutover-readiness
 ```
 
+Essa checagem tambem pode ser executada pela interface administrativa em **Admin > Saude > Prontidao para virada MySQL > Validar prontidao**. Ela apenas reprocessa os relatorios ja gerados e nao ativa MySQL no runtime.
+
 O resultado so deve ser considerado pronto quando todas as checagens aparecerem como OK. Enquanto qualquer item estiver pendente, mantenha o runtime em SQLite.
 
 ## 8. Ensaio completo auditavel

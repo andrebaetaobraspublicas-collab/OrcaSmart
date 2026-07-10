@@ -104,6 +104,10 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.runPhase4MysqlReadiness(master, req.user, options));
   }));
 
+  router.post('/phase4/cutover-readiness', asyncHandler(async (req, res) => {
+    res.json(await service.runPhase4CutoverReadiness(master, req.user, options));
+  }));
+
   router.get('/phase4/reports/:name/download', asyncHandler(async (req, res) => {
     const report = await service.getPhase4ReportFile(master, req.params.name, options);
     res.download(report.path, report.downloadName);

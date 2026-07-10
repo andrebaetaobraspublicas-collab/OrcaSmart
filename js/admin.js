@@ -585,6 +585,7 @@ const AdminPage = {
             ${cutover.ready ? this.badge('Pronto para teste', 'green') : this.badge('Nao habilitar runtime', 'red')}
             <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('cutover-readiness-md')}" download>Baixar MD</a>
             <a class="btn btn-ghost btn-sm" href="${API.admin.phase4ReportDownload('cutover-readiness-json')}" download>JSON</a>
+            <button class="btn btn-primary btn-sm" id="adminRunPhase4CutoverReadiness">${Utils.icons.refresh} Validar prontidao</button>
           </div>
         </div>
         <div class="section-card-body">
@@ -1151,6 +1152,33 @@ const AdminPage = {
         } catch (err) {
           Toast.error(err.message || 'Falha ao testar MySQL.');
           runPhase4MysqlReadiness.disabled = false;
+        }
+      });
+    }
+    const runPhase4CutoverReadiness = document.getElementById('adminRunPhase4CutoverReadiness');
+    if (runPhase4CutoverReadiness) {
+      runPhase4CutoverReadiness.addEventListener('click', async () => {
+        const ok = await Confirm.ask(
+          'Validar a prontidao consolidada para MySQL agora? A operacao apenas le os relatorios existentes e nao altera dados.',
+          { title: 'Validar prontidao MySQL', okText: 'Validar', okClass: 'btn btn-primary' }
+        );
+        if (!ok) return;
+        runPhase4CutoverReadiness.disabled = true;
+        runPhase4CutoverReadiness.textContent = 'Validando...';
+        try {
+          const result = await API.admin.runPhase4CutoverReadiness();
+          if (result && result.report && result.report.ready) {
+            Toast.success('Gate de prontidao aprovado para teste.');
+          } else {
+            Toast.warning('Gate de prontidao ainda possui pendencias. Veja a aba Saude.');
+          }
+          await this.render();
+          this.state.tab = 'saude';
+          document.getElementById('adminPanelBody').innerHTML = this.renderHealth();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao validar prontidao MySQL.');
+          runPhase4CutoverReadiness.disabled = false;
         }
       });
     }

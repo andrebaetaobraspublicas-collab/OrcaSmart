@@ -236,6 +236,50 @@ async function runPhase4MysqlReadiness(master, actor, options = {}) {
   return response;
 }
 
+async function runPhase4CutoverReadiness(master, actor, options = {}) {
+  const appDir = options.appDir || process.cwd();
+  const scriptPath = path.join(appDir, 'scripts', 'phase4CutoverReadiness.js');
+  if (!fs.existsSync(scriptPath)) {
+    const err = new Error('Script de prontidao consolidada da Fase 4 nao encontrado.');
+    err.status = 500;
+    throw err;
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: appDir,
+    env: process.env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: Number(options.phase4CutoverReadinessTimeoutMs || 60000),
+    maxBuffer: 1024 * 1024 * 2,
+  });
+  const report = phase4CutoverStatus(options);
+  const response = {
+    ok: result.status === 0,
+    exit_code: typeof result.status === 'number' ? result.status : 1,
+    signal: result.signal || null,
+    stdout: String(result.stdout || '').slice(-4000),
+    stderr: String(result.stderr || '').slice(-4000),
+    error: result.error ? result.error.message : null,
+    report,
+  };
+
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.phase4.cutover_readiness',
+    entidade_tipo: 'phase4',
+    entidade_id: 'cutover-readiness',
+    antes: null,
+    depois: {
+      ok: response.ok,
+      exit_code: response.exit_code,
+      ready: report.ready,
+      generated_at: report.generated_at,
+    },
+  });
+
+  return response;
+}
+
 async function runPhase4Rehearsal(master, actor, options = {}) {
   const appDir = options.appDir || process.cwd();
   const scriptPath = path.join(appDir, 'scripts', 'phase4MigrationRehearsal.js');
@@ -948,6 +992,7 @@ module.exports = {
   auditPhase2Tenants,
   migratePhase2Tenants,
   runPhase4MysqlReadiness,
+  runPhase4CutoverReadiness,
   runPhase4Rehearsal,
   getPhase4ReportFile,
 };
