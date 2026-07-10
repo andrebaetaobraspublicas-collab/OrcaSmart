@@ -10,11 +10,27 @@ function validate(data = {}) {
   if (!String(data.sigla || '').trim()) throw httpError(400, 'Sigla e obrigatoria.');
 }
 
+function normalizeSigla(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function mapDbError(err, data) {
   if (String(err.message || '').includes('UNIQUE')) {
     return httpError(409, `Sigla "${data.sigla}" ja existe.`);
   }
   return err;
+}
+
+async function ensureUniqueSigla(db, data, currentId = null) {
+  const sigla = normalizeSigla(data.sigla);
+  if (!sigla) return;
+  const unidades = await repo.listUnidades(db);
+  const duplicate = unidades.find((row) => {
+    if (normalizeSigla(row.sigla) !== sigla) return false;
+    if (currentId == null) return true;
+    return String(row.id_unidade) !== String(currentId) && `tenant:${row.tenant_rowid}` !== String(currentId);
+  });
+  if (duplicate) throw httpError(409, `Sigla "${data.sigla}" ja existe.`);
 }
 
 async function getUnidade(db, id) {
@@ -25,6 +41,7 @@ async function getUnidade(db, id) {
 
 async function createUnidade(db, data) {
   validate(data);
+  await ensureUniqueSigla(db, data);
   try {
     return await repo.createUnidade(db, data);
   } catch (err) {
@@ -34,6 +51,7 @@ async function createUnidade(db, data) {
 
 async function updateUnidade(db, id, data) {
   validate(data);
+  await ensureUniqueSigla(db, data, id);
   try {
     const row = await repo.updateUnidade(db, id, data);
     if (!row) throw httpError(404, 'Unidade nao encontrada.');

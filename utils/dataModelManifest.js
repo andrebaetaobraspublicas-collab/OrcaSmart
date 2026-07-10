@@ -45,6 +45,7 @@ const USER_OVERRIDE_DOMAINS = [
   'insumos',
   'precos_equipamentos',
   'datas_base',
+  'unidades_medida',
 ];
 
 const USER_OVERRIDE_TABLES = [
@@ -61,6 +62,7 @@ const USER_OVERRIDE_TABLES = [
   'tenant_precos_equipamentos',
   'tenant_precos_insumos',
   'tenant_datas_base',
+  'tenant_unidades_medida',
   'tenant_referential_overrides',
 ];
 
