@@ -1,6 +1,6 @@
 # Fase 4 - Plano de migracao master_saas para MySQL
 
-Gerado em: 2026-07-09T23:26:39.522Z
+Gerado em: 2026-07-09T23:59:36.420Z
 SQLite origem: C:\SistemaOrcamentoObras\saas\saas_master.db
 Modo: dry-run
 

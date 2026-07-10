@@ -1,6 +1,6 @@
 -- OrcaSmart2 - Fase 4 - Schema MySQL/MariaDB
 -- Dominio: Catalogo global compartilhado
--- Gerado em: 2026-07-09T23:15:12.254Z
+-- Gerado em: 2026-07-09T23:58:00.490Z
 -- Inventario base: 2026-07-09T22:40:43.616Z
 -- Revisar antes de executar em producao.
 

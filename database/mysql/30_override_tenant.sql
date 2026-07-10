@@ -1,6 +1,6 @@
 -- OrcaSmart2 - Fase 4 - Schema MySQL/MariaDB
 -- Dominio: Overrides e registros do usuario
--- Gerado em: 2026-07-09T23:15:12.258Z
+-- Gerado em: 2026-07-09T23:58:00.493Z
 -- Inventario base: 2026-07-09T22:40:43.616Z
 -- Revisar antes de executar em producao.
 
@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS `tenant_precos_insumos` (
 
 CREATE TABLE IF NOT EXISTS `tenant_referential_overrides` (
   `tenant_id` BIGINT UNSIGNED NOT NULL,
-  `id_override` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id_override` BIGINT UNSIGNED NOT NULL,
   `domain` VARCHAR(120) NOT NULL,
   `catalog_table` VARCHAR(120) NOT NULL,
   `catalog_id` BIGINT UNSIGNED NULL,
@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS `tenant_referential_overrides` (
   `status` VARCHAR(255) NOT NULL DEFAULT 'active',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NULL,
-  PRIMARY KEY (`id_override`),
+  PRIMARY KEY (`tenant_id`, `id_override`),
   KEY `idx_tenant_ref_overrides_lookup` (`tenant_id`, `domain`, `catalog_table`, `catalog_id`, `status`),
   KEY `idx_tenant_referential_overrides_tenant_id` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -17,7 +17,8 @@
         "phase4:validate-mysql-schema": "node scripts/phase4ValidateMysqlSchema.js",
         "phase4:mysql-readiness": "node scripts/phase4MysqlReadiness.js",
         "phase4:migrate-master-mysql": "node scripts/phase4MigrateMasterToMysql.js",
-        "phase4:migrate-catalog-mysql": "node scripts/phase4MigrateCatalogToMysql.js"
+        "phase4:migrate-catalog-mysql": "node scripts/phase4MigrateCatalogToMysql.js",
+        "phase4:migrate-tenant-mysql": "node scripts/phase4MigrateTenantToMysql.js"
     },
     "dependencies": {
         "cors": "^2.8.5",

@@ -89,6 +89,41 @@ O plano da carga e gravado em:
 - `docs/generated/fase4-catalog-migration-plan.json`
 - `docs/generated/fase4-catalog-migration-plan.md`
 
-## 6. Premissa importante
+## 6. Migrar dados privados dos tenants
+
+Os dados privados incluem obras, orcamentos, orcamento sintetico, eventogramas e aplicacoes especificas do usuario. As chaves dessas tabelas usam `tenant_id` junto com o ID local, porque diferentes usuarios podem ter registros com o mesmo `id_obra`, `id_orcamento` ou `id_item`.
+
+Para simular a carga de todos os tenants:
+
+```bash
+npm run phase4:migrate-tenant-mysql -- --all
+```
+
+Para simular apenas um tenant:
+
+```bash
+npm run phase4:migrate-tenant-mysql -- --tenant=1
+```
+
+Para gravar todos os tenants no banco de teste, removendo antes somente os registros desses tenants:
+
+```bash
+npm run phase4:migrate-tenant-mysql -- --all --execute --reset --confirm=orcasmart2-tenant
+```
+
+Para gravar apenas um tenant:
+
+```bash
+npm run phase4:migrate-tenant-mysql -- --tenant=1 --execute --reset --confirm=orcasmart2-tenant
+```
+
+O `--reset` e obrigatorio na gravacao para evitar duplicidade em tabelas de override e preservar uma carga reexecutavel durante os testes.
+
+O plano da carga e gravado em:
+
+- `docs/generated/fase4-tenant-migration-plan.json`
+- `docs/generated/fase4-tenant-migration-plan.md`
+
+## 7. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.

@@ -217,9 +217,11 @@ function mysqlDefault(column, type) {
   return ` DEFAULT ${normalized}`;
 }
 
-function columnLine(column, table, primaryKey) {
+function columnLine(column, table, primaryKey, domain) {
   const isSingleIntegerPk = primaryKey.length === 1
     && primaryKey[0] === column.name
+    && !['tenant_privado'].includes(domain)
+    && !(domain === 'override_tenant' && table === 'tenant_referential_overrides')
     && String(column.type || '').toUpperCase().includes('INT');
   const type = mysqlType(column, table);
   const nullable = column.notnull || primaryKey.includes(column.name) ? 'NOT NULL' : 'NULL';
@@ -258,11 +260,16 @@ function tableStatements(table) {
   }
 
   for (const column of columns) {
-    lines.push(columnLine(column, table.name, primaryKey));
+    lines.push(columnLine(column, table.name, primaryKey, table.domain));
   }
 
   if (primaryKey.length) {
-    constraints.push(`  PRIMARY KEY (${primaryKey.map(q).join(', ')})`);
+    const pkColumns = needsTenantId && ['tenant_privado'].includes(table.domain)
+      ? ['tenant_id', ...primaryKey]
+      : needsTenantId && table.name === 'tenant_referential_overrides'
+        ? ['tenant_id', ...primaryKey]
+        : primaryKey;
+    constraints.push(`  PRIMARY KEY (${pkColumns.map(q).join(', ')})`);
   } else if (columns.length) {
     const pk = syntheticPkName(table.name);
     lines.unshift(`  ${q(pk)} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT`);

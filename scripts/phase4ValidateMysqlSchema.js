@@ -31,6 +31,7 @@ function parseTables(file) {
     const [, name, body] = match;
     const columns = new Map();
     const indexes = [];
+    const primaryKey = [];
     for (const rawLine of body.split('\n')) {
       const line = rawLine.trim().replace(/,$/, '');
       const column = line.match(/^`([^`]+)`\s+([A-Z0-9(),\s]+)(?:\s|$)/i);
@@ -50,8 +51,12 @@ function parseTables(file) {
           line,
         });
       }
+      const pk = line.match(/^PRIMARY KEY\s+\((.+)\)$/i);
+      if (pk) {
+        primaryKey.push(...Array.from(pk[1].matchAll(/`([^`]+)`/g)).map(col => col[1]));
+      }
     }
-    tables.push({ file: file.name, name, columns, indexes, body });
+    tables.push({ file: file.name, name, columns, indexes, primaryKey, body });
   }
   return tables;
 }
@@ -82,6 +87,15 @@ function validate(files, inventory) {
   for (const table of tables) {
     if (hasTenantId(table.name, inventory) && !table.columns.has('tenant_id')) {
       issues.push({ severity: 'erro', file: table.file, table: table.name, message: 'tabela privada/override sem tenant_id' });
+    }
+    if (hasTenantId(table.name, inventory)) {
+      const inventoryTable = inventory.tables.find(item => item.name === table.name);
+      if (inventoryTable && inventoryTable.domain === 'tenant_privado' && !table.primaryKey.includes('tenant_id')) {
+        issues.push({ severity: 'erro', file: table.file, table: table.name, message: 'tabela privada sem tenant_id na chave primaria' });
+      }
+      if (table.name === 'tenant_referential_overrides' && !table.primaryKey.includes('tenant_id')) {
+        issues.push({ severity: 'erro', file: table.file, table: table.name, message: 'tenant_referential_overrides sem tenant_id na chave primaria' });
+      }
     }
     for (const index of table.indexes) {
       for (const columnName of index.columns) {

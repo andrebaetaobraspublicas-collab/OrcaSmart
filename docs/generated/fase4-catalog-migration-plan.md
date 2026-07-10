@@ -1,6 +1,6 @@
 # Fase 4 - Plano de migracao do catalogo global para MySQL
 
-Gerado em: 2026-07-09T23:48:00.510Z
+Gerado em: 2026-07-09T23:59:36.650Z
 SQLite origem: C:\SistemaOrcamentoObras\saas\shared_catalog.db
 Modo: dry-run
 
