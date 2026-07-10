@@ -40,19 +40,22 @@ function parseMysqlTables() {
     const columns = [];
     const primaryKey = [];
     const jsonColumns = new Set();
+    const columnTypes = {};
     for (const rawLine of body.split('\n')) {
       const line = rawLine.trim().replace(/,$/, '');
       const column = line.match(/^`([^`]+)`\s+([A-Z0-9(),\s]+)(?:\s|$)/i);
       if (column) {
         columns.push(column[1]);
-        if (/^JSON\b/i.test(column[2].trim())) jsonColumns.add(column[1]);
+        const columnType = column[2].trim().toUpperCase();
+        columnTypes[column[1]] = columnType;
+        if (/^JSON\b/i.test(columnType)) jsonColumns.add(column[1]);
       }
       const pk = line.match(/^PRIMARY KEY\s+\((.+)\)$/i);
       if (pk) {
         for (const col of pk[1].matchAll(/`([^`]+)`/g)) primaryKey.push(col[1]);
       }
     }
-    tables.set(tableName, { columns, primaryKey, jsonColumns });
+    tables.set(tableName, { columns, primaryKey, jsonColumns, columnTypes });
   }
   return tables;
 }
@@ -92,11 +95,18 @@ function normalizeValue(value, column, meta) {
     return value.slice(0, 19).replace('T', ' ');
   }
   if (meta.jsonColumns && meta.jsonColumns.has(column)) {
+    if (value === '') return null;
     try {
       return JSON.stringify(JSON.parse(String(value)));
     } catch (_err) {
-      return String(value);
+      return JSON.stringify(value);
     }
+  }
+  const columnType = meta.columnTypes && meta.columnTypes[column] ? meta.columnTypes[column] : '';
+  if (/^(DECIMAL|NUMERIC|DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
+    if (value === '') return null;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
   }
   return value;
 }
