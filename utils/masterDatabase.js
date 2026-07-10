@@ -1,3 +1,5 @@
+const { createMysqlConnection } = require('./mysqlRuntime');
+
 function normalizeEngine(value) {
   return String(value || 'sqlite').trim().toLowerCase();
 }
@@ -168,8 +170,7 @@ function createMysqlMasterDatabase({ mysqlConfig }) {
   if (!mysqlConfig) throw new Error('Configuracao MySQL nao informada para o master SaaS.');
 
   async function withConnection(callback) {
-    const mysql = require('mysql2/promise');
-    const connection = await mysql.createConnection(mysqlConfig);
+    const connection = await createMysqlConnection(mysqlConfig);
     try {
       return await callback(connection);
     } finally {

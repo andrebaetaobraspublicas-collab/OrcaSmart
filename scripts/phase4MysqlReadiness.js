@@ -6,37 +6,40 @@ const MYSQL_DIR = path.join(APP_DIR, 'database', 'mysql');
 const OUTPUT_JSON = path.join(APP_DIR, 'docs', 'generated', 'fase4-mysql-readiness.json');
 const OUTPUT_MD = path.join(APP_DIR, 'docs', 'generated', 'fase4-mysql-readiness.md');
 
-const REQUIRED_ENV = ['MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE'];
-const OPTIONAL_ENV = ['MYSQL_PORT', 'MYSQL_SSL'];
+const {
+  createMysqlConnectionWithMeta,
+  mysqlConfig,
+  mysqlConfigStatus,
+} = require('../utils/mysqlRuntime');
+
+const REQUIRED_ENV = ['MYSQL_HOST ou MYSQL_SOCKET_PATH', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE'];
+const OPTIONAL_ENV = ['MYSQL_PORT', 'MYSQL_SSL', 'MYSQL_SOCKET_PATH'];
 const MASTER_TABLES = ['tenants', 'users', 'subscriptions', 'admin_audit_log'];
 
 function envValue(name) {
   return process.env[name] || process.env[`ORCASMART_${name}`] || '';
 }
 
-function mysqlConfig() {
-  return {
-    host: envValue('MYSQL_HOST'),
-    port: Number(envValue('MYSQL_PORT') || 3306),
-    user: envValue('MYSQL_USER'),
-    password: envValue('MYSQL_PASSWORD'),
-    database: envValue('MYSQL_DATABASE'),
-    ssl: String(envValue('MYSQL_SSL')).toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
-    multipleStatements: true,
-  };
-}
-
 function envReport() {
+  const config = mysqlConfig();
+  const status = mysqlConfigStatus(config);
+  const configuredByName = new Map([
+    ['MYSQL_HOST ou MYSQL_SOCKET_PATH', Boolean(config.host || config.socketPath)],
+    ['MYSQL_USER', Boolean(config.user)],
+    ['MYSQL_PASSWORD', Boolean(config.password)],
+    ['MYSQL_DATABASE', Boolean(config.database)],
+  ]);
   return {
     required: REQUIRED_ENV.map(name => ({
       name,
-      configured: Boolean(envValue(name)),
+      configured: configuredByName.get(name) || false,
     })),
     optional: OPTIONAL_ENV.map(name => ({
       name,
       configured: Boolean(envValue(name)),
       value: name === 'MYSQL_SSL' ? envValue(name) || 'false' : envValue(name) || null,
     })),
+    missing: status.missing,
   };
 }
 
@@ -49,25 +52,21 @@ function mysqlSchemaFiles() {
   return fs.readdirSync(MYSQL_DIR).filter(name => name.endsWith('.sql')).sort();
 }
 
-async function loadMysql() {
-  try {
-    return require('mysql2/promise');
-  } catch (_err) {
-    return null;
-  }
-}
-
 async function checkConnection(config) {
-  const mysql = await loadMysql();
-  if (!mysql) {
+  let connected = null;
+  try {
+    connected = await createMysqlConnectionWithMeta(config);
+  } catch (err) {
     return {
       ok: false,
       skipped: false,
-      error: 'Dependencia mysql2 nao disponivel. Execute npm install.',
+      error: err.message,
+      code: err.code || null,
+      attempts: err.attempts || [],
     };
   }
 
-  const connection = await mysql.createConnection(config);
+  const { connection, meta } = connected;
   try {
     const [versionRows] = await connection.query('SELECT VERSION() AS version, DATABASE() AS database_name');
     const [tableRows] = await connection.query(
@@ -87,6 +86,10 @@ async function checkConnection(config) {
     return {
       ok: true,
       skipped: false,
+      connection_mode: meta.mode,
+      socket_path: meta.socketPath,
+      host: meta.host,
+      port: meta.port,
       server_version: versionRows[0] ? versionRows[0].version : null,
       database_name: versionRows[0] ? versionRows[0].database_name : null,
       existing_tables: existingTables,
@@ -126,7 +129,10 @@ function writeReports(report) {
   if (report.connection.skipped) {
     lines.push(report.connection.reason);
   } else if (report.connection.ok) {
-    lines.push(`Conexao realizada com sucesso em ${report.mysql.host}:${report.mysql.port}/${report.mysql.database}.`);
+    const target = report.connection.connection_mode === 'socket'
+      ? `socket ${report.connection.socket_path}`
+      : `${report.mysql.host}:${report.mysql.port}`;
+    lines.push(`Conexao realizada com sucesso em ${target}/${report.mysql.database}.`);
     lines.push(`Servidor: ${report.connection.server_version || '-'}`);
     lines.push('', '| Tabela master | Existe | Registros |', '|---|---:|---:|');
     for (const table of MASTER_TABLES) {
@@ -164,6 +170,7 @@ async function main() {
     mysql: {
       host: config.host || null,
       port: config.port,
+      socket_path: config.socketPath || null,
       database: config.database || null,
       user: config.user || null,
       ssl: Boolean(config.ssl),

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
+const { createMysqlConnection, mysqlConfig, mysqlConfigStatus } = require('../utils/mysqlRuntime');
 
 const APP_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = process.env.ORCASMART_DATA_DIR || process.env.ORCASMART_SAAS_BASE_DIR || APP_DIR;
@@ -20,22 +21,8 @@ function parseArgs(argv) {
   };
 }
 
-function mysqlConfig() {
-  return {
-    host: process.env.MYSQL_HOST || process.env.ORCASMART_MYSQL_HOST || '',
-    port: Number(process.env.MYSQL_PORT || process.env.ORCASMART_MYSQL_PORT || 3306),
-    user: process.env.MYSQL_USER || process.env.ORCASMART_MYSQL_USER || '',
-    password: process.env.MYSQL_PASSWORD || process.env.ORCASMART_MYSQL_PASSWORD || '',
-    database: process.env.MYSQL_DATABASE || process.env.ORCASMART_MYSQL_DATABASE || '',
-    ssl: String(process.env.MYSQL_SSL || process.env.ORCASMART_MYSQL_SSL || '').toLowerCase() === 'true'
-      ? { rejectUnauthorized: false }
-      : undefined,
-    multipleStatements: true,
-  };
-}
-
 function hasMysqlConfig(config) {
-  return Boolean(config.host && config.user && config.database);
+  return mysqlConfigStatus(config).configured;
 }
 
 function openSqlite(dbPath) {
@@ -198,8 +185,8 @@ function schemaSql() {
 }
 
 async function migrateToMysql(mapped, options, config) {
-  const mysql = await loadMysql();
-  const connection = await mysql.createConnection(config);
+  await loadMysql();
+  const connection = await createMysqlConnection(config);
   const result = {
     schemaApplied: false,
     reset: false,
@@ -295,6 +282,7 @@ async function main() {
     mysql: {
       host: config.host || null,
       port: config.port,
+      socketPath: config.socketPath || null,
       database: config.database || null,
       user: config.user || null,
       configured: hasMysqlConfig(config),
@@ -318,7 +306,7 @@ async function main() {
     const reasons = [];
     if (!options.execute) reasons.push('flag --execute nao informada');
     if (options.execute && !options.confirm) reasons.push('confirmacao --confirm=orcasmart2-master nao informada');
-    if (!hasMysqlConfig(config)) reasons.push('variaveis MYSQL_HOST, MYSQL_USER e MYSQL_DATABASE nao configuradas');
+    if (!hasMysqlConfig(config)) reasons.push(`variaveis MySQL incompletas: ${mysqlConfigStatus(config).missing.join(', ')}`);
     report.execution.skipped_reason = `Migracao nao executada: ${reasons.join('; ')}.`;
   } else {
     if (issues.length) {

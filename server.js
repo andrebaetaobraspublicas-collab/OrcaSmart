@@ -93,6 +93,8 @@ const bootState = {
     error: null,
     serverVersion: null,
     databaseName: null,
+    connectionMode: null,
+    socketPath: null,
   },
 };
 
@@ -667,6 +669,9 @@ function buildPhase4Status() {
     mysql: {
       host: bootState.mysql.config.host,
       port: bootState.mysql.config.port,
+      socketPath: bootState.mysql.config.socketPath,
+      connectedSocketPath: bootState.mysql.socketPath,
+      connectionMode: bootState.mysql.connectionMode || bootState.mysql.config.connectionMode,
       database: bootState.mysql.config.database,
       user: bootState.mysql.config.user,
       ssl: bootState.mysql.config.ssl,
@@ -959,6 +964,8 @@ async function initializeMysqlPilot() {
   bootState.mysql.error = null;
   bootState.mysql.serverVersion = null;
   bootState.mysql.databaseName = null;
+  bootState.mysql.connectionMode = null;
+  bootState.mysql.socketPath = null;
 
   if (!bootState.mysql.enabled) return;
   if (bootState.mysql.checking) return;
@@ -970,6 +977,8 @@ async function initializeMysqlPilot() {
     bootState.mysql.error = result.error ? result.error.message : null;
     bootState.mysql.serverVersion = result.serverVersion || null;
     bootState.mysql.databaseName = result.databaseName || null;
+    bootState.mysql.connectionMode = result.connectionMode || null;
+    bootState.mysql.socketPath = result.socketPath || null;
     if (!result.ok && result.missing && result.missing.length) {
       bootState.mysql.error = `Variaveis MySQL ausentes: ${result.missing.join(', ')}`;
     }

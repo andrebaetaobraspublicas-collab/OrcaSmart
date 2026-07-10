@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { mysqlConfig, mysqlConfigStatus } = require('../utils/mysqlRuntime');
 
 const APP_DIR = path.resolve(__dirname, '..');
 const GENERATED_DIR = path.join(APP_DIR, 'docs', 'generated');
@@ -80,8 +81,7 @@ function hasFlag(name) {
 }
 
 function mysqlEnvMissing() {
-  return ['MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']
-    .filter(name => !(process.env[name] || process.env[`ORCASMART_${name}`]));
+  return mysqlConfigStatus(mysqlConfig()).missing;
 }
 
 function tail(text, maxChars = 6000) {

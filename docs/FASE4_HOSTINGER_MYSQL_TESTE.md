@@ -21,6 +21,7 @@ ORCASMART_DB_ENGINE=mysql-pilot
 ORCASMART_MASTER_DB_ENGINE=sqlite
 MYSQL_HOST=host-do-banco
 MYSQL_PORT=3306
+MYSQL_SOCKET_PATH=
 MYSQL_USER=usuario-do-banco
 MYSQL_PASSWORD=senha-do-banco
 MYSQL_DATABASE=banco-do-orcasmart2-teste
@@ -28,6 +29,8 @@ MYSQL_SSL=false
 ```
 
 As mesmas variaveis tambem podem ser definidas com prefixo `ORCASMART_`, por exemplo `ORCASMART_MYSQL_HOST`.
+
+Em hospedagens compartilhadas, o MySQL pode aceitar conexao local por socket em vez de TCP. Se `MYSQL_HOST=localhost` ou `MYSQL_HOST=127.0.0.1` retornar `Access denied` ou erro de conexao, configure tambem `MYSQL_SOCKET_PATH` com o caminho informado pelo provedor. O OrçaSmart2 tenta automaticamente os caminhos comuns `/var/lib/mysql/mysql.sock`, `/run/mysqld/mysqld.sock` e `/tmp/mysql.sock` quando o host e local.
 
 Enquanto `ORCASMART_DB_ENGINE=mysql-pilot`, o sistema testa e informa a saude do MySQL no endpoint `/api/status`, mas as rotas de negocio continuam usando SQLite. Essa e a configuracao recomendada para validar a migracao sem mudar a operacao do ambiente de teste.
 
