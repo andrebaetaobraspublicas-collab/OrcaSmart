@@ -160,6 +160,7 @@ const DATA_DIR = ensureDataDir();
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const SHARED_CATALOG_DB_PATH = path.join(DATA_DIR, 'shared_catalog.db');
+const PHASE4_CUTOVER_REPORT_PATH = path.join(APP_DIR, 'docs', 'generated', 'fase4-cutover-readiness.json');
 const MASTER_DB_ENGINE = masterDatabaseEngine();
 const phase2Manifest = {
   modelVersion: PHASE2_MODEL_VERSION,
@@ -172,6 +173,61 @@ const phase2Manifest = {
 function getSqlite3() {
   if (!sqlite3) sqlite3 = require('sqlite3').verbose();
   return sqlite3;
+}
+
+function readPhase4CutoverReport() {
+  if (!fs.existsSync(PHASE4_CUTOVER_REPORT_PATH)) {
+    return {
+      ready: false,
+      reportExists: false,
+      generatedAt: null,
+      error: null,
+    };
+  }
+
+  try {
+    const report = JSON.parse(fs.readFileSync(PHASE4_CUTOVER_REPORT_PATH, 'utf8'));
+    return {
+      ready: Boolean(report.ready),
+      reportExists: true,
+      generatedAt: report.generated_at || null,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      ready: false,
+      reportExists: true,
+      generatedAt: null,
+      error: err && err.message ? err.message : String(err),
+    };
+  }
+}
+
+function phase4RuntimePolicy() {
+  const cutover = readPhase4CutoverReport();
+  const mysqlRuntimeRequested = bootState.mysql.engine === 'mysql';
+
+  if (mysqlRuntimeRequested && !cutover.ready) {
+    return {
+      ...cutover,
+      blocked: true,
+      policy: 'mysql solicitado, mas bloqueado ate o gate de prontidao ficar OK; mantenha SQLite',
+    };
+  }
+
+  if (bootState.mysql.enabled) {
+    return {
+      ...cutover,
+      blocked: false,
+      policy: 'mysql diagnosticado em paralelo; rotas de negocio ainda usam SQLite',
+    };
+  }
+
+  return {
+    ...cutover,
+    blocked: false,
+    policy: 'sqlite ativo; MySQL desabilitado',
+  };
 }
 
 function dbFileTemplate() {
@@ -555,6 +611,8 @@ app.get('/', (req, res) => {
 app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.html')));
 
 function buildPhase4Status() {
+  const runtime = phase4RuntimePolicy();
+
   return {
     databaseEngine: bootState.mysql.engine,
     masterDatabaseEngine: masterDb.engine,
@@ -573,9 +631,12 @@ function buildPhase4Status() {
       serverVersion: bootState.mysql.serverVersion,
       databaseName: bootState.mysql.databaseName,
     },
-    runtimePolicy: bootState.mysql.enabled
-      ? 'mysql diagnosticado em paralelo; rotas de negocio ainda usam SQLite'
-      : 'sqlite ativo; MySQL desabilitado',
+    cutoverReady: runtime.ready,
+    cutoverReportExists: runtime.reportExists,
+    cutoverGeneratedAt: runtime.generatedAt,
+    cutoverBlocked: runtime.blocked,
+    cutoverError: runtime.error,
+    runtimePolicy: runtime.policy,
   };
 }
 
