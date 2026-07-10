@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-schema-cache-guard';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mixed-tenant-catalog-reads';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -604,6 +604,7 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
 
   const canReadCatalog = bootState.sharedCatalogReady && fs.existsSync(SHARED_CATALOG_DB_PATH);
   const referencesCatalogTable = sqlReferencesCatalogTable(sql);
+  const needsTenantAttachedCatalog = /\bcatalog\.|\btenant_/i.test(String(sql || ''));
   const tryCatalog = () => {
     if (!canReadCatalog) return undefined;
     const catalogDb = openSqlite(SHARED_CATALOG_DB_PATH);
@@ -615,13 +616,12 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
     });
   };
 
-  if (canReadCatalog && method !== 'run' && referencesCatalogTable) {
+  if (canReadCatalog && method !== 'run' && referencesCatalogTable && !needsTenantAttachedCatalog) {
     return tryCatalog();
   }
 
   return runTenantCatalogReadMethod(method, sql, params || [], function onTenantResult(tenantErr, tenantResult) {
     const context = this;
-    const needsTenantAttachedCatalog = /\bcatalog\.|\btenant_/i.test(String(sql || ''));
     const missingTenantTable = tenantErr && /no such table/i.test(String(tenantErr.message || ''));
     const emptyTenantGet = !tenantErr && method === 'get' && !tenantResult;
     if (canReadCatalog && !needsTenantAttachedCatalog && (missingTenantTable || emptyTenantGet)) {
