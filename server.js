@@ -54,12 +54,12 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mysql-normalized-validation';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-persistent-session-mysql-validation';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
 const LEGACY_DB_PATH = path.join(APP_DIR, 'database', 'orcamento_obras.db');
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+let SESSION_SECRET = process.env.SESSION_SECRET || '';
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
@@ -160,6 +160,23 @@ function ensureDataDir() {
 }
 
 const DATA_DIR = ensureDataDir();
+function loadPersistentSessionSecret() {
+  if (SESSION_SECRET) return SESSION_SECRET;
+  const secretPath = path.join(DATA_DIR, 'session_secret.txt');
+  try {
+    if (fs.existsSync(secretPath)) {
+      const stored = fs.readFileSync(secretPath, 'utf8').trim();
+      if (stored) return stored;
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(secretPath, generated, { encoding: 'utf8', mode: 0o600 });
+    return generated;
+  } catch (err) {
+    console.error('Falha ao persistir SESSION_SECRET. Usando segredo temporario:', err);
+    return crypto.randomBytes(32).toString('hex');
+  }
+}
+SESSION_SECRET = loadPersistentSessionSecret();
 const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const SHARED_CATALOG_DB_PATH = path.join(DATA_DIR, 'shared_catalog.db');
