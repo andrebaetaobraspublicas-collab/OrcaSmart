@@ -36,6 +36,8 @@ async function getDataBase(db, id) {
 
 async function createDataBase(db, payload) {
   const data = normalize(payload);
+  const existente = (await repo.listDatasBase(db)).find(row => Number(row.mes) === data.mes && Number(row.ano) === data.ano);
+  if (existente) throw httpError(409, `Data-base ${String(data.mes).padStart(2, '0')}/${data.ano} ja existe.`);
   try {
     return await repo.createDataBase(db, data);
   } catch (err) {
@@ -45,6 +47,13 @@ async function createDataBase(db, payload) {
 
 async function updateDataBase(db, id, payload) {
   const data = normalize(payload);
+  const existente = (await repo.listDatasBase(db)).find(row => (
+    Number(row.mes) === data.mes &&
+    Number(row.ano) === data.ano &&
+    String(row.id_data_base) !== String(id) &&
+    String(row.tenant_rowid ? `tenant:${row.tenant_rowid}` : '') !== String(id)
+  ));
+  if (existente) throw httpError(409, `Data-base ${String(data.mes).padStart(2, '0')}/${data.ano} ja existe.`);
   try {
     const row = await repo.updateDataBase(db, id, data);
     if (!row) throw httpError(404, 'Data-base nao encontrada.');

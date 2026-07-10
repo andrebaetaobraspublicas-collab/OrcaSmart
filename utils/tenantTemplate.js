@@ -72,6 +72,7 @@ const OVERRIDE_SOURCE_TABLES = [
   'perfis_encargos',
   'precos_equipamentos',
   'precos_insumos',
+  'datas_base',
 ];
 
 async function createOverrideTables(db) {
