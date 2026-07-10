@@ -748,6 +748,7 @@ app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
     version: APP_VERSION,
     build: BUILD_ID,
     phase4Status: buildPhase4Status,
+    generatedReportsDir: path.join(APP_DIR, 'docs', 'generated'),
     phase2Manifest,
     backupDir: path.join(DATA_DIR, 'backups', 'phase2_1'),
   },

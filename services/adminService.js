@@ -15,6 +15,63 @@ const SUBSCRIPTION_STATUSES = [
   'unpaid',
 ];
 
+function readJsonFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { exists: false, path: filePath || null, data: null, error: null };
+  }
+  try {
+    return {
+      exists: true,
+      path: filePath,
+      data: JSON.parse(fs.readFileSync(filePath, 'utf8')),
+      error: null,
+    };
+  } catch (err) {
+    return {
+      exists: true,
+      path: filePath,
+      data: null,
+      error: err.message,
+    };
+  }
+}
+
+function phase4CutoverStatus(options = {}) {
+  const reportPath = path.join(
+    options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated'),
+    'fase4-cutover-readiness.json',
+  );
+  const report = readJsonFile(reportPath);
+  if (!report.exists) {
+    return {
+      ready: false,
+      report_exists: false,
+      report_path: reportPath,
+      generated_at: null,
+      checks: [],
+      error: null,
+    };
+  }
+  if (report.error) {
+    return {
+      ready: false,
+      report_exists: true,
+      report_path: reportPath,
+      generated_at: null,
+      checks: [],
+      error: report.error,
+    };
+  }
+  return {
+    ready: Boolean(report.data && report.data.ready),
+    report_exists: true,
+    report_path: reportPath,
+    generated_at: report.data ? report.data.generated_at || null : null,
+    checks: report.data && Array.isArray(report.data.checks) ? report.data.checks : [],
+    error: null,
+  };
+}
+
 function openReadOnly(sqlite3, dbPath) {
   return new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY);
 }
@@ -127,6 +184,7 @@ async function systemHealth(master, options = {}) {
   }));
   const missingTenantDbs = tenantFiles.filter(item => !item.db.exists);
   const phase4 = typeof options.phase4Status === 'function' ? options.phase4Status() : null;
+  if (phase4) phase4.cutover = phase4CutoverStatus(options);
 
   return {
     app: options.app || null,

@@ -37,6 +37,13 @@ const AdminPage = {
     return date.toLocaleDateString('pt-BR');
   },
 
+  fmtDateTime(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('pt-BR');
+  },
+
   epochToDateInput(value) {
     const n = Number(value || 0);
     if (!n) return '';
@@ -76,6 +83,12 @@ const AdminPage = {
     if (String(value).toLowerCase().includes('trial')) return this.badge(value, 'yellow');
     if (String(value).toLowerCase().includes('active')) return this.badge(value, 'green');
     return this.badge(value, 'gray');
+  },
+
+  phase4CheckBadge(check = {}) {
+    if (check.ok) return this.badge('OK', 'green');
+    if (check.skipped) return this.badge('Pendente', 'yellow');
+    return this.badge('Falha', 'red');
   },
 
   subscriptionText(items = []) {
@@ -394,6 +407,14 @@ const AdminPage = {
     const missing = health.tenant_files ? health.tenant_files.missing : 0;
     const phase4 = health.phase4 || {};
     const mysql = phase4.mysql || {};
+    const cutover = phase4.cutover || {};
+    const cutoverChecks = Array.isArray(cutover.checks) ? cutover.checks : [];
+    const cutoverRows = cutoverChecks.map(check => `
+      <tr>
+        <td class="fw-500">${Utils.esc(check.label || check.key || '-')}</td>
+        <td>${this.phase4CheckBadge(check)}</td>
+        <td class="text-3 text-sm">${Utils.esc(check.detail || '')}</td>
+      </tr>`).join('');
     const rows = tables.map(item => `
       <tr>
         <td class="fw-500">${Utils.esc(item.table)}</td>
@@ -477,6 +498,35 @@ const AdminPage = {
             <div class="fw-500">${Utils.esc(phase4.runtimePolicy || '-')}</div>
           </div>
           ${phase4.mysqlError ? `<div style="grid-column:1 / -1">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(phase4.mysqlError)}</span></div>` : ''}
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px">
+        <div class="section-card-header">
+          <div>
+            <h2>Prontidao para virada MySQL</h2>
+            <p class="text-3 text-sm">Gate operacional para liberar a troca do runtime somente apos validar master, catalogo e tenants.</p>
+          </div>
+          ${cutover.ready ? this.badge('Pronto para teste', 'green') : this.badge('Nao habilitar runtime', 'red')}
+        </div>
+        <div class="section-card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+            <div>
+              <div class="text-3 text-sm">Relatorio gerado em</div>
+              <div class="fw-500">${Utils.esc(this.fmtDateTime(cutover.generated_at))}</div>
+            </div>
+            <div>
+              <div class="text-3 text-sm">Arquivo do relatorio</div>
+              <div class="fw-500" style="word-break:break-all">${Utils.esc(cutover.report_path || '-')}</div>
+            </div>
+          </div>
+          ${cutover.error ? `<div style="margin-bottom:12px">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(cutover.error)}</span></div>` : ''}
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>Checagem</th><th>Status</th><th>Detalhe</th></tr></thead>
+              <tbody>${cutoverRows || `<tr><td colspan="3" class="text-center text-3">Relatorio de prontidao ainda nao gerado.</td></tr>`}</tbody>
+            </table>
+          </div>
         </div>
       </div>
 
