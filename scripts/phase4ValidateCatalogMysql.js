@@ -103,7 +103,13 @@ function normalizeValue(value, column, meta) {
     }
   }
   const columnType = meta.columnTypes && meta.columnTypes[column] ? meta.columnTypes[column] : '';
-  if (/^(DECIMAL|NUMERIC|DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
+  const decimal = columnType.match(/^(DECIMAL|NUMERIC)\(\d+,\s*(\d+)\)/i);
+  if (decimal) {
+    if (value === '') return null;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric.toFixed(Number(decimal[2]));
+  }
+  if (/^(DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
     if (value === '') return null;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric;
