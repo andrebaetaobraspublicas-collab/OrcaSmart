@@ -1,6 +1,6 @@
 # Fase 4 - Plano de migracao dos tenants para MySQL
 
-Gerado em: 2026-07-09T23:59:37.099Z
+Gerado em: 2026-07-10T00:07:45.294Z
 Master SQLite: C:\SistemaOrcamentoObras\saas\saas_master.db
 Modo: dry-run
 

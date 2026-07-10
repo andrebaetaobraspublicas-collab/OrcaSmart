@@ -17,6 +17,7 @@ Guarde o host, nome completo do banco, usuario completo e senha. Em contas compa
 No app Node.js de teste do OrçaSmart2, configure:
 
 ```env
+ORCASMART_DB_ENGINE=mysql-pilot
 MYSQL_HOST=host-do-banco
 MYSQL_PORT=3306
 MYSQL_USER=usuario-do-banco
@@ -26,6 +27,8 @@ MYSQL_SSL=false
 ```
 
 As mesmas variaveis tambem podem ser definidas com prefixo `ORCASMART_`, por exemplo `ORCASMART_MYSQL_HOST`.
+
+Enquanto `ORCASMART_DB_ENGINE=mysql-pilot`, o sistema testa e informa a saude do MySQL no endpoint `/api/status`, mas as rotas de negocio continuam usando SQLite. Essa e a configuracao recomendada para validar a migracao sem mudar a operacao do ambiente de teste.
 
 ## 3. Validar a prontidao
 
@@ -41,6 +44,14 @@ O comando gera:
 - `docs/generated/fase4-mysql-readiness.md`
 
 Se a conexao estiver correta, o relatorio informara a versao do servidor MySQL/MariaDB e as tabelas master ja existentes.
+
+Tambem confira no navegador:
+
+```text
+https://forestgreen-turkey-374923.hostingersite.com/api/status
+```
+
+A secao `phase4` deve mostrar `databaseEngine: mysql-pilot`, `mysqlConfigured: true` e `mysqlReady: true` antes da migracao real.
 
 ## 4. Migrar o master_saas
 

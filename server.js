@@ -28,6 +28,13 @@ const {
 const { ensureSharedCatalog } = require('./utils/sharedCatalog');
 const { buildTenantTemplate } = require('./utils/tenantTemplate');
 const { ensureRuntimeTenantSchema } = require('./utils/runtimeTenantSchema');
+const {
+  databaseEngine,
+  mysqlConfig,
+  mysqlConfigStatus,
+  mysqlModeEnabled,
+  checkMysqlRuntime,
+} = require('./utils/mysqlRuntime');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -42,7 +49,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260709-admin-tenants-ops';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mysql-pilot-runtime';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -71,6 +78,17 @@ const bootState = {
   tenantTemplateBuilding: false,
   tenantTemplateError: null,
   tenantTemplateStats: null,
+  mysql: {
+    engine: databaseEngine(),
+    enabled: mysqlModeEnabled(),
+    configured: mysqlConfigStatus().configured,
+    config: mysqlConfigStatus(),
+    ready: false,
+    checking: false,
+    error: null,
+    serverVersion: null,
+    databaseName: null,
+  },
 };
 
 function defaultDataDir() {
@@ -632,6 +650,27 @@ app.get('/api/status', (_req, res) => res.json({
     userOverrideDomains: USER_OVERRIDE_DOMAINS,
     userOverrideTables: USER_OVERRIDE_TABLES,
   },
+  phase4: {
+    databaseEngine: bootState.mysql.engine,
+    mysqlEnabled: bootState.mysql.enabled,
+    mysqlConfigured: bootState.mysql.configured,
+    mysqlReady: bootState.mysql.ready,
+    mysqlChecking: bootState.mysql.checking,
+    mysqlError: bootState.mysql.error,
+    mysql: {
+      host: bootState.mysql.config.host,
+      port: bootState.mysql.config.port,
+      database: bootState.mysql.config.database,
+      user: bootState.mysql.config.user,
+      ssl: bootState.mysql.config.ssl,
+      missing: bootState.mysql.config.missing,
+      serverVersion: bootState.mysql.serverVersion,
+      databaseName: bootState.mysql.databaseName,
+    },
+    runtimePolicy: bootState.mysql.enabled
+      ? 'mysql diagnosticado em paralelo; rotas de negocio ainda usam SQLite'
+      : 'sqlite ativo; MySQL desabilitado',
+  },
 }));
 
 app.post('/api/auth/register', async (req, res) => {
@@ -866,9 +905,41 @@ async function initializeTenantTemplate() {
   }
 }
 
+async function initializeMysqlPilot() {
+  bootState.mysql.engine = databaseEngine();
+  bootState.mysql.enabled = mysqlModeEnabled();
+  bootState.mysql.config = mysqlConfigStatus();
+  bootState.mysql.configured = bootState.mysql.config.configured;
+  bootState.mysql.ready = false;
+  bootState.mysql.error = null;
+  bootState.mysql.serverVersion = null;
+  bootState.mysql.databaseName = null;
+
+  if (!bootState.mysql.enabled) return;
+  if (bootState.mysql.checking) return;
+  bootState.mysql.checking = true;
+  try {
+    const result = await checkMysqlRuntime(mysqlConfig());
+    bootState.mysql.ready = result.ok;
+    bootState.mysql.configured = result.configured;
+    bootState.mysql.error = result.error ? result.error.message : null;
+    bootState.mysql.serverVersion = result.serverVersion || null;
+    bootState.mysql.databaseName = result.databaseName || null;
+    if (!result.ok && result.missing && result.missing.length) {
+      bootState.mysql.error = `Variaveis MySQL ausentes: ${result.missing.join(', ')}`;
+    }
+  } catch (err) {
+    bootState.mysql.ready = false;
+    bootState.mysql.error = err && err.message ? err.message : String(err);
+  } finally {
+    bootState.mysql.checking = false;
+  }
+}
+
 initMasterDb()
   .then(async () => {
     await initializeTenantTemplate();
+    await initializeMysqlPilot();
     bootState.databaseReady = true;
     startServer();
     initializeSharedCatalog();
@@ -876,6 +947,7 @@ initMasterDb()
   .catch((err) => {
     bootState.databaseError = err && err.message ? err.message : String(err);
     console.error('Falha ao inicializar banco SaaS:', err);
+    initializeMysqlPilot();
     startServer();
     initializeSharedCatalog();
   });
