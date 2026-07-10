@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { sanitizeObrasMunicipioForeignKey } = require('./tenantObrasSchema');
 
 function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
@@ -248,6 +249,7 @@ async function buildTenantTemplate(options) {
       await run(db, `DROP TABLE IF EXISTS ${quoteIdent(table)}`);
       droppedTables.push(table);
     }
+    await sanitizeObrasMunicipioForeignKey(db);
     const clearedTables = await clearTenantTables(db, manifest);
     await createTenantMetadata(db, manifest, droppedTables, clearedTables, overrideTables);
     await run(db, 'VACUUM');
