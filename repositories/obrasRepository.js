@@ -35,6 +35,11 @@ function obraParams(data = {}) {
     data.endereco || null,
     data.area_construida_m2 || null,
     data.situacao || 'Ativa',
+    data.cib || null,
+    data.id_municipio || null,
+    data.ano_realizacao || null,
+    data.fator_setorial ?? 0.5,
+    data.redutor_compras_governamentais ?? 0,
   ];
 }
 
@@ -61,15 +66,17 @@ async function getObra(db, id) {
 async function createObra(db, data) {
   const result = await run(db, `
     INSERT INTO obras (codigo_obra, nome_obra, descricao, tipo_obra, contratante,
-      municipio, uf, endereco, area_construida_m2, situacao)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`, obraParams(data));
+      municipio, uf, endereco, area_construida_m2, situacao,
+      cib, id_municipio, ano_realizacao, fator_setorial, redutor_compras_governamentais)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, obraParams(data));
   return one(db, 'SELECT * FROM obras WHERE id_obra = ?', [result.lastID]);
 }
 
 async function updateObra(db, id, data) {
   const result = await run(db, `
     UPDATE obras SET codigo_obra=?, nome_obra=?, descricao=?, tipo_obra=?,
-      contratante=?, municipio=?, uf=?, endereco=?, area_construida_m2=?, situacao=?
+      contratante=?, municipio=?, uf=?, endereco=?, area_construida_m2=?, situacao=?,
+      cib=?, id_municipio=?, ano_realizacao=?, fator_setorial=?, redutor_compras_governamentais=?
     WHERE id_obra=?`, [...obraParams(data), id]);
   if (!result.changes) return null;
   return one(db, 'SELECT * FROM obras WHERE id_obra = ?', [id]);
@@ -89,8 +96,9 @@ async function duplicarObra(db, id) {
   if (!row) return null;
   const result = await run(db, `
     INSERT INTO obras (codigo_obra, nome_obra, descricao, tipo_obra, contratante,
-      municipio, uf, endereco, area_construida_m2, situacao)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`, [
+      municipio, uf, endereco, area_construida_m2, situacao,
+      cib, id_municipio, ano_realizacao, fator_setorial, redutor_compras_governamentais)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
     row.codigo_obra ? `${row.codigo_obra}-COPIA` : null,
     `Copia de ${row.nome_obra}`,
     row.descricao,
@@ -101,6 +109,11 @@ async function duplicarObra(db, id) {
     row.endereco,
     row.area_construida_m2,
     'Ativa',
+    row.cib,
+    row.id_municipio,
+    row.ano_realizacao,
+    row.fator_setorial,
+    row.redutor_compras_governamentais,
   ]);
   return one(db, 'SELECT * FROM obras WHERE id_obra = ?', [result.lastID]);
 }
