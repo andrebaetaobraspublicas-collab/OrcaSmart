@@ -240,6 +240,7 @@ async function buildTenantTemplate(options) {
     await run(db, 'PRAGMA foreign_keys = OFF');
     overrideTables = await createOverrideTables(db);
     await sanitizeTenantForeignKeysToCatalog(db, manifest.catalogTables, manifest.tenantTables);
+    await run(db, 'PRAGMA foreign_keys = OFF');
     for (const table of [...manifest.catalogTables].reverse()) {
       const exists = await get(
         db,
