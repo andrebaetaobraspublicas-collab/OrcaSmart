@@ -76,6 +76,14 @@ Use `--reset` somente quando o banco de teste puder ser limpo antes da carga:
 npm run phase4:migrate-master-mysql -- --execute --reset --confirm=orcasmart2-master
 ```
 
+Antes de qualquer virada do master SaaS para MySQL, valide a paridade entre SQLite e MySQL:
+
+```bash
+npm run phase4:validate-master-mysql
+```
+
+O relatorio deve indicar contagens e hashes iguais para `tenants`, `users`, `subscriptions` e `admin_audit_log`.
+
 ## 5. Migrar o catalogo global compartilhado
 
 O catalogo global contem os dados comuns a todos os usuarios: fontes referenciais, insumos, composicoes, encargos, BDI, municipios, custos horarios e tabelas auxiliares.

@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-07-10T00:50:25.905Z",
+  "sqlite_master_path": "C:\\SistemaOrcamentoObras\\saas\\saas_master.db",
+  "mysql": {
+    "host": null,
+    "port": 3306,
+    "database": null,
+    "user": null,
+    "configured": false,
+    "missing": [
+      "MYSQL_HOST",
+      "MYSQL_USER",
+      "MYSQL_PASSWORD",
+      "MYSQL_DATABASE"
+    ]
+  },
+  "sqlite": {
+    "tenants": {
+      "exists": true,
+      "count": 5,
+      "hash": "b66abfc2e2089d013e69eb2e883a8f2722296a415507a9ab64657c774b41e4a3"
+    },
+    "users": {
+      "exists": true,
+      "count": 5,
+      "hash": "4d2ab439f14e5a6d9185a1ab19adafe0818140204206d85286649857b70d9fe8"
+    },
+    "subscriptions": {
+      "exists": true,
+      "count": 5,
+      "hash": "385f187b324a9326a9e6088cd070057023e2f6dbd5d54c4bfcd9c0a256d62f39"
+    },
+    "admin_audit_log": {
+      "exists": false,
+      "count": 0,
+      "hash": null
+    }
+  },
+  "mysql_snapshot": null,
+  "validation": {
+    "ok": false,
+    "skipped": true,
+    "skipped_reason": "Variaveis MySQL ausentes: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE.",
+    "issues": [
+      "Variaveis MySQL ausentes: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+    ],
+    "rows": [
+      {
+        "table": "tenants",
+        "sqlite_count": 5,
+        "mysql_count": null,
+        "count_match": false,
+        "hash_match": false,
+        "mysql_exists": false,
+        "missing_columns": []
+      },
+      {
+        "table": "users",
+        "sqlite_count": 5,
+        "mysql_count": null,
+        "count_match": false,
+        "hash_match": false,
+        "mysql_exists": false,
+        "missing_columns": []
+      },
+      {
+        "table": "subscriptions",
+        "sqlite_count": 5,
+        "mysql_count": null,
+        "count_match": false,
+        "hash_match": false,
+        "mysql_exists": false,
+        "missing_columns": []
+      },
+      {
+        "table": "admin_audit_log",
+        "sqlite_count": 0,
+        "mysql_count": null,
+        "count_match": false,
+        "hash_match": false,
+        "mysql_exists": false,
+        "missing_columns": []
+      }
+    ]
+  }
+}
