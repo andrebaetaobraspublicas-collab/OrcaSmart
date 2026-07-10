@@ -101,6 +101,19 @@ Router.register('orcamento-sintetico', async () => {
   function temBdiLinha(item) {
     return item.bdi_percentual_linha !== null && item.bdi_percentual_linha !== undefined && item.bdi_percentual_linha !== '';
   }
+  function perfilBdiSelecionado() {
+    const idPerfil = parseInt(document.getElementById('selBdiPerfilOS')?.value, 10) || null;
+    if (!idPerfil) return { idPerfil: null, percentual: null, perfil: null };
+    const perfil = bdis.find(b => Number(b.id_perfil_bdi) === idPerfil) || null;
+    const percentual = perfil ? (parseFloat(perfil.bdi_percentual) || 0) : null;
+    return { idPerfil, percentual, perfil };
+  }
+  function sincronizarBdiSelecionadoNoInput() {
+    const input = document.getElementById('inputBdiPctOS');
+    const { percentual } = perfilBdiSelecionado();
+    if (input && percentual !== null) input.value = percentual.toFixed(4);
+    return percentual;
+  }
   function valorItem(item) {
     if (item.tipo_linha === 'section') return 0;
     return precoUnit(item) * (parseFloat(item.quantidade) || 0);
@@ -586,15 +599,11 @@ Router.register('orcamento-sintetico', async () => {
     // BDI — sincroniza select → input
     // Registrar globals para botões onclick= da toolbar (eliminam acumulação de listeners)
     window._osAplicarBdi = async () => {
-      const pct = parseFloat(document.getElementById('inputBdiPctOS')?.value) || 0;
-      const idP = parseInt(document.getElementById('selBdiPerfilOS')?.value) || null;
-      document.getElementById('selBdiPerfilOS')?.addEventListener('change', e => {
-        const id2 = parseInt(e.target.value);
-        if (id2) {
-          const p2 = bdis.find(b => b.id_perfil_bdi === id2);
-          if (p2) document.getElementById('inputBdiPctOS').value = p2.bdi_percentual.toFixed(4);
-        }
-      }, { once: true });
+      const { idPerfil, percentual } = perfilBdiSelecionado();
+      const inputPct = parseFloat(document.getElementById('inputBdiPctOS')?.value);
+      const pct = percentual !== null ? percentual : (Number.isFinite(inputPct) ? inputPct : 0);
+      const idP = idPerfil;
+      if (percentual !== null) sincronizarBdiSelecionadoNoInput();
       try {
         if (pct !== bdiPct || idP !== (orc.id_bdi_perfil || null)) guardarUndo('bdi');
         await API.osSint.updateBdi(id_orc, { bdi_percentual: pct, id_bdi_perfil: idP });
@@ -605,13 +614,7 @@ Router.register('orcamento-sintetico', async () => {
       } catch(e) { Toast.error(e.message); }
     };
     // Bind BDI select change (safe because renderPage replaces the element)
-    document.getElementById('selBdiPerfilOS')?.addEventListener('change', e => {
-      const id2 = parseInt(e.target.value);
-      if (id2) {
-        const p2 = bdis.find(b => b.id_perfil_bdi === id2);
-        if (p2) document.getElementById('inputBdiPctOS').value = p2.bdi_percentual.toFixed(4);
-      }
-    });
+    document.getElementById('selBdiPerfilOS')?.addEventListener('change', sincronizarBdiSelecionadoNoInput);
 
     window._osAddSecao   = () => addRow('section', 0);
     window._osAddSub     = addSubSecao;
