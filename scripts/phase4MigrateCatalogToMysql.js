@@ -81,19 +81,22 @@ function parseMysqlTables() {
     const columns = [];
     const primaryKey = [];
     const jsonColumns = new Set();
+    const columnTypes = {};
     for (const rawLine of body.split('\n')) {
       const line = rawLine.trim().replace(/,$/, '');
       const column = line.match(/^`([^`]+)`\s+([A-Z0-9(),\s]+)(?:\s|$)/i);
       if (column) {
         columns.push(column[1]);
-        if (/^JSON\b/i.test(column[2].trim())) jsonColumns.add(column[1]);
+        const columnType = column[2].trim().toUpperCase();
+        columnTypes[column[1]] = columnType;
+        if (/^JSON\b/i.test(columnType)) jsonColumns.add(column[1]);
       }
       const pk = line.match(/^PRIMARY KEY\s+\((.+)\)$/i);
       if (pk) {
         for (const col of pk[1].matchAll(/`([^`]+)`/g)) primaryKey.push(col[1]);
       }
     }
-    tables.set(tableName, { columns, primaryKey, jsonColumns });
+    tables.set(tableName, { columns, primaryKey, jsonColumns, columnTypes });
   }
   return tables;
 }
@@ -113,6 +116,17 @@ function normalizeValue(value, column, tableMeta) {
     } catch (_err) {
       return JSON.stringify(value);
     }
+  }
+  const columnType = tableMeta.columnTypes && tableMeta.columnTypes[column] ? tableMeta.columnTypes[column] : '';
+  if (/^(DECIMAL|NUMERIC)\(/i.test(columnType)) {
+    if (value === '') return 0;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  if (/^(DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
+    if (value === '') return 0;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
   }
   return value;
 }

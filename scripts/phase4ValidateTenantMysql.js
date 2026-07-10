@@ -164,12 +164,12 @@ function normalizeValue(value, column, meta) {
   const columnType = meta.columnTypes && meta.columnTypes[column] ? meta.columnTypes[column] : '';
   const decimal = columnType.match(/^(DECIMAL|NUMERIC)\(\d+,\s*(\d+)\)/i);
   if (decimal) {
-    if (value === '') return null;
+    if (value === '') return Number(0).toFixed(Number(decimal[2]));
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric.toFixed(Number(decimal[2]));
   }
   if (/^(DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
-    if (value === '') return null;
+    if (value === '') return 0;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric;
   }
