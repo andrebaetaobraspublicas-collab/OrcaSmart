@@ -161,6 +161,7 @@ const MASTER_DB_PATH = path.join(DATA_DIR, 'saas_master.db');
 const TENANT_DB_DIR = path.join(DATA_DIR, 'tenant_dbs');
 const SHARED_CATALOG_DB_PATH = path.join(DATA_DIR, 'shared_catalog.db');
 const PHASE4_CUTOVER_REPORT_PATH = path.join(APP_DIR, 'docs', 'generated', 'fase4-cutover-readiness.json');
+const PHASE4_MYSQL_EXECUTION_REPORT_PATH = path.join(APP_DIR, 'docs', 'generated', 'fase4-mysql-execution.json');
 const MASTER_DB_ENGINE = masterDatabaseEngine();
 const phase2Manifest = {
   modelVersion: PHASE2_MODEL_VERSION,
@@ -198,6 +199,47 @@ function readPhase4CutoverReport() {
       ready: false,
       reportExists: true,
       generatedAt: null,
+      error: err && err.message ? err.message : String(err),
+    };
+  }
+}
+
+function readPhase4MysqlExecutionReport() {
+  if (!fs.existsSync(PHASE4_MYSQL_EXECUTION_REPORT_PATH)) {
+    return {
+      ok: false,
+      cutoverReady: false,
+      reportExists: false,
+      generatedAt: null,
+      reset: false,
+      blockedReasons: [],
+      failedSteps: [],
+      error: null,
+    };
+  }
+
+  try {
+    const report = JSON.parse(fs.readFileSync(PHASE4_MYSQL_EXECUTION_REPORT_PATH, 'utf8'));
+    const steps = Array.isArray(report.steps) ? report.steps : [];
+    return {
+      ok: Boolean(report.ok),
+      cutoverReady: Boolean(report.cutover_ready),
+      reportExists: true,
+      generatedAt: report.generated_at || null,
+      reset: Boolean(report.reset),
+      blockedReasons: Array.isArray(report.blocked_reasons) ? report.blocked_reasons : [],
+      failedSteps: steps.filter(step => !step.ok && !step.skipped).map(step => step.key || step.label || 'step'),
+      error: null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      cutoverReady: false,
+      reportExists: true,
+      generatedAt: null,
+      reset: false,
+      blockedReasons: [],
+      failedSteps: [],
       error: err && err.message ? err.message : String(err),
     };
   }
@@ -612,6 +654,7 @@ app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.htm
 
 function buildPhase4Status() {
   const runtime = phase4RuntimePolicy();
+  const mysqlExecution = readPhase4MysqlExecutionReport();
 
   return {
     databaseEngine: bootState.mysql.engine,
@@ -636,6 +679,7 @@ function buildPhase4Status() {
     cutoverGeneratedAt: runtime.generatedAt,
     cutoverBlocked: runtime.blocked,
     cutoverError: runtime.error,
+    mysqlExecution,
     runtimePolicy: runtime.policy,
   };
 }
