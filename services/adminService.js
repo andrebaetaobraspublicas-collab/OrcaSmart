@@ -72,6 +72,45 @@ function phase4CutoverStatus(options = {}) {
   };
 }
 
+function phase4RehearsalStatus(options = {}) {
+  const reportPath = path.join(
+    options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated'),
+    'fase4-migration-rehearsal.json',
+  );
+  const report = readJsonFile(reportPath);
+  if (!report.exists) {
+    return {
+      ok: false,
+      cutover_ready: false,
+      report_exists: false,
+      report_path: reportPath,
+      generated_at: null,
+      steps: [],
+      error: null,
+    };
+  }
+  if (report.error) {
+    return {
+      ok: false,
+      cutover_ready: false,
+      report_exists: true,
+      report_path: reportPath,
+      generated_at: null,
+      steps: [],
+      error: report.error,
+    };
+  }
+  return {
+    ok: Boolean(report.data && report.data.ok),
+    cutover_ready: Boolean(report.data && report.data.cutover_ready),
+    report_exists: true,
+    report_path: reportPath,
+    generated_at: report.data ? report.data.generated_at || null : null,
+    steps: report.data && Array.isArray(report.data.steps) ? report.data.steps : [],
+    error: null,
+  };
+}
+
 function openReadOnly(sqlite3, dbPath) {
   return new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY);
 }
@@ -184,7 +223,10 @@ async function systemHealth(master, options = {}) {
   }));
   const missingTenantDbs = tenantFiles.filter(item => !item.db.exists);
   const phase4 = typeof options.phase4Status === 'function' ? options.phase4Status() : null;
-  if (phase4) phase4.cutover = phase4CutoverStatus(options);
+  if (phase4) {
+    phase4.cutover = phase4CutoverStatus(options);
+    phase4.rehearsal = phase4RehearsalStatus(options);
+  }
 
   return {
     app: options.app || null,

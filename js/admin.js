@@ -407,7 +407,16 @@ const AdminPage = {
     const missing = health.tenant_files ? health.tenant_files.missing : 0;
     const phase4 = health.phase4 || {};
     const mysql = phase4.mysql || {};
+    const rehearsal = phase4.rehearsal || {};
     const cutover = phase4.cutover || {};
+    const rehearsalSteps = Array.isArray(rehearsal.steps) ? rehearsal.steps : [];
+    const rehearsalRows = rehearsalSteps.map(step => `
+      <tr>
+        <td class="fw-500">${Utils.esc(step.label || step.key || '-')}</td>
+        <td>${step.ok ? this.badge('OK', 'green') : this.badge('Falha', 'red')}</td>
+        <td>${this.fmtInt(step.duration_ms)} ms</td>
+        <td class="text-3 text-sm">${Utils.esc(step.command || '')}</td>
+      </tr>`).join('');
     const cutoverChecks = Array.isArray(cutover.checks) ? cutover.checks : [];
     const cutoverRows = cutoverChecks.map(check => `
       <tr>
@@ -498,6 +507,39 @@ const AdminPage = {
             <div class="fw-500">${Utils.esc(phase4.runtimePolicy || '-')}</div>
           </div>
           ${phase4.mysqlError ? `<div style="grid-column:1 / -1">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(phase4.mysqlError)}</span></div>` : ''}
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px">
+        <div class="section-card-header">
+          <div>
+            <h2>Ensaio completo da migracao MySQL</h2>
+            <p class="text-3 text-sm">Execucao auditavel dos passos de preparacao, dry-run e validacao antes da virada.</p>
+          </div>
+          ${rehearsal.ok ? this.badge(rehearsal.cutover_ready ? 'Pronto para virada' : 'Ensaio OK, virada pendente', rehearsal.cutover_ready ? 'green' : 'yellow') : this.badge('Ensaio pendente', 'red')}
+        </div>
+        <div class="section-card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">
+            <div>
+              <div class="text-3 text-sm">Relatorio gerado em</div>
+              <div class="fw-500">${Utils.esc(this.fmtDateTime(rehearsal.generated_at))}</div>
+            </div>
+            <div>
+              <div class="text-3 text-sm">Etapas executadas</div>
+              <div class="fw-500">${this.fmtInt(rehearsalSteps.length)}</div>
+            </div>
+            <div>
+              <div class="text-3 text-sm">Arquivo do relatorio</div>
+              <div class="fw-500" style="word-break:break-all">${Utils.esc(rehearsal.report_path || '-')}</div>
+            </div>
+          </div>
+          ${rehearsal.error ? `<div style="margin-bottom:12px">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(rehearsal.error)}</span></div>` : ''}
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th>Etapa</th><th>Status</th><th>Duracao</th><th>Comando</th></tr></thead>
+              <tbody>${rehearsalRows || `<tr><td colspan="4" class="text-center text-3">Relatorio de ensaio ainda nao gerado.</td></tr>`}</tbody>
+            </table>
+          </div>
         </div>
       </div>
 
