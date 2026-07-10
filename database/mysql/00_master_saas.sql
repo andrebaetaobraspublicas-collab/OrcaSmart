@@ -7,17 +7,18 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 CREATE TABLE IF NOT EXISTS `admin_audit_log` (
-  `id_audit_log` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `id_admin_user` BIGINT UNSIGNED NULL,
-  `id_tenant` BIGINT UNSIGNED NULL,
-  `action` VARCHAR(120) NOT NULL,
-  `entity_type` VARCHAR(120) NULL,
-  `entity_id` VARCHAR(191) NULL,
-  `details_json` JSON NULL,
+  `id_log` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id_admin` BIGINT UNSIGNED NULL,
+  `admin_email` VARCHAR(191) NULL,
+  `acao` VARCHAR(191) NOT NULL,
+  `entidade_tipo` VARCHAR(120) NOT NULL,
+  `entidade_id` VARCHAR(191) NOT NULL,
+  `antes` LONGTEXT NULL,
+  `depois` LONGTEXT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id_audit_log`),
-  KEY `idx_admin_audit_log_admin` (`id_admin_user`),
-  KEY `idx_admin_audit_log_tenant` (`id_tenant`),
+  PRIMARY KEY (`id_log`),
+  KEY `idx_admin_audit_log_admin` (`id_admin`),
+  KEY `idx_admin_audit_log_entidade` (`entidade_tipo`, `entidade_id`),
   KEY `idx_admin_audit_log_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
