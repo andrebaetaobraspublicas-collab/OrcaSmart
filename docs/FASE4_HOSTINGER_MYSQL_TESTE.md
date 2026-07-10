@@ -154,6 +154,20 @@ O plano da carga e gravado em:
 - `docs/generated/fase4-tenant-migration-plan.json`
 - `docs/generated/fase4-tenant-migration-plan.md`
 
+Depois da carga, valide a paridade SQLite x MySQL dos tenants migrados:
+
+```bash
+npm run phase4:validate-tenant-mysql -- --all
+```
+
+Para validar apenas um tenant especifico:
+
+```bash
+npm run phase4:validate-tenant-mysql -- --tenant=1
+```
+
+O relatorio deve indicar contagens e hashes iguais para as tabelas privadas e de override de cada tenant.
+
 ## 7. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.
