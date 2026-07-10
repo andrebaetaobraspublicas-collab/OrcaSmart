@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mysql-pilot-runtime';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-mysql-socket-fallback';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -91,6 +91,7 @@ const bootState = {
     ready: false,
     checking: false,
     error: null,
+    errorAttempts: [],
     serverVersion: null,
     databaseName: null,
     connectionMode: null,
@@ -666,6 +667,7 @@ function buildPhase4Status() {
     mysqlReady: bootState.mysql.ready,
     mysqlChecking: bootState.mysql.checking,
     mysqlError: bootState.mysql.error,
+    mysqlErrorAttempts: bootState.mysql.errorAttempts,
     mysql: {
       host: bootState.mysql.config.host,
       port: bootState.mysql.config.port,
@@ -962,6 +964,7 @@ async function initializeMysqlPilot() {
   bootState.mysql.configured = bootState.mysql.config.configured;
   bootState.mysql.ready = false;
   bootState.mysql.error = null;
+  bootState.mysql.errorAttempts = [];
   bootState.mysql.serverVersion = null;
   bootState.mysql.databaseName = null;
   bootState.mysql.connectionMode = null;
@@ -975,6 +978,7 @@ async function initializeMysqlPilot() {
     bootState.mysql.ready = result.ok;
     bootState.mysql.configured = result.configured;
     bootState.mysql.error = result.error ? result.error.message : null;
+    bootState.mysql.errorAttempts = result.error && result.error.attempts ? result.error.attempts : [];
     bootState.mysql.serverVersion = result.serverVersion || null;
     bootState.mysql.databaseName = result.databaseName || null;
     bootState.mysql.connectionMode = result.connectionMode || null;
@@ -985,6 +989,7 @@ async function initializeMysqlPilot() {
   } catch (err) {
     bootState.mysql.ready = false;
     bootState.mysql.error = err && err.message ? err.message : String(err);
+    bootState.mysql.errorAttempts = err && err.attempts ? err.attempts : [];
   } finally {
     bootState.mysql.checking = false;
   }
