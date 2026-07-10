@@ -1,4 +1,5 @@
-const { run } = require('./tenantTemplate');
+const fs = require('fs');
+const { run, OVERRIDE_SOURCE_TABLES } = require('./tenantTemplate');
 const { CATALOG_TABLES, TENANT_TABLES } = require('./dataModelManifest');
 const { sanitizeTenantForeignKeysToCatalog } = require('./tenantForeignKeySanitizer');
 
@@ -21,10 +22,56 @@ async function ensureColumn(db, table, column, definition) {
   return true;
 }
 
-async function ensureRuntimeTenantSchema(db, key = '') {
+async function tableExists(db, table, schema = 'main') {
+  const rows = await all(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+    [table],
+  ).catch(() => []);
+  return rows.length > 0;
+}
+
+async function attachCatalogIfAvailable(db, catalogPath) {
+  if (!catalogPath || !fs.existsSync(catalogPath)) return false;
+  const databases = await all(db, 'PRAGMA database_list').catch(() => []);
+  if (databases.some(row => row.name === 'catalog')) return false;
+  await run(db, 'ATTACH DATABASE ? AS catalog', [catalogPath]);
+  return true;
+}
+
+async function ensureRuntimeOverrideTables(db, catalogPath = '') {
+  const attachedHere = await attachCatalogIfAvailable(db, catalogPath).catch(() => false);
+  try {
+    for (const sourceTable of OVERRIDE_SOURCE_TABLES) {
+      const targetTable = `tenant_${sourceTable}`;
+      if (!(await tableExists(db, targetTable))) {
+        if (await tableExists(db, sourceTable)) {
+          await run(db, `CREATE TABLE ${quoteIdent(targetTable)} AS SELECT * FROM ${quoteIdent(sourceTable)} WHERE 0`);
+        } else if (await tableExists(db, sourceTable, 'catalog')) {
+          await run(db, `CREATE TABLE ${quoteIdent(targetTable)} AS SELECT * FROM catalog.${quoteIdent(sourceTable)} WHERE 0`);
+        } else {
+          continue;
+        }
+      }
+
+      await ensureColumn(db, targetTable, 'tenant_catalog_id', 'INTEGER');
+      await ensureColumn(db, targetTable, 'tenant_override_action', "TEXT NOT NULL DEFAULT 'create'");
+      await ensureColumn(db, targetTable, 'tenant_override_status', "TEXT NOT NULL DEFAULT 'active'");
+      await ensureColumn(db, targetTable, 'tenant_created_at', 'TEXT');
+      await ensureColumn(db, targetTable, 'tenant_updated_at', 'TEXT');
+      await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_catalog`)} ON ${quoteIdent(targetTable)} (tenant_catalog_id)`);
+      await run(db, `CREATE INDEX IF NOT EXISTS ${quoteIdent(`idx_${targetTable}_status`)} ON ${quoteIdent(targetTable)} (tenant_override_status)`);
+    }
+  } finally {
+    if (attachedHere) await run(db, 'DETACH DATABASE catalog').catch(() => {});
+  }
+}
+
+async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   if (key && ensured.has(key)) return false;
 
   await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES, TENANT_TABLES);
+  await ensureRuntimeOverrideTables(db, catalogPath);
 
   await run(db, `
     CREATE TABLE IF NOT EXISTS tenant_referential_overrides (

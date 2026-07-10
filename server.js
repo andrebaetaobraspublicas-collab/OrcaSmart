@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-qualify-catalog-reads';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-runtime-override-tables';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -395,7 +395,7 @@ async function ensureTenantDatabaseReady(dbPath) {
   if (!resolvedPath.startsWith(path.resolve(TENANT_DB_DIR)) || !fs.existsSync(resolvedPath)) return;
   const db = openSqlite(resolvedPath);
   try {
-    await ensureRuntimeTenantSchema(db, resolvedPath);
+    await ensureRuntimeTenantSchema(db, resolvedPath, SHARED_CATALOG_DB_PATH);
     tenantSchemaReady.add(resolvedPath);
   } finally {
     await new Promise(resolve => db.close(resolve));
@@ -669,7 +669,7 @@ function runTenantCatalogReadMethod(method, sql, params, cb) {
     });
   };
 
-  ensureRuntimeTenantSchema(db, dbPath).then(executeRead).catch(err => finish({}, err));
+  ensureRuntimeTenantSchema(db, dbPath, SHARED_CATALOG_DB_PATH).then(executeRead).catch(err => finish({}, err));
   return undefined;
 }
 
