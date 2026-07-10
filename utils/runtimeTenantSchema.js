@@ -1,5 +1,6 @@
 const { run } = require('./tenantTemplate');
-const { sanitizeObrasMunicipioForeignKey } = require('./tenantObrasSchema');
+const { CATALOG_TABLES } = require('./dataModelManifest');
+const { sanitizeTenantForeignKeysToCatalog } = require('./tenantForeignKeySanitizer');
 
 const ensured = new Set();
 
@@ -23,7 +24,7 @@ async function ensureColumn(db, table, column, definition) {
 async function ensureRuntimeTenantSchema(db, key = '') {
   if (key && ensured.has(key)) return false;
 
-  await sanitizeObrasMunicipioForeignKey(db);
+  await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES);
 
   await run(db, `
     CREATE TABLE IF NOT EXISTS tenant_referential_overrides (

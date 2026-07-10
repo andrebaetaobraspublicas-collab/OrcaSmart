@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { sanitizeObrasMunicipioForeignKey } = require('./tenantObrasSchema');
+const { sanitizeTenantForeignKeysToCatalog } = require('./tenantForeignKeySanitizer');
 
 function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
@@ -239,6 +239,7 @@ async function buildTenantTemplate(options) {
   try {
     await run(db, 'PRAGMA foreign_keys = OFF');
     overrideTables = await createOverrideTables(db);
+    await sanitizeTenantForeignKeysToCatalog(db, manifest.catalogTables);
     for (const table of [...manifest.catalogTables].reverse()) {
       const exists = await get(
         db,
@@ -249,7 +250,6 @@ async function buildTenantTemplate(options) {
       await run(db, `DROP TABLE IF EXISTS ${quoteIdent(table)}`);
       droppedTables.push(table);
     }
-    await sanitizeObrasMunicipioForeignKey(db);
     const clearedTables = await clearTenantTables(db, manifest);
     await createTenantMetadata(db, manifest, droppedTables, clearedTables, overrideTables);
     await run(db, 'VACUUM');
