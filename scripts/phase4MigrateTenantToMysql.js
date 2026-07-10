@@ -162,10 +162,12 @@ function normalizeValue(value, column, tableMeta) {
     }
   }
   const columnType = tableMeta.columnTypes && tableMeta.columnTypes[column] ? tableMeta.columnTypes[column] : '';
-  if (/^(DECIMAL|NUMERIC)\(/i.test(columnType)) {
-    if (value === '') return 0;
+  const decimal = columnType.match(/^(DECIMAL|NUMERIC)\(\d+,\s*(\d+)\)/i);
+  if (decimal) {
+    const scale = Number(decimal[2]);
+    if (value === '') return Number(0).toFixed(scale);
     const numeric = Number(value);
-    if (Number.isFinite(numeric)) return numeric;
+    if (Number.isFinite(numeric)) return numeric.toFixed(scale);
   }
   if (/^(DOUBLE|FLOAT|BIGINT|INT|INTEGER|TINYINT|SMALLINT|MEDIUMINT)\b/i.test(columnType)) {
     if (value === '') return 0;
