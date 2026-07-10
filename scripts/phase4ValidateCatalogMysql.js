@@ -128,6 +128,86 @@ function fingerprint(rows, columns, meta) {
   return hash.digest('hex');
 }
 
+function normalizeRow(row, columns, meta) {
+  const normalized = {};
+  for (const column of columns) normalized[column] = normalizeValue(row[column], column, meta);
+  return normalized;
+}
+
+function summarizeValue(value) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (text === undefined) return String(value);
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+}
+
+async function loadSqliteRowsForDiff(db, table, columns, meta) {
+  const order = orderColumns(meta, columns).map(quoteSqlite).join(', ');
+  const projection = columns.map(quoteSqlite).join(', ');
+  return projection
+    ? sqliteAll(db, `SELECT ${projection} FROM ${quoteSqlite(table)}${order ? ` ORDER BY ${order}` : ''}`)
+    : [];
+}
+
+async function loadMysqlRowsForDiff(connection, table, columns, meta) {
+  const order = orderColumns(meta, columns).map(quoteMysql).join(', ');
+  const projection = columns.map(quoteMysql).join(', ');
+  const [rows] = projection
+    ? await connection.query(`SELECT ${projection} FROM ${quoteMysql(table)}${order ? ` ORDER BY ${order}` : ''}`)
+    : [[]];
+  return rows;
+}
+
+function firstRowDifference(table, sqliteRows, mysqlRows, columns, meta) {
+  const order = orderColumns(meta, columns);
+  const rowCount = Math.min(sqliteRows.length, mysqlRows.length);
+  for (let index = 0; index < rowCount; index += 1) {
+    const left = normalizeRow(sqliteRows[index], columns, meta);
+    const right = normalizeRow(mysqlRows[index], columns, meta);
+    if (JSON.stringify(left) === JSON.stringify(right)) continue;
+    const differingColumns = [];
+    for (const column of columns) {
+      if (JSON.stringify(left[column]) === JSON.stringify(right[column])) continue;
+      differingColumns.push({
+        column,
+        sqlite: summarizeValue(left[column]),
+        mysql: summarizeValue(right[column]),
+      });
+      if (differingColumns.length >= 12) break;
+    }
+    const orderKey = {};
+    for (const column of order) {
+      orderKey[column] = summarizeValue(left[column]);
+    }
+    return { table, row_index: index, order_key: orderKey, differing_columns: differingColumns };
+  }
+  return { table, row_index: null, order_key: {}, differing_columns: [], note: 'Nenhuma linha divergente encontrada no limite comparado.' };
+}
+
+async function diffDiagnostics(config, schema, sqliteTables, mysqlTables) {
+  const diagnostics = [];
+  const dbPath = sourceCatalogPath();
+  const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY);
+  const connection = await createMysqlConnection(config);
+  try {
+    for (const table of CATALOG_TABLES) {
+      const left = sqliteTables[table] || {};
+      const right = mysqlTables[table] || {};
+      if (!left.exists || !right.exists || left.count !== right.count || left.hash === right.hash) continue;
+      const meta = schema.get(table) || { columns: [], primaryKey: [], jsonColumns: new Set(), columnTypes: {} };
+      const columns = left.migratedColumns || [];
+      const sqliteRows = await loadSqliteRowsForDiff(db, table, columns, meta);
+      const mysqlRows = await loadMysqlRowsForDiff(connection, table, columns, meta);
+      diagnostics.push(firstRowDifference(table, sqliteRows, mysqlRows, columns, meta));
+    }
+  } finally {
+    await closeSqlite(db);
+    await connection.end().catch(() => {});
+  }
+  return diagnostics;
+}
+
 async function sqliteSnapshotForTable(db, table, meta) {
   const exists = await sqliteTableExists(db, table);
   if (!exists) return { exists: false, count: 0, hash: null, columns: [], migratedColumns: [] };
@@ -269,6 +349,22 @@ function writeReports(report) {
     '',
     report.validation.issues.length ? report.validation.issues.map(issue => `- ${issue}`).join('\n') : 'Nenhum problema encontrado.',
     '',
+    '## Diagnostico de divergencias',
+    '',
+    report.validation.diagnostics && report.validation.diagnostics.length
+      ? report.validation.diagnostics.map(item => [
+        `### ${item.table}`,
+        '',
+        `Linha: ${item.row_index ?? '-'}`,
+        `Chave: ${JSON.stringify(item.order_key || {})}`,
+        '',
+        '| Coluna | SQLite | MySQL |',
+        '|---|---|---|',
+        ...(item.differing_columns || []).map(diff => `| ${diff.column} | ${String(diff.sqlite).replace(/\|/g, '\\|')} | ${String(diff.mysql).replace(/\|/g, '\\|')} |`),
+        '',
+      ].join('\n')).join('\n')
+      : 'Nenhuma divergencia detalhada registrada.',
+    '',
   ];
   fs.writeFileSync(OUTPUT_MD, `${lines.join('\n')}\n`, 'utf8');
 }
@@ -326,10 +422,14 @@ async function main() {
 
   const mysql = await mysqlSnapshot(config, schema, sqlite.tables);
   report.validation = compare(sqlite.tables, mysql);
+  if (!report.validation.ok) {
+    report.validation.diagnostics = await diffDiagnostics(config, schema, sqlite.tables, mysql);
+  }
   writeReports(report);
   console.log(JSON.stringify({
     ok: report.validation.ok,
     issues: report.validation.issues,
+    diagnostics: report.validation.diagnostics || [],
     report_json: OUTPUT_JSON,
     report_md: OUTPUT_MD,
   }, null, 2));
