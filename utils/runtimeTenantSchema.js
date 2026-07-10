@@ -67,8 +67,21 @@ async function ensureRuntimeOverrideTables(db, catalogPath = '') {
   }
 }
 
+async function missingRuntimeOverrideTables(db) {
+  const missing = [];
+  for (const sourceTable of OVERRIDE_SOURCE_TABLES) {
+    const targetTable = `tenant_${sourceTable}`;
+    if (!(await tableExists(db, targetTable))) missing.push(targetTable);
+  }
+  return missing;
+}
+
 async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
-  if (key && ensured.has(key)) return false;
+  if (key && ensured.has(key)) {
+    const missing = await missingRuntimeOverrideTables(db);
+    if (!missing.length) return false;
+    ensured.delete(key);
+  }
 
   await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES, TENANT_TABLES);
   await ensureRuntimeOverrideTables(db, catalogPath);
@@ -98,7 +111,10 @@ async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   await ensureColumn(db, 'obras', 'fator_setorial', 'REAL DEFAULT 0.5');
   await ensureColumn(db, 'obras', 'redutor_compras_governamentais', 'REAL DEFAULT 0');
 
-  if (key) ensured.add(key);
+  if (key) {
+    const missing = await missingRuntimeOverrideTables(db);
+    if (!missing.length) ensured.add(key);
+  }
   return true;
 }
 
