@@ -126,6 +126,7 @@ async function systemHealth(master, options = {}) {
     db: fileInfo(tenant.db_path),
   }));
   const missingTenantDbs = tenantFiles.filter(item => !item.db.exists);
+  const phase4 = typeof options.phase4Status === 'function' ? options.phase4Status() : null;
 
   return {
     app: options.app || null,
@@ -142,6 +143,7 @@ async function systemHealth(master, options = {}) {
       rows: tenantFiles,
     },
     phase2: options.phase2Manifest || null,
+    phase4,
   };
 }
 

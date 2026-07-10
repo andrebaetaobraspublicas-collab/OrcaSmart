@@ -392,6 +392,8 @@ const AdminPage = {
     const catalog = health.shared_catalog || {};
     const tables = Array.isArray(catalog.tables) ? catalog.tables : [];
     const missing = health.tenant_files ? health.tenant_files.missing : 0;
+    const phase4 = health.phase4 || {};
+    const mysql = phase4.mysql || {};
     const rows = tables.map(item => `
       <tr>
         <td class="fw-500">${Utils.esc(item.table)}</td>
@@ -426,6 +428,51 @@ const AdminPage = {
             <div class="text-3 text-sm">Tenants monitorados</div>
             <div class="fw-500">${this.fmtInt(health.tenant_files && health.tenant_files.total)}</div>
           </div>
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px">
+        <div class="section-card-header">
+          <div>
+            <h2>Fase 4 - MySQL</h2>
+            <p class="text-3 text-sm">Diagnostico do motor de banco sem alterar as rotas de negocio.</p>
+          </div>
+          ${phase4.mysqlReady ? this.badge('MySQL pronto', 'green') : this.badge(phase4.mysqlEnabled ? 'MySQL pendente' : 'SQLite ativo', phase4.mysqlEnabled ? 'yellow' : 'blue')}
+        </div>
+        <div class="section-card-body" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+          <div>
+            <div class="text-3 text-sm">Motor configurado</div>
+            <div class="fw-500">${Utils.esc(phase4.databaseEngine || 'sqlite')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">MySQL configurado</div>
+            <div class="fw-500">${phase4.mysqlConfigured ? 'Sim' : 'Nao'}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Banco MySQL</div>
+            <div class="fw-500" style="word-break:break-all">${Utils.esc(mysql.database || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Servidor</div>
+            <div class="fw-500" style="word-break:break-all">${Utils.esc(mysql.host || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Usuario</div>
+            <div class="fw-500" style="word-break:break-all">${Utils.esc(mysql.user || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Versao do servidor</div>
+            <div class="fw-500">${Utils.esc(mysql.serverVersion || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Variaveis ausentes</div>
+            <div class="fw-500">${Utils.esc((mysql.missing || []).join(', ') || '-')}</div>
+          </div>
+          <div>
+            <div class="text-3 text-sm">Politica atual</div>
+            <div class="fw-500">${Utils.esc(phase4.runtimePolicy || '-')}</div>
+          </div>
+          ${phase4.mysqlError ? `<div style="grid-column:1 / -1">${this.badge('Erro', 'red')} <span class="text-3 text-sm">${Utils.esc(phase4.mysqlError)}</span></div>` : ''}
         </div>
       </div>
 

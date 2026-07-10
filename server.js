@@ -622,6 +622,30 @@ app.get('/', (req, res) => {
 
 app.get('/login.html', (_req, res) => res.sendFile(path.join(APP_DIR, 'login.html')));
 
+function buildPhase4Status() {
+  return {
+    databaseEngine: bootState.mysql.engine,
+    mysqlEnabled: bootState.mysql.enabled,
+    mysqlConfigured: bootState.mysql.configured,
+    mysqlReady: bootState.mysql.ready,
+    mysqlChecking: bootState.mysql.checking,
+    mysqlError: bootState.mysql.error,
+    mysql: {
+      host: bootState.mysql.config.host,
+      port: bootState.mysql.config.port,
+      database: bootState.mysql.config.database,
+      user: bootState.mysql.config.user,
+      ssl: bootState.mysql.config.ssl,
+      missing: bootState.mysql.config.missing,
+      serverVersion: bootState.mysql.serverVersion,
+      databaseName: bootState.mysql.databaseName,
+    },
+    runtimePolicy: bootState.mysql.enabled
+      ? 'mysql diagnosticado em paralelo; rotas de negocio ainda usam SQLite'
+      : 'sqlite ativo; MySQL desabilitado',
+  };
+}
+
 app.get('/api/status', (_req, res) => res.json({
   status: 'ok',
   app: APP_NAME,
@@ -650,27 +674,7 @@ app.get('/api/status', (_req, res) => res.json({
     userOverrideDomains: USER_OVERRIDE_DOMAINS,
     userOverrideTables: USER_OVERRIDE_TABLES,
   },
-  phase4: {
-    databaseEngine: bootState.mysql.engine,
-    mysqlEnabled: bootState.mysql.enabled,
-    mysqlConfigured: bootState.mysql.configured,
-    mysqlReady: bootState.mysql.ready,
-    mysqlChecking: bootState.mysql.checking,
-    mysqlError: bootState.mysql.error,
-    mysql: {
-      host: bootState.mysql.config.host,
-      port: bootState.mysql.config.port,
-      database: bootState.mysql.config.database,
-      user: bootState.mysql.config.user,
-      ssl: bootState.mysql.config.ssl,
-      missing: bootState.mysql.config.missing,
-      serverVersion: bootState.mysql.serverVersion,
-      databaseName: bootState.mysql.databaseName,
-    },
-    runtimePolicy: bootState.mysql.enabled
-      ? 'mysql diagnosticado em paralelo; rotas de negocio ainda usam SQLite'
-      : 'sqlite ativo; MySQL desabilitado',
-  },
+  phase4: buildPhase4Status(),
 }));
 
 app.post('/api/auth/register', async (req, res) => {
@@ -810,6 +814,7 @@ app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
     app: APP_NAME,
     version: APP_VERSION,
     build: BUILD_ID,
+    phase4Status: buildPhase4Status,
     phase2Manifest,
     backupDir: path.join(DATA_DIR, 'backups', 'phase2_1'),
   },
