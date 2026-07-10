@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-07-10T01:14:19.316Z",
+  "ready": false,
+  "checks": [
+    {
+      "key": "mysql_connection",
+      "label": "Conexao MySQL/MariaDB",
+      "file": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-mysql-readiness.json",
+      "ok": false,
+      "skipped": true,
+      "detail": "Teste de conexao ignorado porque faltam variaveis: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+    },
+    {
+      "key": "master_parity",
+      "label": "Paridade master",
+      "file": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-master-mysql-validation.json",
+      "ok": false,
+      "skipped": true,
+      "detail": "Variaveis MySQL ausentes: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+    },
+    {
+      "key": "catalog_parity",
+      "label": "Paridade catalogo global",
+      "file": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-catalog-mysql-validation.json",
+      "ok": false,
+      "skipped": true,
+      "detail": "Variaveis MySQL ausentes: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+    },
+    {
+      "key": "tenant_parity",
+      "label": "Paridade tenants",
+      "file": "C:\\SistemaOrcamentoObras\\saas\\docs\\generated\\fase4-tenant-mysql-validation.json",
+      "ok": false,
+      "skipped": true,
+      "detail": "Variaveis MySQL ausentes: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE."
+    }
+  ]
+}

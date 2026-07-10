@@ -168,6 +168,16 @@ npm run phase4:validate-tenant-mysql -- --tenant=1
 
 O relatorio deve indicar contagens e hashes iguais para as tabelas privadas e de override de cada tenant.
 
-## 7. Premissa importante
+## 7. Validar prontidao para virada
+
+Depois de validar conexao, schema, master, catalogo e tenants, rode a checagem consolidada:
+
+```bash
+npm run phase4:cutover-readiness
+```
+
+O resultado so deve ser considerado pronto quando todas as checagens aparecerem como OK. Enquanto qualquer item estiver pendente, mantenha o runtime em SQLite.
+
+## 8. Premissa importante
 
 Nesta etapa o sistema ainda continua lendo o SQLite em runtime. O MySQL e validado em paralelo para reduzir risco. A troca efetiva do backend para MySQL deve ocorrer somente depois que a migracao do master e do catalogo global forem validadas no ambiente de teste.
