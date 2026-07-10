@@ -57,9 +57,12 @@ async function rebuildTableWithSql(db, table, createSql) {
   }
 }
 
-async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = []) {
+async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = [], tenantTables = null) {
   const catalogSet = new Set((catalogTables || []).map(table => String(table).toLowerCase()));
   if (!catalogSet.size) return [];
+  const tenantSet = tenantTables
+    ? new Set((tenantTables || []).map(table => String(table).toLowerCase()))
+    : null;
 
   const tables = await all(db, `
     SELECT name, sql FROM sqlite_master
@@ -68,6 +71,7 @@ async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = []) {
 
   const candidates = [];
   for (const table of tables) {
+    if (tenantSet && !tenantSet.has(String(table.name).toLowerCase())) continue;
     const foreignKeys = await all(db, `PRAGMA foreign_key_list(${quoteIdent(table.name)})`).catch(() => []);
     const catalogRefs = foreignKeys
       .map(row => String(row.table || ''))
