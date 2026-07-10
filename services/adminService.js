@@ -52,6 +52,15 @@ function generatedReportsDir(options = {}) {
   return options.generatedReportsDir || path.join(process.cwd(), 'docs', 'generated');
 }
 
+function phase4ScriptEnv(options = {}) {
+  return {
+    ...process.env,
+    ...(options.dataDir ? { ORCASMART_DATA_DIR: options.dataDir } : {}),
+    ...(options.masterPath ? { ORCASMART_SQLITE_MASTER_PATH: options.masterPath } : {}),
+    ...(options.catalogPath ? { ORCASMART_SQLITE_CATALOG_PATH: options.catalogPath } : {}),
+  };
+}
+
 function phase4ReportPath(reportName, options = {}) {
   const fileName = PHASE4_REPORT_FILES[String(reportName || '')];
   if (!fileName) {
@@ -247,7 +256,7 @@ async function runPhase4MysqlReadiness(master, actor, options = {}) {
 
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: appDir,
-    env: process.env,
+    env: phase4ScriptEnv(options),
     encoding: 'utf8',
     windowsHide: true,
     timeout: Number(options.phase4MysqlReadinessTimeoutMs || 60000),
@@ -291,7 +300,7 @@ async function runPhase4CutoverReadiness(master, actor, options = {}) {
 
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: appDir,
-    env: process.env,
+    env: phase4ScriptEnv(options),
     encoding: 'utf8',
     windowsHide: true,
     timeout: Number(options.phase4CutoverReadinessTimeoutMs || 60000),
@@ -342,7 +351,7 @@ async function runPhase4MysqlMigration(master, actor, data = {}, options = {}) {
   if (data.reset !== false) args.push('--reset');
   const result = spawnSync(process.execPath, args, {
     cwd: appDir,
-    env: process.env,
+    env: phase4ScriptEnv(options),
     encoding: 'utf8',
     windowsHide: true,
     timeout: Number(options.phase4MysqlMigrationTimeoutMs || 1800000),
@@ -388,7 +397,7 @@ async function runPhase4Rehearsal(master, actor, options = {}) {
 
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: appDir,
-    env: process.env,
+    env: phase4ScriptEnv(options),
     encoding: 'utf8',
     windowsHide: true,
     timeout: Number(options.phase4RehearsalTimeoutMs || 180000),
