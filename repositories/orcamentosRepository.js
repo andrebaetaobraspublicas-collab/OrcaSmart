@@ -109,6 +109,46 @@ function mesReferencia(row) {
   return `${String(mes).padStart(2, '0')}/${ano}`;
 }
 
+function parseMesRef(ref) {
+  const m = String(ref || '').match(/(\d{1,2})\D+(\d{4})/);
+  if (!m) return null;
+  const mes = Number(m[1]);
+  const ano = Number(m[2]);
+  if (!mes || !ano) return null;
+  return { mes, ano, index: ano * 12 + mes };
+}
+
+function regimeCompativel(situacaoRef, regime) {
+  if (!regime) return true;
+  const s = String(situacaoRef || '').toLowerCase();
+  if (!s) return true;
+  if (regime === 'Desonerado') {
+    return s.includes('desoner') && !s.includes('sem desoner');
+  }
+  if (regime === 'Onerado') {
+    return s === 'onerado'
+      || s.includes('sem desoner')
+      || (s.includes('onerado') && !s.includes('desonerado'));
+  }
+  return true;
+}
+
+function scoreRegime(situacaoRef, regime) {
+  if (!regime) return 2;
+  const s = String(situacaoRef || '').toLowerCase();
+  if (!s) return 1;
+  return regimeCompativel(situacaoRef, regime) ? 0 : 9;
+}
+
+function scoreMesRef(mesRef, contextoMesRef) {
+  const alvo = parseMesRef(contextoMesRef);
+  const atual = parseMesRef(mesRef);
+  if (!alvo || !atual) return 9999;
+  if (atual.index === alvo.index) return 0;
+  if (atual.ano === alvo.ano) return 100 + Math.abs(atual.index - alvo.index);
+  return 1000 + Math.abs(atual.index - alvo.index);
+}
+
 async function getDataBaseRef(db, idDataBase) {
   if (!idDataBase) return null;
   const sources = [
@@ -170,7 +210,7 @@ async function buscarComposicaoParaItem(db, item, contexto) {
   const fonteNorm = normalizarFonte(item.fonte);
   if (!fonteNorm || fonteNorm === 'USUARIO') return null;
   const codigos = codigoVariantesComposicao(item.codigo, item.fonte);
-  if (!codigos.length || !contexto?.mes_ref) return null;
+  if (!codigos.length) return null;
   const fontes = fonteAliases(item.fonte).map(f => String(f || '').toUpperCase());
   const hasTenant = await tableExists(db, 'tenant_composicoes');
   const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
@@ -186,28 +226,37 @@ async function buscarComposicaoParaItem(db, item, contexto) {
 
   const qCod = codigos.map(() => '?').join(',');
   const qFonte = fontes.map(() => '?').join(',');
-  const params = [...codigos, ...fontes, contexto.mes_ref];
-  let where = `WHERE codigo IN (${qCod}) AND UPPER(COALESCE(fonte,'')) IN (${qFonte}) AND mes_referencia = ?`;
-  if (contexto.regime === 'Desonerado') {
-    where += " AND (LOWER(COALESCE(situacao_ref,'')) LIKE '%desonerado%' OR LOWER(COALESCE(situacao_ref,'')) LIKE '%com desoner%')";
-  } else if (contexto.regime === 'Onerado') {
-    where += ` AND (
-      LOWER(COALESCE(situacao_ref,'')) = 'onerado'
-      OR LOWER(COALESCE(situacao_ref,'')) LIKE '%sem desoner%'
-      OR (LOWER(COALESCE(situacao_ref,'')) LIKE '%onerado%' AND LOWER(COALESCE(situacao_ref,'')) NOT LIKE '%desonerado%')
-    )`;
-  }
+  const params = [...codigos, ...fontes];
+  const where = `WHERE codigo IN (${qCod}) AND UPPER(COALESCE(fonte,'')) IN (${qFonte})`;
 
   const sql = `
     SELECT *
     FROM (${selects.join('\nUNION ALL\n')})
     ${where}
-    ORDER BY
-      CASE WHEN COALESCE(uf_referencia,'') = ? THEN 0 WHEN COALESCE(uf_referencia,'') = '' THEN 1 ELSE 2 END,
-      CASE WHEN _tenant_scope='tenant' THEN 0 ELSE 1 END,
-      CASE WHEN COALESCE(custo_unitario,0) > 0 THEN 0 ELSE 1 END
-    LIMIT 1`;
-  return one(db, sql, [...params, contexto.uf || '']).catch(() => null);
+    LIMIT 100`;
+  const candidatos = await all(db, sql, params).catch(() => []);
+  if (!candidatos.length) return null;
+
+  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime));
+  const base = compativeis.length ? compativeis : candidatos;
+  base.sort((a, b) => {
+    const ufA = String(a.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (a.uf_referencia ? 2 : 1);
+    const ufB = String(b.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (b.uf_referencia ? 2 : 1);
+    if (ufA !== ufB) return ufA - ufB;
+    const dataA = scoreMesRef(a.mes_referencia, contexto?.mes_ref);
+    const dataB = scoreMesRef(b.mes_referencia, contexto?.mes_ref);
+    if (dataA !== dataB) return dataA - dataB;
+    const regA = scoreRegime(a.situacao_ref, contexto?.regime);
+    const regB = scoreRegime(b.situacao_ref, contexto?.regime);
+    if (regA !== regB) return regA - regB;
+    const scopeA = a._tenant_scope === 'tenant' ? 0 : 1;
+    const scopeB = b._tenant_scope === 'tenant' ? 0 : 1;
+    if (scopeA !== scopeB) return scopeA - scopeB;
+    const custoA = toNum(a.custo_unitario, 0) > 0 ? 0 : 1;
+    const custoB = toNum(b.custo_unitario, 0) > 0 ? 0 : 1;
+    return custoA - custoB;
+  });
+  return base[0] || null;
 }
 
 const selectBase = `
@@ -576,8 +625,8 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
     detalhes,
     itens: rows || [],
     mensagem: vinculados
-      ? `${vinculados} linha(s) vinculada(s) a composicoes cadastradas na data-base ${contexto.mes_ref}.`
-      : `Nenhuma composicao correspondente foi encontrada na data-base ${contexto.mes_ref}.`,
+      ? `${vinculados} linha(s) vinculada(s) a composicoes cadastradas. O sistema priorizou a data-base ${contexto.mes_ref} e aceitou referencias compativeis quando nao havia mes exato.`
+      : `Nenhuma composicao correspondente foi encontrada para os codigos informados, mesmo buscando referencias compativeis a partir da data-base ${contexto.mes_ref}.`,
   };
 }
 
