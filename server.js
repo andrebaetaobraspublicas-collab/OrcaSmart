@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260711-composicoes-transacao';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260711-pavimentos-gerar-orcamento';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -921,6 +921,7 @@ app.use('/api', require('./routes/municipiosRoutes')(tenantDbProxy, { readDb: sh
 app.use('/api/encargos', require('./routes/encargosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/composicoes', require('./routes/composicoesRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/eventogramas', require('./routes/eventogramasRoutes')(tenantDbProxy));
+app.use('/api/pavimentos', require('./routes/pavimentosRoutes')(tenantDbProxy));
 app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
 app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
