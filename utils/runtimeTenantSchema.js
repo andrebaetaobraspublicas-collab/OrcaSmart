@@ -1,7 +1,10 @@
 const fs = require('fs');
 const { run, OVERRIDE_SOURCE_TABLES } = require('./tenantTemplate');
 const { CATALOG_TABLES, TENANT_TABLES } = require('./dataModelManifest');
-const { sanitizeTenantForeignKeysToCatalog } = require('./tenantForeignKeySanitizer');
+const {
+  repairTenantBackupForeignKeys,
+  sanitizeTenantForeignKeysToCatalog,
+} = require('./tenantForeignKeySanitizer');
 
 const ensured = new Set();
 
@@ -76,13 +79,29 @@ async function missingRuntimeOverrideTables(db) {
   return missing;
 }
 
+async function hasBackupForeignKeyRefs(db, tenantTables = null) {
+  const tenantSet = tenantTables
+    ? new Set((tenantTables || []).map(table => String(table).toLowerCase()))
+    : null;
+  const rows = await all(db, `
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+      AND sql IS NOT NULL
+      AND sql LIKE '%__fk_backup_%'`).catch(() => []);
+  return rows.some(row => !tenantSet || tenantSet.has(String(row.name).toLowerCase()));
+}
+
 async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   if (key && ensured.has(key)) {
     const missing = await missingRuntimeOverrideTables(db);
-    if (!missing.length) return false;
+    const needsFkRepair = await hasBackupForeignKeyRefs(db, TENANT_TABLES);
+    if (!missing.length && !needsFkRepair) return false;
     ensured.delete(key);
   }
 
+  await repairTenantBackupForeignKeys(db, TENANT_TABLES);
   await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES, TENANT_TABLES);
   await ensureRuntimeOverrideTables(db, catalogPath);
 

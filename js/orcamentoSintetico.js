@@ -785,16 +785,17 @@ Router.register('orcamento-sintetico', async () => {
     const item = itens.find(i => i.id_item === selectedId);
     const isSection = item?.tipo_linha === 'section';
     const isItem    = item?.tipo_linha === 'item';
+    const secaoSub  = secaoReferenciaParaSubsecao();
 
     const btnSub  = document.getElementById('btnAddSub');
     const btnVinc = document.getElementById('btnVincular');
     const btnExcl = document.getElementById('btnExcluir');
 
     if (btnSub) {
-      btnSub.disabled = !isSection;
-      if (isSection) {
+      btnSub.disabled = !secaoSub;
+      if (secaoSub) {
         btnSub.style.cssText = 'background:#0369a1;color:#fff;border:1px solid #0369a1;opacity:1;transition:all .2s;font-weight:600';
-        btnSub.title = `Adicionar subseção em "${item.descricao}"`;
+        btnSub.title = `Adicionar subseção em "${secaoSub.descricao}"`;
       } else {
         btnSub.style.cssText = 'background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;opacity:.45;transition:all .2s';
         btnSub.title = 'Selecione uma seção primeiro (clique na linha de seção)';
@@ -990,12 +991,28 @@ Router.register('orcamento-sintetico', async () => {
     } catch(e) { Toast.error(e.message); }
   }
 
+  function secaoReferenciaParaSubsecao() {
+    if (selectedId === null || selectedId === undefined) return null;
+    const idx = itens.findIndex(i => i.id_item === selectedId);
+    if (idx < 0) return null;
+    const item = itens[idx];
+    if (item?.tipo_linha === 'section') return item;
+
+    for (let i = idx - 1; i >= 0; i--) {
+      const cand = itens[i];
+      if (cand?.tipo_linha !== 'section') continue;
+      if ((cand.profundidade || 0) < (item.profundidade || 0)) return cand;
+    }
+    return null;
+  }
+
   function addSubSecao() {
-    const ref = itens.find(i => i.id_item === selectedId);
-    if (!ref || ref.tipo_linha !== 'section') {
+    const ref = secaoReferenciaParaSubsecao();
+    if (!ref) {
       Toast.warning('Selecione uma seção para adicionar subseção.'); return;
     }
-    addRow('section', ref.profundidade + 1);
+    selectedId = ref.id_item;
+    addRow('section', (ref.profundidade || 0) + 1);
   }
 
   /* ═══════════════════ EXCLUIR ═══════════════════════════════════════════════ */

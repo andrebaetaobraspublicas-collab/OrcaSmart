@@ -39,6 +39,13 @@ function stripReferencesToTables(createSql, tableNames) {
     .replace(new RegExp(referenceTail, 'gi'), '');
 }
 
+function restoreBackupTableRefs(createSql) {
+  return String(createSql || '').replace(
+    /(["`\[]?)([A-Za-z_][A-Za-z0-9_]*)__fk_backup_\d+(["`\]]?)/g,
+    (_match, open, base, close) => `${open || ''}${base}${close || ''}`,
+  );
+}
+
 async function rebuildTableWithSql(db, table, createSql) {
   const columns = await all(db, `PRAGMA table_info(${quoteIdent(table)})`);
   const columnList = columns.map(col => quoteIdent(col.name)).join(', ');
@@ -55,6 +62,47 @@ async function rebuildTableWithSql(db, table, createSql) {
   for (const index of indexes) {
     await run(db, index.sql);
   }
+}
+
+async function repairTenantBackupForeignKeys(db, tenantTables = null) {
+  const tenantSet = tenantTables
+    ? new Set((tenantTables || []).map(table => String(table).toLowerCase()))
+    : null;
+
+  const tables = await all(db, `
+    SELECT name, sql FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+      AND sql IS NOT NULL
+      AND sql LIKE '%__fk_backup_%'
+    ORDER BY name`);
+
+  const candidates = tables
+    .filter(table => !tenantSet || tenantSet.has(String(table.name).toLowerCase()))
+    .map(table => ({ name: table.name, sql: restoreBackupTableRefs(table.sql) }))
+    .filter(table => table.sql && !table.sql.includes('__fk_backup_'));
+
+  if (!candidates.length) return [];
+
+  const changedTables = [];
+  await run(db, 'PRAGMA foreign_keys = OFF');
+  await run(db, 'PRAGMA legacy_alter_table = ON').catch(() => {});
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    for (const table of candidates) {
+      await rebuildTableWithSql(db, table.name, table.sql);
+      changedTables.push(table.name);
+    }
+    await run(db, 'COMMIT');
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    await run(db, 'PRAGMA legacy_alter_table = OFF').catch(() => {});
+    await run(db, 'PRAGMA foreign_keys = ON').catch(() => {});
+  }
+
+  return changedTables;
 }
 
 async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = [], tenantTables = null) {
@@ -100,6 +148,7 @@ async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = [], tenant
 
   const changedTables = [];
   await run(db, 'PRAGMA foreign_keys = OFF');
+  await run(db, 'PRAGMA legacy_alter_table = ON').catch(() => {});
   await run(db, 'BEGIN IMMEDIATE');
   try {
     for (const table of ordered) {
@@ -111,6 +160,7 @@ async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = [], tenant
     await run(db, 'ROLLBACK').catch(() => {});
     throw err;
   } finally {
+    await run(db, 'PRAGMA legacy_alter_table = OFF').catch(() => {});
     await run(db, 'PRAGMA foreign_keys = ON').catch(() => {});
   }
 
@@ -118,5 +168,7 @@ async function sanitizeTenantForeignKeysToCatalog(db, catalogTables = [], tenant
 }
 
 module.exports = {
+  repairTenantBackupForeignKeys,
   sanitizeTenantForeignKeysToCatalog,
+  restoreBackupTableRefs,
 };
