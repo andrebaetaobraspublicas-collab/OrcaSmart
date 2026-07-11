@@ -822,6 +822,243 @@ async function curvaAbcServicos(db, idOrcamento) {
   };
 }
 
+function codigoVariantesInsumo(codigo) {
+  const original = String(codigo || '').trim();
+  if (!original || original === '-') return [];
+  const fontes = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
+  const bases = new Set([original]);
+  if (original.includes('.')) {
+    bases.add(original.split('.').pop());
+    bases.add(original.replace(/^[A-Z]+[./-]/i, ''));
+  }
+  if (original.includes('/')) bases.add(original.split('/').pop());
+
+  const out = new Set();
+  bases.forEach((base) => {
+    const b = String(base || '').trim();
+    if (!b) return;
+    out.add(b);
+    fontes.forEach((fonte) => out.add(`${fonte}.${b}`));
+  });
+  return [...out].filter(Boolean);
+}
+
+function isComposicaoItem(row) {
+  const tipo = String(row?.tipo_item || row?.tipo || '').trim().toUpperCase();
+  return tipo === 'COMPOSICAO' || tipo === 'COMPOSIÇÃO' || tipo === 'CP';
+}
+
+function isMaterialTipo(value) {
+  const s = String(value || '').toLowerCase();
+  return s.includes('material');
+}
+
+function aliquotasIvaPadraoPorAno(ano, tipoInsumo) {
+  if (!isMaterialTipo(tipoInsumo)) return { ibs: 0, cbs: 0 };
+  const tabela = {
+    2026: { cbs: 0.9, ibs: 0.1 },
+    2027: { cbs: 8.7, ibs: 0.1 },
+    2028: { cbs: 8.7, ibs: 0.1 },
+    2029: { cbs: 8.8, ibs: 1.77 },
+    2030: { cbs: 8.8, ibs: 3.54 },
+    2031: { cbs: 8.8, ibs: 5.31 },
+    2032: { cbs: 8.8, ibs: 7.08 },
+    2033: { cbs: 8.8, ibs: 17.7 },
+  };
+  return tabela[Number(ano)] || { ibs: 0, cbs: 0 };
+}
+
+function escolherPrecoPorRegime(row, regime) {
+  const deson = toNum(row?.preco_desonerado, 0);
+  const oner = toNum(row?.preco_nao_desonerado, 0);
+  const ref = toNum(row?.preco_referencia, 0);
+  if (regime === 'Desonerado') return deson || ref || oner || 0;
+  if (regime === 'Onerado') return oner || ref || deson || 0;
+  return ref || deson || oner || 0;
+}
+
+async function buildComposicaoCacheForAbc(db) {
+  const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
+  const hasTenant = await tableExists(db, 'tenant_composicoes');
+  const hasMain = await tableExists(db, 'composicoes');
+  const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
+  const selects = [];
+
+  if (hasCatalog) {
+    const visible = hasOverrides
+      ? `NOT EXISTS (
+          SELECT 1 FROM tenant_referential_overrides r
+          WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+            AND r.catalog_id=c.id_composicao AND r.status='active'
+            AND r.action IN ('update','delete')
+        )`
+      : '1=1';
+    selects.push(`
+      SELECT CAST(c.id_composicao AS TEXT) AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
+             c.mes_referencia, c.situacao_ref, c.custo_unitario, 'catalog' AS scope
+      FROM catalog.composicoes c
+      WHERE ${visible}`);
+  }
+  if (hasTenant) {
+    selects.push(`
+      SELECT 'tenant:' || c.rowid AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
+             c.mes_referencia, c.situacao_ref, c.custo_unitario, 'tenant' AS scope
+      FROM tenant_composicoes c
+      WHERE COALESCE(c.tenant_override_status,'active')='active'`);
+  }
+  if (!hasCatalog && hasMain) {
+    selects.push(`
+      SELECT CAST(c.id_composicao AS TEXT) AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
+             c.mes_referencia, c.situacao_ref, c.custo_unitario, 'main' AS scope
+      FROM composicoes c`);
+  }
+
+  const cache = new Map();
+  if (!selects.length) return cache;
+  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
+  rows.forEach((row) => {
+    codigoVariantesComposicao(row.codigo, row.fonte).forEach((codigo) => {
+      const key = String(codigo || '').trim().toUpperCase();
+      if (!key) return;
+      if (!cache.has(key)) cache.set(key, []);
+      cache.get(key).push(row);
+    });
+  });
+  return cache;
+}
+
+function escolherComposicaoCandidata(candidatos, contexto) {
+  if (!Array.isArray(candidatos) || !candidatos.length) return null;
+  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime));
+  const base = compativeis.length ? compativeis : candidatos;
+  base.sort((a, b) => {
+    const ufA = String(a.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (a.uf_referencia ? 2 : 1);
+    const ufB = String(b.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (b.uf_referencia ? 2 : 1);
+    if (ufA !== ufB) return ufA - ufB;
+    const dataA = scoreMesRef(a.mes_referencia, contexto?.mes_ref);
+    const dataB = scoreMesRef(b.mes_referencia, contexto?.mes_ref);
+    if (dataA !== dataB) return dataA - dataB;
+    const regA = scoreRegime(a.situacao_ref, contexto?.regime);
+    const regB = scoreRegime(b.situacao_ref, contexto?.regime);
+    if (regA !== regB) return regA - regB;
+    const scopeA = a.scope === 'tenant' ? 0 : 1;
+    const scopeB = b.scope === 'tenant' ? 0 : 1;
+    return scopeA - scopeB;
+  });
+  return base[0] || null;
+}
+
+async function getItensComposicaoForAbc(db, idComposicao) {
+  const raw = String(idComposicao || '').trim();
+  if (!raw) return [];
+  if (raw.startsWith('tenant:') && await tableExists(db, 'tenant_itens_composicao')) {
+    return all(db, `
+      SELECT codigo_item, descricao, unidade, coeficiente, tipo_item, preco_unitario, custo_parcial, ordem
+      FROM tenant_itens_composicao
+      WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY ordem, rowid`, [raw.slice(7)]).catch(() => []);
+  }
+  if (await tableExists(db, 'itens_composicao', 'catalog')) {
+    return all(db, `
+      SELECT codigo_item, descricao, unidade, coeficiente, tipo_item, preco_unitario, custo_parcial, ordem
+      FROM catalog.itens_composicao
+      WHERE id_composicao = ?
+      ORDER BY ordem, id_item`, [raw]).catch(() => []);
+  }
+  if (await tableExists(db, 'itens_composicao')) {
+    return all(db, `
+      SELECT codigo_item, descricao, unidade, coeficiente, tipo_item, preco_unitario, custo_parcial, ordem
+      FROM itens_composicao
+      WHERE id_composicao = ?
+      ORDER BY ordem, id_item`, [raw]).catch(() => []);
+  }
+  return [];
+}
+
+async function consultarPrecosInsumoForAbc(db, variantes, contexto) {
+  if (!variantes.length) return [];
+  const q = variantes.map(() => '?').join(',');
+  const selects = [];
+  const params = [];
+
+  if (await tableExists(db, 'tenant_precos_insumos') && await tableExists(db, 'tenant_insumos')) {
+    selects.push(`
+      SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
+             p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
+             p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'tenant' AS scope
+      FROM tenant_insumos i
+      JOIN tenant_precos_insumos p ON p.id_insumo = i.rowid
+      LEFT JOIN catalog.datas_base db2 ON db2.id_data_base = p.id_data_base
+      WHERE i.codigo_insumo IN (${q})
+        AND COALESCE(i.tenant_override_status,'active')='active'
+        AND COALESCE(p.tenant_override_status,'active')='active'`);
+    params.push(...variantes);
+  }
+  if (await tableExists(db, 'precos_insumos', 'catalog') && await tableExists(db, 'insumos', 'catalog')) {
+    selects.push(`
+      SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
+             p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
+             p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'catalog' AS scope
+      FROM catalog.insumos i
+      JOIN catalog.precos_insumos p ON p.id_insumo = i.id_insumo
+      LEFT JOIN catalog.datas_base db2 ON db2.id_data_base = p.id_data_base
+      WHERE i.codigo_insumo IN (${q})`);
+    params.push(...variantes);
+  }
+  if (!(await tableExists(db, 'precos_insumos', 'catalog')) && await tableExists(db, 'precos_insumos') && await tableExists(db, 'insumos')) {
+    selects.push(`
+      SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
+             p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
+             p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'main' AS scope
+      FROM insumos i
+      JOIN precos_insumos p ON p.id_insumo = i.id_insumo
+      LEFT JOIN datas_base db2 ON db2.id_data_base = p.id_data_base
+      WHERE i.codigo_insumo IN (${q})`);
+    params.push(...variantes);
+  }
+  if (!selects.length) return [];
+  const rows = await all(db, selects.join('\nUNION ALL\n'), params).catch(() => []);
+  rows.forEach((row) => {
+    row.preco_escolhido = escolherPrecoPorRegime(row, contexto?.regime);
+    row.mes_referencia = mesReferencia(row);
+  });
+  return rows;
+}
+
+async function resolverInsumoForAbc(db, item, contexto) {
+  const variantes = codigoVariantesInsumo(item.codigo_item || item.codigo);
+  const candidatos = await consultarPrecosInsumoForAbc(db, variantes, contexto);
+  candidatos.sort((a, b) => {
+    const ufA = String(a.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (a.uf_referencia ? 2 : 1);
+    const ufB = String(b.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (b.uf_referencia ? 2 : 1);
+    if (ufA !== ufB) return ufA - ufB;
+    const dataA = scoreMesRef(a.mes_referencia, contexto?.mes_ref);
+    const dataB = scoreMesRef(b.mes_referencia, contexto?.mes_ref);
+    if (dataA !== dataB) return dataA - dataB;
+    const scopeA = a.scope === 'tenant' ? 0 : 1;
+    const scopeB = b.scope === 'tenant' ? 0 : 1;
+    if (scopeA !== scopeB) return scopeA - scopeB;
+    const priceA = toNum(a.preco_escolhido, 0) > 0 ? 0 : 1;
+    const priceB = toNum(b.preco_escolhido, 0) > 0 ? 0 : 1;
+    return priceA - priceB;
+  });
+
+  const best = candidatos[0] || null;
+  const tipoInsumo = best?.tipo_insumo || item.tipo_item || 'INSUMO';
+  const fallbackAliquotas = aliquotasIvaPadraoPorAno(contexto?.data_base_ano, tipoInsumo);
+  const precoCatalogo = toNum(best?.preco_escolhido, 0);
+  return {
+    codigo: String(best?.codigo_insumo || item.codigo_item || item.codigo || '').trim(),
+    descricao: best?.descricao || item.descricao || '',
+    unidade: item.unidade || '',
+    tipo_item: tipoInsumo,
+    coeficiente: item.coeficiente,
+    preco: precoCatalogo || toNum(item.preco_unitario, 0),
+    ibs_percentual: toNum(best?.ibs_percentual, 0) || fallbackAliquotas.ibs,
+    cbs_percentual: toNum(best?.cbs_percentual, 0) || fallbackAliquotas.cbs,
+  };
+}
+
 async function curvaAbcInsumos(db, idOrcamento) {
   const orcamento = await one(db, `
     SELECT o.bdi_percentual, o.nome_orcamento, o.versao, o.status,
@@ -831,24 +1068,20 @@ async function curvaAbcInsumos(db, idOrcamento) {
     WHERE o.id_orcamento = ?`, [idOrcamento]);
   if (!orcamento) return null;
 
-  const rows = await all(db, `
-    SELECT os.id_item, os.item_num, os.descricao AS servico_descricao, os.quantidade AS qtd_servico,
-           ic.codigo_item AS codigo, ic.descricao, ic.unidade, ic.coeficiente,
-           ic.tipo_item, ic.preco_unitario
-    FROM orcamento_sintetico os
-    JOIN itens_composicao ic ON ic.id_composicao = os.id_composicao
-    WHERE os.id_orcamento = ? AND os.tipo_linha = 'item' AND os.id_composicao IS NOT NULL
-    ORDER BY os.ordem, ic.ordem`, [idOrcamento]);
+  const contexto = await getOrcamentoContexto(db, idOrcamento);
+  const compCache = await buildComposicaoCacheForAbc(db);
+  const servicos = await all(db, `
+    SELECT id_item, item_num, codigo, fonte, descricao AS servico_descricao, unidade,
+           quantidade AS qtd_servico, custo_unitario, id_composicao
+    FROM orcamento_sintetico
+    WHERE id_orcamento = ? AND tipo_linha = 'item'
+    ORDER BY ordem`, [idOrcamento]);
 
   const grouped = new Map();
-  for (const row of rows) {
-    const codigo = String(row.codigo || '').trim();
+  const addInsumo = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
+    const codigo = String(row.codigo || row.codigo_item || '').trim();
     const key = codigo.toUpperCase() || String(row.descricao || '').trim().toUpperCase();
-    if (!key) continue;
-    const qtdServico = toNum(row.qtd_servico);
-    const coef = toNum(row.coeficiente);
-    const qtdInsumo = qtdServico * coef;
-    const preco = toNum(row.preco_unitario);
+    if (!key) return;
     const custo = qtdInsumo * preco;
     if (!grouped.has(key)) {
       grouped.set(key, {
@@ -858,21 +1091,89 @@ async function curvaAbcInsumos(db, idOrcamento) {
         tipo_item: row.tipo_item || 'INSUMO',
         quantidade_total: 0,
         custo_total: 0,
+        valor_ibs: 0,
+        valor_cbs: 0,
+        ibs_percentual_medio: 0,
+        cbs_percentual_medio: 0,
         ocorrencias: [],
       });
     }
     const item = grouped.get(key);
     item.quantidade_total += qtdInsumo;
     item.custo_total += custo;
+    item.valor_ibs += custo * (toNum(ibsPercentual, 0) / 100);
+    item.valor_cbs += custo * (toNum(cbsPercentual, 0) / 100);
     item.ocorrencias.push({
-      item_num: row.item_num || '',
-      servico: row.servico_descricao || '',
-      qtd_servico: qtdServico,
-      coeficiente: coef,
+      item_num: servico.item_num || '',
+      servico: servico.servico_descricao || '',
+      qtd_servico: toNum(servico.qtd_servico),
+      coeficiente: toNum(row.coeficiente, 1),
       qtd_insumo: Number(qtdInsumo.toFixed(6)),
       preco: Number(preco.toFixed(4)),
       custo: Number(custo.toFixed(2)),
+      ibs_percentual: Number(toNum(ibsPercentual, 0).toFixed(4)),
+      cbs_percentual: Number(toNum(cbsPercentual, 0).toFixed(4)),
     });
+  };
+
+  async function expandirComposicao(idComposicao, fator, servico, visitados = new Set()) {
+    const id = String(idComposicao || '').trim();
+    if (!id || visitados.has(id)) return false;
+    visitados.add(id);
+    const itens = await getItensComposicaoForAbc(db, id);
+    if (!itens.length) return false;
+    for (const item of itens) {
+      const coef = toNum(item.coeficiente, 0);
+      const qtd = fator * coef;
+      if (!qtd) continue;
+      if (isComposicaoItem(item)) {
+        const codigos = codigoVariantesComposicao(item.codigo_item, item.fonte);
+        let sub = null;
+        for (const codigo of codigos) {
+          sub = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
+          if (sub) break;
+        }
+        if (sub && await expandirComposicao(sub.id_composicao, qtd, servico, new Set(visitados))) continue;
+        const resolvidoComp = {
+          codigo: item.codigo_item,
+          descricao: item.descricao,
+          unidade: item.unidade,
+          tipo_item: item.tipo_item || 'COMPOSICAO',
+        };
+        addInsumo(resolvidoComp, qtd, servico, toNum(item.preco_unitario, 0), 0, 0);
+        continue;
+      }
+      const resolvido = await resolverInsumoForAbc(db, item, contexto);
+      addInsumo(resolvido, qtd, servico, resolvido.preco, resolvido.ibs_percentual, resolvido.cbs_percentual);
+    }
+    return true;
+  }
+
+  for (const servico of servicos) {
+    const qtdServico = toNum(servico.qtd_servico, 0);
+    let expanded = false;
+    if (servico.id_composicao) {
+      expanded = await expandirComposicao(servico.id_composicao, qtdServico, servico);
+    }
+    if (!expanded) {
+      const codigos = codigoVariantesComposicao(servico.codigo, servico.fonte);
+      let comp = null;
+      for (const codigo of codigos) {
+        comp = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
+        if (comp) break;
+      }
+      if (comp) expanded = await expandirComposicao(comp.id_composicao, qtdServico, servico);
+    }
+    if (!expanded) {
+      const resolvido = await resolverInsumoForAbc(db, {
+        codigo_item: servico.codigo,
+        descricao: servico.servico_descricao,
+        unidade: servico.unidade,
+        preco_unitario: servico.custo_unitario,
+        tipo_item: 'INSUMO',
+      }, contexto);
+      addInsumo(resolvido, qtdServico, servico, resolvido.preco, resolvido.ibs_percentual, resolvido.cbs_percentual);
+    }
   }
 
   const itens = Array.from(grouped.values()).map(item => ({
@@ -883,12 +1184,14 @@ async function curvaAbcInsumos(db, idOrcamento) {
     quantidade_total: Number(item.quantidade_total.toFixed(4)),
     custo_unitario: item.quantidade_total > 0 ? Number((item.custo_total / item.quantidade_total).toFixed(4)) : 0,
     custo_total: Number(item.custo_total.toFixed(2)),
-    valor_ibs: 0,
-    valor_cbs: 0,
+    valor_ibs: Number(item.valor_ibs.toFixed(2)),
+    valor_cbs: Number(item.valor_cbs.toFixed(2)),
     ocorrencias: item.ocorrencias,
   })).sort((a, b) => b.custo_total - a.custo_total);
 
   const total = itens.reduce((sum, it) => sum + it.custo_total, 0);
+  const totalIbs = itens.reduce((sum, it) => sum + it.valor_ibs, 0);
+  const totalCbs = itens.reduce((sum, it) => sum + it.valor_cbs, 0);
   let acumulado = 0;
   itens.forEach((it, idx) => {
     const pct = total ? it.custo_total / total * 100 : 0;
@@ -903,8 +1206,8 @@ async function curvaAbcInsumos(db, idOrcamento) {
     orcamento,
     itens,
     total_geral: Number(total.toFixed(2)),
-    total_ibs: 0,
-    total_cbs: 0,
+    total_ibs: Number(totalIbs.toFixed(2)),
+    total_cbs: Number(totalCbs.toFixed(2)),
     resumo: abcResumo(itens, 'custo_total'),
   };
 }
