@@ -1502,6 +1502,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
   const contexto = await getOrcamentoContexto(db, idOrcamento);
   const compCache = await buildComposicaoCacheForAbc(db);
   const itensCompCache = await buildItensComposicaoCacheForAbc(db);
+  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db);
   const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
   const servicos = await all(db, `
     SELECT id_item, item_num, codigo, fonte, descricao AS servico_descricao, unidade,
