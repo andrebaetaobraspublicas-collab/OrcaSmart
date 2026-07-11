@@ -511,7 +511,7 @@ async function restoreSintetico(db, idOrcamento, data = {}) {
   return listSintetico(db, idOrcamento);
 }
 
-async function recalcularCustos(db, idOrcamento) {
+async function recalcularCustosLegado(db, idOrcamento) {
   const sqlCustoComp = `
     SELECT COALESCE(SUM(
       COALESCE(ic.coeficiente,0) * COALESCE(
@@ -555,6 +555,118 @@ async function recalcularCustos(db, idOrcamento) {
   for (const item of itens) {
     const row = await one(db, sqlCustoComp, [item.id_composicao]);
     const custo = Number(Number(row?.custo_calc || 0).toFixed(4));
+    if (Number.isFinite(custo) && custo > 0 && Math.abs(custo - toNum(item.custo_unitario, 0)) > 0.0001) {
+      await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [custo, item.id_item]);
+      atualizados += 1;
+    }
+  }
+  const rows = await listSintetico(db, idOrcamento);
+  return { atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] };
+}
+
+async function custoComposicaoDiretoPorId(db, idComposicao) {
+  const raw = String(idComposicao || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('tenant:') && await tableExists(db, 'tenant_composicoes')) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM tenant_composicoes
+      WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'
+      LIMIT 1`, [raw.slice(7)]).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    return custo !== null && custo > 0 ? custo : null;
+  }
+  if (await tableExists(db, 'composicoes', 'catalog')) {
+    const row = await one(db, 'SELECT custo_unitario FROM catalog.composicoes WHERE id_composicao=? LIMIT 1', [raw]).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+  if (await tableExists(db, 'composicoes')) {
+    const row = await one(db, 'SELECT custo_unitario FROM composicoes WHERE id_composicao=? LIMIT 1', [raw]).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+  return null;
+}
+
+async function persistirCustoTenantComposicao(db, idComposicao, custo) {
+  const raw = String(idComposicao || '').trim();
+  if (!raw.startsWith('tenant:') || !(await tableExists(db, 'tenant_composicoes'))) return;
+  const value = Number(Number(custo || 0).toFixed(4));
+  if (!Number.isFinite(value) || value <= 0) return;
+  await run(db, 'UPDATE tenant_composicoes SET custo_unitario=?, tenant_updated_at=? WHERE rowid=?', [
+    value,
+    new Date().toISOString(),
+    raw.slice(7),
+  ]).catch(() => {});
+}
+
+async function recalcularCustos(db, idOrcamento) {
+  const contexto = await getOrcamentoContexto(db, idOrcamento);
+  const compCache = await buildComposicaoCacheForAbc(db);
+  const itensCompCache = await buildItensComposicaoCacheForAbc(db);
+  const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
+  const memo = new Map();
+
+  async function calcularCustoComposicao(idComposicao, visitados = new Set()) {
+    const id = String(idComposicao || '').trim();
+    if (!id) return null;
+    if (memo.has(id)) return memo.get(id);
+    if (visitados.has(id)) return null;
+    visitados.add(id);
+
+    const itensComp = await getItensComposicaoForAbc(db, id, itensCompCache);
+    if (!itensComp.length) {
+      const direto = await custoComposicaoDiretoPorId(db, id);
+      if (direto !== null) memo.set(id, direto);
+      return direto;
+    }
+
+    let total = 0;
+    let possuiPreco = false;
+    for (const item of itensComp) {
+      const coef = toNum(item.coeficiente, 0);
+      if (!coef) continue;
+      let preco = 0;
+
+      if (isComposicaoItemRobusto(item)) {
+        let sub = null;
+        const codigos = codigoVariantesComposicao(item.codigo_item || item.codigo, item.fonte);
+        for (const codigo of codigos) {
+          sub = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
+          if (sub) break;
+        }
+        const custoSub = sub
+          ? await calcularCustoComposicao(sub.id_composicao, new Set(visitados))
+          : null;
+        preco = custoSub ?? (toNum(item.preco_unitario, 0) || (coef > 0 ? toNum(item.custo_parcial, 0) / coef : 0));
+      } else {
+        const resolvido = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
+        preco = toNum(resolvido.preco, 0) || toNum(item.preco_unitario, 0) || (coef > 0 ? toNum(item.custo_parcial, 0) / coef : 0);
+      }
+
+      if (Number.isFinite(preco) && preco > 0) {
+        total += coef * preco;
+        possuiPreco = true;
+      }
+    }
+
+    const custo = possuiPreco ? Number(total.toFixed(4)) : await custoComposicaoDiretoPorId(db, id);
+    if (custo !== null && Number.isFinite(custo) && custo > 0) {
+      memo.set(id, custo);
+      await persistirCustoTenantComposicao(db, id, custo);
+      return custo;
+    }
+    return null;
+  }
+
+  const itens = await all(db, `
+    SELECT id_item, id_composicao, custo_unitario
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item' AND id_composicao IS NOT NULL`, [idOrcamento]);
+  let atualizados = 0;
+  for (const item of itens) {
+    const custo = await calcularCustoComposicao(item.id_composicao);
     if (Number.isFinite(custo) && custo > 0 && Math.abs(custo - toNum(item.custo_unitario, 0)) > 0.0001) {
       await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [custo, item.id_item]);
       atualizados += 1;
@@ -870,7 +982,7 @@ function isComposicaoItemRobusto(row) {
   const codigo = String(row?.codigo_item || row?.codigo || '').trim().toUpperCase();
   return tipo.includes('COMPOS')
     || tipo === 'CP'
-    || tipo === 'COMP'
+    || tipo.startsWith('COMP')
     || (codigo.startsWith('SINAPI.') && ['CHP', 'CHI'].includes(unidade));
 }
 

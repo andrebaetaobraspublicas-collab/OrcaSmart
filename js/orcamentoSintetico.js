@@ -501,6 +501,7 @@ Router.register('orcamento-sintetico', async () => {
       <tr data-id="${item.id_item}" data-tipo="item" class="os-item${isSel ? ' sel' : ''}"
           draggable="true"
           style="cursor:pointer" onclick="window._osSel(${item.id_item})"
+          ondblclick="window._osDblClickLinha(event,${item.id_item})"
           oncontextmenu="event.preventDefault();window._osCtx(event,${item.id_item})">
         <td class="os-td" style="padding-left:${ind}px">
           <div style="display:flex;align-items:center;gap:3px">
@@ -686,6 +687,25 @@ Router.register('orcamento-sintetico', async () => {
           footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>`,
         });
       } catch(e) { Toast.error(e.message); }
+    };
+    window._osDblClickLinha = (event, idItem) => {
+      if (event?.target?.closest?.('button,input,select,textarea,a')) return;
+      event?.stopPropagation?.();
+      window._osAbrirLinhaComposicao(idItem);
+    };
+    window._osAbrirLinhaComposicao = async (idItem) => {
+      const item = itens.find(i => i.id_item === idItem);
+      if (!item || item.tipo_linha !== 'item') return;
+      selectedId = idItem;
+      if (item.id_composicao) {
+        await window._osAbrirCompVinculada(idItem);
+        return;
+      }
+      if ((item.tipo_item || 'composicao') === 'insumo') {
+        Toast.info('Esta linha esta vinculada diretamente a um insumo.');
+        return;
+      }
+      abrirBusca(item.tipo_item || 'auto', idItem);
     };
     window._osMoverCima  = () => moverItem(-1);
     window._osMoverBaixo = () => moverItem(1);

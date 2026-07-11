@@ -124,7 +124,7 @@ function isTipoComposicao(tipo) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase();
-  return normal.includes('COMPOS') || normal === 'CP' || normal === 'COMP';
+  return normal.includes('COMPOS') || normal === 'CP' || normal.startsWith('COMP');
 }
 
 async function resolveCustoComposicaoReferencia(db, codigoItem) {
@@ -186,8 +186,25 @@ async function aplicarPrecosResolvidosTenant(db, comp) {
     item.custo_parcial = parcial;
     total += parcial;
   }
-  if (total > 0) comp.custo_unitario = Number(total.toFixed(4));
+  if (total > 0) {
+    comp.custo_unitario = Number(total.toFixed(4));
+    comp.custo_calculado = comp.custo_unitario;
+  }
   return comp;
+}
+
+async function aplicarPrecosResolvidosTenantLista(db, items = []) {
+  for (const row of items) {
+    if (row?._tenant_scope !== 'tenant') continue;
+    const scoped = scopedComposicaoId(row.id_composicao);
+    const comp = await getTenantComposicao(db, scoped.value).catch(() => null);
+    const custo = toNum(comp?.custo_unitario ?? comp?.custo_calculado, null);
+    if (custo !== null && custo > 0) {
+      row.custo_unitario = custo;
+      row.custo_calculado = custo;
+    }
+  }
+  return items;
 }
 
 const selectComp = `
@@ -326,6 +343,7 @@ async function listComposicoes(db, query = {}) {
       ${baseSql}
       ORDER BY fonte, codigo
       LIMIT ? OFFSET ?`, [...params, limit, offset]);
+    await aplicarPrecosResolvidosTenantLista(db, items);
     return { items, total: Number(total?.total || 0), limit, offset };
   }
 
