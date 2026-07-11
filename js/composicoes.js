@@ -54,6 +54,7 @@ Router.register('composicoes', async () => {
   // Estado do formulário de composição do usuário
   let _formItens   = [];  // itens em edição no momento
   let _originalIds = [];  // ids dos itens pré-existentes ao abrir o form
+  let _formSearchMode = 'insumo';
   const filtros = { q:'', fonte:'', formato:'', id_grupo_comp:'', uf:'', mes_ref:'', regime:'', limit:50, offset:0 };
   let totalRegistros = 0;
 
@@ -671,19 +672,30 @@ Router.register('composicoes', async () => {
 
           <!-- ── Insumos / Componentes ─────────────────────────────────── -->
           <div class="form-group span-2" style="border-top:1px solid var(--c-border);padding-top:14px;margin-top:4px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
               <label class="form-label" style="margin:0;font-weight:600">
                 Insumos / Componentes
-                <span class="text-3 text-xs fw-400" style="margin-left:6px">selecionados dos insumos cadastrados</span>
+                <span class="text-3 text-xs fw-400" style="margin-left:6px">insumos, composicoes auxiliares ou itens manuais</span>
               </label>
-              <button type="button" class="btn btn-sm" id="fcBtnAddItem"
-                style="background:var(--c-success-l);color:var(--c-success);border:1px solid var(--c-success)">
-                ${Utils.icons.plus} Adicionar Insumo
-              </button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                <button type="button" class="btn btn-sm" id="fcBtnAddInsumo"
+                  style="background:var(--c-success-l);color:var(--c-success);border:1px solid var(--c-success)">
+                  ${Utils.icons.plus} Insumo cadastrado
+                </button>
+                <button type="button" class="btn btn-sm" id="fcBtnAddComposicao"
+                  style="background:var(--c-primary-l);color:var(--c-primary);border:1px solid var(--c-primary)">
+                  ${Utils.icons.link} Composicao auxiliar
+                </button>
+                <button type="button" class="btn btn-sm" id="fcBtnAddManual">
+                  ${Utils.icons.plus} Item manual
+                </button>
+                <button type="button" class="btn btn-sm" id="fcBtnImportTabela">Importar tabela</button>
+              </div>
             </div>
 
             <!-- Painel de busca (oculto inicialmente) -->
             <div id="fcSearchPanel" style="display:none;background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+              <div id="fcSearchHint" class="text-sm text-2" style="margin-bottom:8px"></div>
               <div class="d-flex gap-1 align-c" style="margin-bottom:8px">
                 <div class="search-box" style="flex:1">
                   ${Utils.icons.search}
@@ -691,7 +703,26 @@ Router.register('composicoes', async () => {
                 </div>
                 <button type="button" class="btn btn-ghost btn-sm" id="fcCancelSearch">✕ Cancelar</button>
               </div>
-              <div id="fcResultados" style="max-height:200px;overflow-y:auto;border:1px solid var(--c-border);border-radius:var(--radius-sm);font-size:.8rem;display:none"></div>
+              <div id="fcSearchFilters" class="form-grid form-grid-4" style="gap:8px;margin-bottom:8px">
+                <select class="form-control" id="fcSearchFonte">
+                  <option value="">Todas as fontes</option>
+                  <option value="SINAPI">SINAPI</option>
+                  <option value="SICRO">SICRO</option>
+                  <option value="SEINFRA">SEINFRA/CE</option>
+                  <option value="SUDECAP">SUDECAP/BH</option>
+                  <option value="GOINFRA">GOINFRA/GO</option>
+                  <option value="CDHU">CDHU/SP</option>
+                  <option value="USUARIO">Usuario</option>
+                </select>
+                <select class="form-control" id="fcSearchUf">${Utils.ufOptions(c.uf_referencia)}</select>
+                <input class="form-control" id="fcSearchRef" placeholder="Data-base MM/AAAA" value="${Utils.esc(c.mes_referencia||'')}">
+                <select class="form-control" id="fcSearchFormato">
+                  <option value="">Todos os formatos</option>
+                  <option value="UNITARIO">Unitario</option>
+                  <option value="PRODUCAO_HORARIA">Prod. horaria / custo horario</option>
+                </select>
+              </div>
+              <div id="fcResultados" style="max-height:260px;overflow-y:auto;border:1px solid var(--c-border);border-radius:var(--radius-sm);font-size:.8rem;display:none"></div>
             </div>
 
             <!-- Lista de insumos adicionados -->
@@ -737,7 +768,7 @@ Router.register('composicoes', async () => {
       el.innerHTML = `
         <div style="text-align:center;padding:14px 0;color:var(--c-text-3);font-size:.82rem;
                     font-style:italic;border:1px dashed var(--c-border);border-radius:var(--radius-sm)">
-          Nenhum insumo adicionado. Clique em "+ Adicionar Insumo" para incluir componentes.
+          Nenhum componente adicionado. Use os botoes acima para buscar, cadastrar manualmente ou importar uma tabela.
         </div>`;
       return;
     }
@@ -865,6 +896,11 @@ Router.register('composicoes', async () => {
 
   /* ── Bind dos eventos de busca de insumos no form ──────────────────────── */
   function _bindFormSearch() {
+    document.getElementById('fcBtnAddInsumo')?.addEventListener('click', () => _abrirBuscaForm('insumo'));
+    document.getElementById('fcBtnAddComposicao')?.addEventListener('click', () => _abrirBuscaForm('composicao'));
+    document.getElementById('fcBtnAddManual')?.addEventListener('click', () => _mostrarItemManualInline());
+    document.getElementById('fcBtnImportTabela')?.addEventListener('click', () => _mostrarImportacaoTabelaInline());
+
     document.getElementById('fcBtnAddItem')?.addEventListener('click', () => {
       const p = document.getElementById('fcSearchPanel');
       if (p) p.style.display = '';
@@ -883,6 +919,12 @@ Router.register('composicoes', async () => {
     document.getElementById('fcInsumoSearch')?.addEventListener('keydown', e => {
       if (e.key === 'Escape') _fecharBuscaForm();
     });
+    ['fcSearchFonte','fcSearchUf','fcSearchRef','fcSearchFormato'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => {
+        const q = document.getElementById('fcInsumoSearch')?.value || '';
+        if (q.trim().length >= 2) _buscarInsumosForm(q);
+      });
+    });
   }
 
   function _fecharBuscaForm() {
@@ -894,7 +936,39 @@ Router.register('composicoes', async () => {
     if (r) { r.innerHTML = ''; r.style.display = 'none'; }
   }
 
+  function _abrirBuscaForm(mode='insumo') {
+    _formSearchMode = mode;
+    const p = document.getElementById('fcSearchPanel');
+    const s = document.getElementById('fcInsumoSearch');
+    const h = document.getElementById('fcSearchHint');
+    const fmt = document.getElementById('fcSearchFormato');
+    if (p) p.style.display = '';
+    if (fmt) fmt.parentElement.style.display = mode === 'composicao' ? '' : 'none';
+    if (h) h.innerHTML = mode === 'composicao'
+      ? 'Busque composicoes auxiliares, unitarias ou de custo horario por codigo/descricao. Refine por fonte, UF e data-base.'
+      : 'Busque insumos cadastrados por codigo/descricao. Se nao encontrar, use Item manual.';
+    if (s) {
+      s.value = '';
+      s.placeholder = mode === 'composicao'
+        ? 'Buscar composicao auxiliar por codigo ou descricao...'
+        : 'Buscar insumo por codigo ou descricao...';
+      setTimeout(() => s.focus(), 60);
+    }
+    const r = document.getElementById('fcResultados');
+    if (r) { r.innerHTML = ''; r.style.display = 'none'; }
+  }
+
+  function _filtrosBuscaForm() {
+    return {
+      fonte: document.getElementById('fcSearchFonte')?.value || '',
+      uf: document.getElementById('fcSearchUf')?.value || '',
+      mes_ref: (document.getElementById('fcSearchRef')?.value || '').trim(),
+      formato: document.getElementById('fcSearchFormato')?.value || '',
+    };
+  }
+
   async function _buscarInsumosForm(q) {
+    if (_formSearchMode === 'composicao') return _buscarComposicoesForm(q);
     const res = document.getElementById('fcResultados');
     if (!res) return;
     if (!q || q.trim().length < 2) {
@@ -903,10 +977,19 @@ Router.register('composicoes', async () => {
     res.style.display = '';
     res.innerHTML = `<div style="text-align:center;padding:10px"><div class="spinner" style="width:18px;height:18px;margin:0 auto"></div></div>`;
     try {
-      const data  = await API.insumos.list({ q: q.trim(), limit: 12 });
+      const f = _filtrosBuscaForm();
+      const params = { q: q.trim(), limit: 25 };
+      if (f.fonte) params.origem = f.fonte;
+      if (f.uf) params.uf = f.uf;
+      if (f.mes_ref) params.mes_ref = f.mes_ref;
+      const data  = await API.insumos.list(params);
       const items = Array.isArray(data) ? data : (data.items || []);
       if (!items.length) {
-        res.innerHTML = `<div style="padding:10px;text-align:center;color:var(--c-text-3)">Nenhum insumo encontrado para "${Utils.esc(q)}".</div>`;
+        res.innerHTML = `<div style="padding:12px;text-align:center;color:var(--c-text-3)">
+          Nenhum insumo encontrado para "${Utils.esc(q)}".
+          <div style="margin-top:8px"><button class="btn btn-sm" id="fcManualFromSearch">Adicionar como item manual</button></div>
+        </div>`;
+        document.getElementById('fcManualFromSearch')?.addEventListener('click', () => _mostrarItemManualInline({ descricao: q.trim() }));
         return;
       }
       res.innerHTML = items.map((ins, i) => {
@@ -951,9 +1034,228 @@ Router.register('composicoes', async () => {
     }
   }
 
+  async function _buscarComposicoesForm(q) {
+    const res = document.getElementById('fcResultados');
+    if (!res) return;
+    if (!q || q.trim().length < 2) {
+      res.style.display = 'none'; return;
+    }
+    res.style.display = '';
+    res.innerHTML = `<div style="text-align:center;padding:10px"><div class="spinner" style="width:18px;height:18px;margin:0 auto"></div></div>`;
+    try {
+      const f = _filtrosBuscaForm();
+      const params = { q: q.trim(), limit: 25, offset: 0 };
+      if (f.fonte) params.fonte = f.fonte;
+      if (f.uf) params.uf = f.uf;
+      if (f.mes_ref) params.mes_ref = f.mes_ref;
+      if (f.formato) params.formato = f.formato;
+      const data = await API.composicoes.list(params);
+      const items = Array.isArray(data) ? data : (data.items || []);
+      if (!items.length) {
+        res.innerHTML = `<div style="padding:12px;text-align:center;color:var(--c-text-3)">
+          Nenhuma composicao encontrada para "${Utils.esc(q)}".
+          <div style="margin-top:8px"><button class="btn btn-sm" id="fcManualCompFromSearch">Adicionar como componente manual</button></div>
+        </div>`;
+        document.getElementById('fcManualCompFromSearch')?.addEventListener('click', () => _mostrarItemManualInline({ tipo_item:'COMPOSICAO', descricao: q.trim() }));
+        return;
+      }
+      res.innerHTML = items.map((cmp, i) => {
+        const custo = Number(cmp.custo_unitario || cmp.custo_calculado || 0);
+        return `
+          <div class="fcCompResultItem" data-idx="${i}"
+               style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--c-border);
+                      display:flex;justify-content:space-between;align-items:center;transition:background .1s"
+               onmouseover="this.style.background='var(--c-primary-l)'"
+               onmouseout="this.style.background=''">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+                <span style="font-family:monospace;font-size:.72rem;color:var(--c-primary);font-weight:600">${Utils.esc(cmp.codigo||'-')}</span>
+                <span class="badge badge-warning" style="font-size:.6rem">${Utils.esc(cmp.fonte||'COMPOSICAO')}</span>
+                ${cmp.formato === 'PRODUCAO_HORARIA' ? '<span class="badge badge-info" style="font-size:.6rem">Custo horario</span>' : ''}
+              </div>
+              <div style="font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.esc(cmp.descricao||'')}</div>
+              <div class="text-xs text-3">${Utils.esc(cmp.uf_referencia || cmp.uf || '')}${cmp.mes_referencia ? ' - '+Utils.esc(cmp.mes_referencia) : ''}</div>
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:10px">
+              <div style="font-family:monospace;font-size:.7rem;color:var(--c-text-3)">${Utils.esc(cmp.unidade||'')}</div>
+              ${custo > 0 ? `<div style="font-weight:600;font-size:.75rem">${Utils.moeda(custo)}</div>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+      res.querySelectorAll('.fcCompResultItem').forEach((el, i) => {
+        const cmp = items[i];
+        el.addEventListener('click', () => _adicionarInsumoForm({
+          tipo_item: 'COMPOSICAO',
+          codigo_item: cmp.codigo || '',
+          descricao: cmp.descricao || '',
+          unidade: cmp.unidade || '',
+          coeficiente: 1,
+          preco_unitario: cmp.custo_unitario || cmp.custo_calculado || 0,
+        }));
+      });
+    } catch(e) {
+      res.innerHTML = `<div style="padding:10px;color:var(--c-danger)">${Utils.esc(e.message)}</div>`;
+    }
+  }
+
+  function _mostrarItemManualInline(defaults={}) {
+    const p = document.getElementById('fcSearchPanel');
+    const r = document.getElementById('fcResultados');
+    const h = document.getElementById('fcSearchHint');
+    if (p) p.style.display = '';
+    if (h) h.innerHTML = 'Cadastre um componente pontual quando ele ainda nao existir no catalogo.';
+    if (!r) return;
+    r.style.display = '';
+    r.innerHTML = `
+      <div style="padding:10px">
+        <div class="form-grid form-grid-3" style="gap:8px">
+          <div class="form-group">
+            <label class="form-label">Tipo</label>
+            <select class="form-control" id="fcManualTipo">
+              <option value="INSUMO" ${defaults.tipo_item==='INSUMO'?'selected':''}>Material/insumo</option>
+              <option value="MO" ${defaults.tipo_item==='MO'?'selected':''}>Mao de obra</option>
+              <option value="EQUIPAMENTO" ${defaults.tipo_item==='EQUIPAMENTO'?'selected':''}>Equipamento</option>
+              <option value="SERVICO" ${defaults.tipo_item==='SERVICO'?'selected':''}>Servico auxiliar</option>
+              <option value="COMPOSICAO" ${defaults.tipo_item==='COMPOSICAO'?'selected':''}>Composicao auxiliar</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Codigo</label>
+            <input class="form-control" id="fcManualCodigo" value="${Utils.esc(defaults.codigo_item||'')}" placeholder="Opcional">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unidade</label>
+            <input class="form-control" id="fcManualUnidade" value="${Utils.esc(defaults.unidade||'')}" placeholder="UN, H, M3...">
+          </div>
+          <div class="form-group span-3">
+            <label class="form-label">Descricao</label>
+            <input class="form-control" id="fcManualDescricao" value="${Utils.esc(defaults.descricao||'')}" placeholder="Descricao do componente">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Coeficiente</label>
+            <input class="form-control" id="fcManualCoef" type="number" step="any" value="${defaults.coeficiente ?? 1}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Preco unitario (R$)</label>
+            <input class="form-control" id="fcManualPreco" type="number" step="any" value="${defaults.preco_unitario ?? 0}">
+          </div>
+          <div class="form-group" style="align-self:end">
+            <button type="button" class="btn btn-primary w-100" id="fcManualAdd">Adicionar</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('fcManualAdd')?.addEventListener('click', () => {
+      const descricao = document.getElementById('fcManualDescricao')?.value.trim();
+      if (!descricao) { Toast.warning('Informe a descricao do componente.'); return; }
+      _adicionarInsumoForm({
+        tipo_item: document.getElementById('fcManualTipo')?.value || 'INSUMO',
+        codigo_item: document.getElementById('fcManualCodigo')?.value.trim() || '',
+        descricao,
+        unidade: document.getElementById('fcManualUnidade')?.value.trim() || '',
+        coeficiente: parseFloat(document.getElementById('fcManualCoef')?.value) || 0,
+        preco_unitario: parseFloat(document.getElementById('fcManualPreco')?.value) || 0,
+      });
+    });
+  }
+
+  function _mostrarImportacaoTabelaInline() {
+    const p = document.getElementById('fcSearchPanel');
+    const r = document.getElementById('fcResultados');
+    const h = document.getElementById('fcSearchHint');
+    if (p) p.style.display = '';
+    if (h) h.innerHTML = 'Cole linhas copiadas do Excel/PDF/OCR com colunas: codigo, descricao, unidade, coeficiente, custo unitario e valor.';
+    if (!r) return;
+    r.style.display = '';
+    r.innerHTML = `
+      <div style="padding:10px">
+        <textarea id="fcImportText" class="form-control" rows="7" placeholder="5824\tCAMINHAO TOCO...\tCHP\t3,00\t217,37\t652,11"></textarea>
+        <div class="d-flex gap-1 align-c" style="margin-top:8px;justify-content:space-between;flex-wrap:wrap">
+          <input type="file" id="fcImportFile" accept=".csv,.txt,.tsv,image/*">
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm" id="fcImportPreview">Ler tabela</button>
+            <button class="btn btn-primary btn-sm" id="fcImportAdd">Adicionar itens</button>
+          </div>
+        </div>
+        <div id="fcImportPreviewBox" class="text-sm text-3" style="margin-top:8px"></div>
+      </div>`;
+    document.getElementById('fcImportFile')?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.type.startsWith('image/')) {
+        document.getElementById('fcImportPreviewBox').innerHTML = 'Imagem recebida. A leitura direta por OCR/IA sera conectada na proxima etapa; por enquanto cole o texto extraido ou use CSV/TXT.';
+        return;
+      }
+      document.getElementById('fcImportText').value = await file.text();
+    });
+    document.getElementById('fcImportPreview')?.addEventListener('click', () => _previewImportTabela());
+    document.getElementById('fcImportAdd')?.addEventListener('click', () => {
+      const itens = _parseTabelaComponentes(document.getElementById('fcImportText')?.value || '');
+      if (!itens.length) { Toast.warning('Nao encontrei linhas validas para importar.'); return; }
+      itens.forEach(it => _formItens.push({ uid: Math.random().toString(36).slice(2), ...it }));
+      renderFormItens();
+      _fecharBuscaForm();
+      Toast.success(`${itens.length} componente(s) importado(s).`);
+    });
+  }
+
+  function _previewImportTabela() {
+    const itens = _parseTabelaComponentes(document.getElementById('fcImportText')?.value || '');
+    const box = document.getElementById('fcImportPreviewBox');
+    if (!box) return;
+    if (!itens.length) {
+      box.innerHTML = 'Nenhuma linha valida encontrada. Confira se ha codigo, descricao, unidade, coeficiente e preco.';
+      return;
+    }
+    box.innerHTML = `<strong>${itens.length} linha(s) reconhecida(s):</strong><br>` + itens.slice(0, 5)
+      .map(it => `${Utils.esc(it.codigo_item||'-')} - ${Utils.esc(Utils.trunc(it.descricao, 70))} (${Utils.esc(it.unidade||'-')}) coef. ${it.coeficiente} x ${Utils.moeda(it.preco_unitario)}`)
+      .join('<br>');
+  }
+
+  function _parseTabelaComponentes(txt) {
+    const linhas = String(txt || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const itens = [];
+    for (const linha of linhas) {
+      if (/^(codigo|codigos|total)\b/i.test(linha.replace(/[^\w]/g, ''))) continue;
+      let cols = linha.includes('\t') ? linha.split('\t') : linha.split(/\s{2,}|;/);
+      cols = cols.map(c => c.trim()).filter(Boolean);
+      if (cols.length < 5) continue;
+      const codigo = cols[0];
+      const unidadeIdx = cols.findIndex((c, idx) => idx > 0 && /^(un|und|h|m|m2|m3|kg|t|tkm|mes|chp|chi|vb)$/i.test(c.replace(/[²³]/g, d => d === '²' ? '2' : '3')));
+      if (unidadeIdx < 2) continue;
+      const descricao = cols.slice(1, unidadeIdx).join(' ');
+      const unidade = cols[unidadeIdx].toUpperCase();
+      const coef = _parseNumeroLocal(cols[unidadeIdx + 1]);
+      const preco = _parseNumeroLocal(cols[unidadeIdx + 2]);
+      if (!descricao || !unidade || !Number.isFinite(coef) || !Number.isFinite(preco)) continue;
+      itens.push({
+        tipo_item: _tipoPorUnidadeImportada(unidade),
+        codigo_item: codigo,
+        descricao,
+        unidade,
+        coeficiente: coef,
+        preco_unitario: preco,
+      });
+    }
+    return itens;
+  }
+
+  function _parseNumeroLocal(v) {
+    if (v == null) return NaN;
+    const s = String(v).replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.');
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  function _tipoPorUnidadeImportada(unidade) {
+    const u = String(unidade || '').toUpperCase();
+    if (u === 'H') return 'MO';
+    if (u === 'CHP' || u === 'CHI') return 'EQUIPAMENTO';
+    return 'INSUMO';
+  }
+
   function _adicionarInsumoForm(ins) {
     if (ins.codigo_item && _formItens.find(it => it.codigo_item === ins.codigo_item)) {
-      Toast.warning('Este insumo já foi adicionado à composição.');
+      Toast.warning('Este componente ja foi adicionado a composicao.');
       return;
     }
     _formItens.push({ uid: Math.random().toString(36).slice(2), ...ins });
