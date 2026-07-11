@@ -10,6 +10,13 @@ module.exports = function(db, options = {}) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
   }
 
+  async function withWriteConnection(task) {
+    if (db && typeof db.withConnection === 'function') {
+      return db.withConnection(task);
+    }
+    return task(db);
+  }
+
   router.get('/grupos', asyncHandler(async (req, res) => {
     res.json(await repo.listGrupos(readDb, req.query));
   }));
@@ -23,7 +30,8 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createComposicao(db, req.body || {}));
+    const result = await withWriteConnection(writeDb => service.createComposicao(writeDb, req.body || {}));
+    res.status(201).json(result);
   }));
 
   router.post('/recalcular-custos', asyncHandler(async (_req, res) => {
@@ -31,17 +39,17 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
-    res.json(await repo.excluirEmLote(db, req.body || {}));
+    res.json(await withWriteConnection(writeDb => repo.excluirEmLote(writeDb, req.body || {})));
   }));
 
   router.put('/itens/:id', asyncHandler(async (req, res) => {
-    const item = await repo.updateItem(db, req.params.id, req.body || {});
+    const item = await withWriteConnection(writeDb => repo.updateItem(writeDb, req.params.id, req.body || {}));
     if (!item) return res.status(404).json({ erro: 'Item nao encontrado.' });
     return res.json(item);
   }));
 
   router.delete('/itens/:id', asyncHandler(async (req, res) => {
-    const result = await repo.deleteItem(db, req.params.id);
+    const result = await withWriteConnection(writeDb => repo.deleteItem(writeDb, req.params.id));
     if (!result.changes) return res.status(404).json({ erro: 'Item nao encontrado.' });
     return res.json({ mensagem: 'Item excluido.' });
   }));
@@ -51,15 +59,16 @@ module.exports = function(db, options = {}) {
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updateComposicao(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await withWriteConnection(writeDb => service.updateComposicao(writeDb, req.params.id, req.body || {}, { readDb })));
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
-    res.json(await service.deleteComposicao(db, req.params.id, { readDb }));
+    res.json(await withWriteConnection(writeDb => service.deleteComposicao(writeDb, req.params.id, { readDb })));
   }));
 
   router.post('/:id/itens', asyncHandler(async (req, res) => {
-    res.status(201).json(await repo.createItem(db, req.params.id, req.body || {}));
+    const result = await withWriteConnection(writeDb => repo.createItem(writeDb, req.params.id, req.body || {}));
+    res.status(201).json(result);
   }));
 
   router.get('/:id/uso-orcamentos', asyncHandler(async (req, res) => {
@@ -75,11 +84,11 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/:id/excluir-com-vinculo', asyncHandler(async (req, res) => {
-    res.json(await service.excluirComVinculo(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await withWriteConnection(writeDb => service.excluirComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
   }));
 
   router.post('/:id/editar-com-vinculo', asyncHandler(async (req, res) => {
-    res.json(await service.editarComVinculo(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await withWriteConnection(writeDb => service.editarComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
   }));
 
   return router;
