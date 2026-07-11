@@ -1177,7 +1177,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
     ORDER BY ordem`, [idOrcamento]);
 
   const grouped = new Map();
-  const addInsumo = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
+  const addInsumoAgrupado = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
     const codigo = String(row.codigo || row.codigo_item || '').trim();
     const key = codigo.toUpperCase() || String(row.descricao || '').trim().toUpperCase();
     if (!key) return;
@@ -1213,6 +1213,42 @@ async function curvaAbcInsumos(db, idOrcamento) {
       ibs_percentual: Number(toNum(ibsPercentual, 0).toFixed(4)),
       cbs_percentual: Number(toNum(cbsPercentual, 0).toFixed(4)),
     });
+  };
+  const addInsumo = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
+    if (Array.isArray(servico.__abcCollector)) {
+      servico.__abcCollector.push({ row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual });
+      return;
+    }
+    addInsumoAgrupado(row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual);
+  };
+
+  const agregarServicoReconciliado = (servico, entradas) => {
+    if (!Array.isArray(entradas) || !entradas.length) return false;
+    const qtdServico = toNum(servico.qtd_servico, 0);
+    const custoDiretoServico = qtdServico * toNum(servico.custo_unitario, 0);
+    const custoExpandido = entradas.reduce((sum, entrada) => sum + toNum(entrada.qtdInsumo, 0) * toNum(entrada.preco, 0), 0);
+    const fatorAjuste = custoDiretoServico > 0 && custoExpandido > 0 ? custoDiretoServico / custoExpandido : 1;
+    entradas.forEach((entrada) => {
+      addInsumoAgrupado(
+        entrada.row,
+        entrada.qtdInsumo,
+        servico,
+        toNum(entrada.preco, 0) * fatorAjuste,
+        entrada.ibsPercentual,
+        entrada.cbsPercentual,
+      );
+    });
+    if (custoDiretoServico > 0 && custoExpandido === 0) {
+      const qtdResidual = qtdServico || 1;
+      addInsumoAgrupado({
+        codigo: servico.codigo || `SERVICO-${servico.id_item}`,
+        descricao: servico.servico_descricao || 'Custo direto sem detalhamento analitico',
+        unidade: servico.unidade || '',
+        tipo_item: 'CUSTO_NAO_DETALHADO',
+        coeficiente: 1,
+      }, qtdResidual, servico, custoDiretoServico / qtdResidual, 0, 0);
+    }
+    return true;
   };
 
   async function expandirComposicao(idComposicao, fator, servico, visitados = new Set()) {
@@ -1250,9 +1286,11 @@ async function curvaAbcInsumos(db, idOrcamento) {
 
   for (const servico of servicos) {
     const qtdServico = toNum(servico.qtd_servico, 0);
+    const entradasServico = [];
+    const servicoColetor = { ...servico, __abcCollector: entradasServico };
     let expanded = false;
     if (servico.id_composicao) {
-      expanded = await expandirComposicao(servico.id_composicao, qtdServico, servico);
+      expanded = await expandirComposicao(servico.id_composicao, qtdServico, servicoColetor);
     }
     if (!expanded) {
       const codigos = codigoVariantesComposicao(servico.codigo, servico.fonte);
@@ -1261,8 +1299,9 @@ async function curvaAbcInsumos(db, idOrcamento) {
         comp = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
         if (comp) break;
       }
-      if (comp) expanded = await expandirComposicao(comp.id_composicao, qtdServico, servico);
+      if (comp) expanded = await expandirComposicao(comp.id_composicao, qtdServico, servicoColetor);
     }
+    if (expanded && agregarServicoReconciliado(servico, entradasServico)) continue;
     if (!expanded) {
       const resolvido = await resolverInsumoForAbc(db, {
         codigo_item: servico.codigo,
