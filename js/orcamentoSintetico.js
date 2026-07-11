@@ -1819,7 +1819,20 @@ Router.register('orcamento-sintetico', async () => {
 
   function toNumberLocal(value) {
     if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-    const n = Number(String(value || '0').replace(/\./g, '').replace(',', '.'));
+    let s = String(value || '0').trim().replace(/\s/g, '').replace(/R\$/gi, '').replace(/%/g, '');
+    const hasComma = s.includes(',');
+    const hasDot = s.includes('.');
+    if (hasComma && hasDot) {
+      s = s.lastIndexOf(',') > s.lastIndexOf('.')
+        ? s.replace(/\./g, '').replace(',', '.')
+        : s.replace(/,/g, '');
+    } else if (hasComma) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (hasDot) {
+      const parts = s.split('.');
+      if (parts.length > 2 && parts[parts.length - 1].length === 3) s = parts.join('');
+    }
+    const n = Number(s);
     return Number.isFinite(n) ? n : 0;
   }
 

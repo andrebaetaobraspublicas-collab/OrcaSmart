@@ -860,6 +860,20 @@ function isMaterialTipo(value) {
   return s.includes('material');
 }
 
+function isComposicaoItemRobusto(row) {
+  const tipo = String(row?.tipo_item || row?.tipo || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+  const unidade = String(row?.unidade || '').trim().toUpperCase();
+  const codigo = String(row?.codigo_item || row?.codigo || '').trim().toUpperCase();
+  return tipo.includes('COMPOS')
+    || tipo === 'CP'
+    || tipo === 'COMP'
+    || (codigo.startsWith('SINAPI.') && ['CHP', 'CHI'].includes(unidade));
+}
+
 function aliquotasIvaPadraoPorAno(ano, tipoInsumo) {
   if (!isMaterialTipo(tipoInsumo)) return { ibs: 0, cbs: 0 };
   const tabela = {
@@ -1268,7 +1282,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
       const coef = toNum(item.coeficiente, 0);
       const qtd = fator * coef;
       if (!qtd) continue;
-      if (isComposicaoItem(item)) {
+      if (isComposicaoItemRobusto(item)) {
         const codigos = codigoVariantesComposicao(item.codigo_item, item.fonte);
         let sub = null;
         for (const codigo of codigos) {

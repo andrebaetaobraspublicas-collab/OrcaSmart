@@ -21,7 +21,24 @@ function run(db, sql, params = []) {
 
 function toNum(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
-  const n = Number(String(value).replace(/\./g, '').replace(',', '.'));
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  let s = String(value).trim();
+  if (!s) return fallback;
+  s = s.replace(/\s/g, '').replace(/R\$/gi, '').replace(/%/g, '');
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  if (hasComma && hasDot) {
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+      ? s.replace(/\./g, '').replace(',', '.')
+      : s.replace(/,/g, '');
+  } else if (hasComma) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot) {
+    const parts = s.split('.');
+    const looksLikeThousands = parts.length > 2 && parts[parts.length - 1].length === 3;
+    if (looksLikeThousands) s = parts.join('');
+  }
+  const n = Number(s);
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -100,6 +117,77 @@ function codigoVariantes(codigo) {
     else variantes.add(prefix + cod);
   }
   return [...variantes].filter(Boolean);
+}
+
+function isTipoComposicao(tipo) {
+  const normal = String(tipo || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+  return normal.includes('COMPOS') || normal === 'CP' || normal === 'COMP';
+}
+
+async function resolveCustoComposicaoReferencia(db, codigoItem) {
+  const variantes = codigoVariantes(codigoItem);
+  if (!variantes.length) return null;
+  const q = variantes.map(() => '?').join(',');
+
+  if (await hasTenantComposicaoOverrides(db)) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM tenant_composicoes
+      WHERE codigo IN (${q}) AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY rowid DESC LIMIT 1`, variantes).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+
+  if (await hasCatalogComposicoes(db)) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM catalog.composicoes
+      WHERE codigo IN (${q})
+      ORDER BY id_composicao DESC LIMIT 1`, variantes).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+
+  if (await tableExists(db, 'composicoes')) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM composicoes
+      WHERE codigo IN (${q})
+      ORDER BY id_composicao DESC LIMIT 1`, variantes).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+
+  return null;
+}
+
+async function precoResolvidoItemComposicao(db, item = {}) {
+  const precoAtual = toNum(item.preco_unitario, 0);
+  const unidade = String(item.unidade || '').trim().toUpperCase();
+  const codigo = String(item.codigo_item || '').trim().toUpperCase();
+  const sinapiCustoHorario = codigo.startsWith('SINAPI.') && ['CHP', 'CHI'].includes(unidade);
+  if (!isTipoComposicao(item.tipo_item) && !sinapiCustoHorario) return precoAtual;
+  const custoReferencia = await resolveCustoComposicaoReferencia(db, item.codigo_item);
+  return custoReferencia !== null ? custoReferencia : precoAtual;
+}
+
+async function aplicarPrecosResolvidosTenant(db, comp) {
+  if (!comp || !Array.isArray(comp.itens) || !comp.itens.length) return comp;
+  let total = 0;
+  for (const item of comp.itens) {
+    const coef = toNum(item.coeficiente, 0);
+    const preco = await precoResolvidoItemComposicao(db, item);
+    const parcial = Number((coef * preco).toFixed(4));
+    item.preco_unitario = preco;
+    item.custo_parcial = parcial;
+    total += parcial;
+  }
+  if (total > 0) comp.custo_unitario = Number(total.toFixed(4));
+  return comp;
 }
 
 const selectComp = `
@@ -384,7 +472,7 @@ async function getTenantComposicao(db, rowid) {
       WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY ordem, rowid`, [secaoRowid]);
   }
-  return comp;
+  return aplicarPrecosResolvidosTenant(db, comp);
 }
 
 async function createComposicao(db, data = {}) {
@@ -911,7 +999,7 @@ async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
     ORDER BY ordem, rowid`, [rowid]);
   let total = 0;
   for (const item of itens) {
-    const preco = toNum(item.preco_unitario);
+    const preco = await precoResolvidoItemComposicao(db, item);
     const parcial = Number((toNum(item.coeficiente) * preco).toFixed(4));
     await run(db, 'UPDATE tenant_itens_composicao SET preco_unitario = ?, custo_parcial = ? WHERE rowid = ?', [preco, parcial, item._rowid]);
     total += parcial;
