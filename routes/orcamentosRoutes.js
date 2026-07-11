@@ -13,6 +13,12 @@ module.exports = function(db) {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
+  const sendExport = (res, file) => {
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.buffer);
+  };
+
   router.get('/', asyncHandler(async (req, res) => {
     res.json(await orcamentosService.listOrcamentos(readDb, req.query || {}));
   }));
@@ -90,6 +96,14 @@ module.exports = function(db) {
       ? await db.withConnection(conn => orcamentosService.curvaAbcInsumos(conn, req.params.id))
       : await orcamentosService.curvaAbcInsumos(db, req.params.id);
     res.json(workerDb);
+  }));
+
+  router.get('/:id/exportar/excel', asyncHandler(async (req, res) => {
+    sendExport(res, await orcamentosService.exportarOrcamentoExcel(db, req.params.id));
+  }));
+
+  router.get('/:id/exportar/pdf', asyncHandler(async (req, res) => {
+    sendExport(res, await orcamentosService.exportarOrcamentoPdf(db, req.params.id));
   }));
 
   router.post('/:id/importar-sintetico-excel', express.raw({ type: () => true, limit: '30mb' }), asyncHandler(async (req, res) => {

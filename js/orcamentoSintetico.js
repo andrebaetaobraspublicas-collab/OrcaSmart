@@ -330,7 +330,7 @@ Router.register('orcamento-sintetico', async () => {
                 <a id="menuExcelOS" href="#"
                    style="display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:.82rem;text-decoration:none;color:var(--c-text)">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="#15803d" stroke-width="1.8"/><path d="M8 8l4 4 4-4M8 16l4-4 4 4" stroke="#15803d" stroke-width="1.5" stroke-linecap="round"/></svg>
-                  <span>Exportar Excel <small style="color:var(--c-text-3)">.xlsx</small></span>
+                  <span>Exportar Excel <small style="color:var(--c-text-3)">.xls</small></span>
                 </a>
                 <a id="menuPdfOS" href="#"
                    style="display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:.82rem;text-decoration:none;color:var(--c-text)">
