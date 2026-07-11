@@ -68,6 +68,7 @@ Router.register('orcamento-sintetico', async () => {
   let buscaResultados = [];   // resultados do modal de busca (evita JSON no onclick)
   let buscaCallback  = null;  // id_item aguardando vínculo
   let undoState = null;
+  let pendingSubsectionPlacement = null;
 
   /* ── ID do orçamento vem via sessionStorage ──────────────────────────────── */
   const id_orc = parseInt(sessionStorage.getItem('osSintId') || '0');
@@ -543,9 +544,10 @@ Router.register('orcamento-sintetico', async () => {
   }
 
   /* ── Rebuild only the table body (no listener re-registration) ── */
-  function rebuildTable() {
+  function rebuildTable(options = {}) {
+    const { salvarTotais = false } = options;
     document.getElementById('tblBody').innerHTML = renderLinhas();
-    atualizarTotaisDOM();
+    atualizarTotaisDOM({ salvar: salvarTotais });
     atualizarBotoesSel();
     initDragDrop();
   }
@@ -592,8 +594,7 @@ Router.register('orcamento-sintetico', async () => {
         <button class="btn btn-primary" id="btnSalvarBdiLinha">Aplicar na linha</button>`
     });
     document.getElementById('linha_bdi_perfil')?.addEventListener('change', e => {
-      const id = parseInt(e.target.value);
-      const perfil = bdis.find(b => b.id_perfil_bdi === id);
+      const perfil = bdis.find(b => String(b.id_perfil_bdi) === String(e.target.value));
       if (perfil) document.getElementById('linha_bdi_pct').value = Number(perfil.bdi_percentual || 0).toFixed(4);
     });
     document.getElementById('btnSalvarBdiLinha')?.addEventListener('click', async () => {
@@ -613,7 +614,8 @@ Router.register('orcamento-sintetico', async () => {
     try {
       guardarUndo('bdi_linha');
       const atualizado = await API.osSint.update(item.id_item, { bdi_percentual_linha: pct });
-      Object.assign(item, atualizado);
+      Object.assign(item, atualizado || {});
+      item.bdi_percentual_linha = atualizado?.bdi_percentual_linha ?? pct;
       Modal.close();
       rebuildTable();
       await salvarTotais();
@@ -847,8 +849,8 @@ Router.register('orcamento-sintetico', async () => {
         const idx = itens.findIndex(i => i.id_item === id);
         if (idx >= 0) itens[idx][field] = newVal;
         rebuildRow(id);
-        atualizarTotaisDOM();
-        salvarTotais();
+        atualizarTotaisDOM({ salvar: false });
+        await salvarTotais();
       } catch(err) { Toast.error(err.message); rebuildRow(id); }
     };
     const cancelEdit = () => { rebuildRow(id); };
@@ -868,7 +870,8 @@ Router.register('orcamento-sintetico', async () => {
     tr.outerHTML = renderLinha(item);
   }
 
-  function atualizarTotaisDOM() {
+  function atualizarTotaisDOM(options = {}) {
+    const { salvar = true } = options;
     const gt = totalGeral();
     const disp = document.getElementById('totalGeralDisplay');
     const foot = document.getElementById('tfTotal');
@@ -880,7 +883,7 @@ Router.register('orcamento-sintetico', async () => {
       if (!tr) return;
       tr.outerHTML = renderLinha(sec);
     });
-    salvarTotais();
+    if (salvar) salvarTotais();
   }
 
   /* ═══════════════════ ADICIONAR LINHA ══════════════════════════════════════ */
@@ -896,7 +899,12 @@ Router.register('orcamento-sintetico', async () => {
     let depth      = forceProfundidade ?? 1;
     let parentNum  = '';
 
-    if (selectedId !== null) {
+    if (tipoLinha === 'section' && pendingSubsectionPlacement) {
+      insertAfterIdx = pendingSubsectionPlacement.insertAfterIdx;
+      depth = pendingSubsectionPlacement.depth;
+      parentNum = pendingSubsectionPlacement.parentNum || '';
+      pendingSubsectionPlacement = null;
+    } else if (selectedId !== null) {
       const selIdx = itens.findIndex(i => i.id_item === selectedId);
       const sel    = itens[selIdx];
 
@@ -995,6 +1003,11 @@ Router.register('orcamento-sintetico', async () => {
     if (selectedId === null || selectedId === undefined) return null;
     const idx = itens.findIndex(i => i.id_item === selectedId);
     if (idx < 0) return null;
+    return secaoReferenciaParaIndice(idx);
+  }
+
+  function secaoReferenciaParaIndice(idx) {
+    if (idx < 0 || idx >= itens.length) return null;
     const item = itens[idx];
     if (item?.tipo_linha === 'section') return item;
 
@@ -1011,8 +1024,73 @@ Router.register('orcamento-sintetico', async () => {
     if (!ref) {
       Toast.warning('Selecione uma seção para adicionar subseção.'); return;
     }
-    selectedId = ref.id_item;
+    const selectedIdx = itens.findIndex(i => i.id_item === selectedId);
+    const refIdx = itens.findIndex(i => i.id_item === ref.id_item);
+    pendingSubsectionPlacement = {
+      insertAfterIdx: selectedIdx >= 0 ? selectedIdx : refIdx,
+      depth: (ref.profundidade || 0) + 1,
+      parentNum: ref.item_num || '',
+    };
     addRow('section', (ref.profundidade || 0) + 1);
+  }
+
+  async function converterLinha(id, destino) {
+    const idx = itens.findIndex(i => i.id_item === id);
+    if (idx < 0) return;
+    const item = itens[idx];
+    if (item.tipo_linha !== 'item') {
+      Toast.warning('A conversao se aplica apenas a linhas de servico ou insumo.');
+      return;
+    }
+
+    let profundidade = 0;
+    if (destino === 'subsection') {
+      const parent = secaoReferenciaParaIndice(idx);
+      if (!parent) {
+        Toast.warning('Nao foi encontrada uma secao pai para esta subsecao.');
+        return;
+      }
+      profundidade = (parent.profundidade || 0) + 1;
+    }
+
+    const label = destino === 'section' ? 'secao' : 'subsecao';
+    const ok = await Confirm.ask(`Transformar a linha "${Utils.trunc(item.descricao || '', 70)}" em ${label}?`);
+    if (!ok) return;
+
+    try {
+      guardarUndo('conversao');
+      const updates = {
+        tipo_linha: 'section',
+        profundidade,
+        tipo_item: null,
+        id_composicao: null,
+        id_insumo: null,
+        codigo: '',
+        fonte: '',
+        unidade: '',
+        quantidade: 0,
+        custo_unitario: 0,
+        bdi_percentual_linha: null,
+      };
+      const atualizado = await API.osSint.update(id, updates);
+      Object.assign(item, updates, atualizado || {});
+      renumerarItens();
+      await API.osSint.reorder(id_orc,
+        itens.map((it, i) => ({
+          id_item: it.id_item,
+          ordem: i + 1,
+          item_num: it.item_num,
+          profundidade: it.profundidade,
+        }))
+      );
+      selectedId = id;
+      rebuildTable();
+      await salvarTotais();
+      Toast.success(`Linha transformada em ${label}.`);
+    } catch(e) {
+      Toast.error(e.message);
+      await carregar();
+    }
   }
 
   /* ═══════════════════ EXCLUIR ═══════════════════════════════════════════════ */
@@ -1187,6 +1265,8 @@ Router.register('orcamento-sintetico', async () => {
   function initDragDrop() {
     const tbody = document.getElementById('tblBody');
     if (!tbody) return;
+    if (tbody.dataset.dragReady === '1') return;
+    tbody.dataset.dragReady = '1';
 
     tbody.addEventListener('dragstart', e => {
       const tr = e.target.closest('tr[data-id]');
@@ -1388,11 +1468,20 @@ Router.register('orcamento-sintetico', async () => {
     menu.appendChild(ctxItem('▤', 'Inserir nova seção após esta linha',
       () => addRowAt(id, 'section', null, 0)));
     menu.appendChild(sep());
+    if (!isSection) {
+      menu.appendChild(ctxItem('S', 'Transformar esta linha em secao',
+        () => converterLinha(id, 'section')));
+      menu.appendChild(ctxItem('SS', 'Transformar esta linha em subsecao',
+        () => converterLinha(id, 'subsection')));
+      menu.appendChild(sep());
+    }
     menu.appendChild(ctxItem('↑', 'Mover para cima', () => moverItem(-1)));
     menu.appendChild(ctxItem('↓', 'Mover para baixo', () => moverItem(1)));
     menu.appendChild(sep());
     if (!isSection) {
-      menu.appendChild(ctxItem('🔗', 'Vincular a composição/insumo',
+      menu.appendChild(ctxItem('+', 'Criar composicao do usuario desta linha',
+        () => abrirCriarComposicaoUsuarioDaLinha(id)));
+      menu.appendChild(ctxItem('link', 'Vincular a composicao/insumo',
         () => abrirVincular()));
     }
     menu.appendChild(ctxItem('✕', 'Excluir',
@@ -1416,7 +1505,15 @@ Router.register('orcamento-sintetico', async () => {
     let depth   = forceProfundidade;
     let parentNum = '';
 
-    if (depth === null) {
+    if (tipoLinha === 'section' && depth !== null && depth > 0) {
+      const parent = secaoReferenciaParaIndice(refIdx);
+      if (!parent) {
+        Toast.warning('Selecione uma linha dentro de uma seção para inserir subseção.');
+        return;
+      }
+      depth = (parent.profundidade || 0) + 1;
+      parentNum = parent.item_num || '';
+    } else if (depth === null) {
       if (tipoLinha === 'item') {
         if (ref.tipo_linha === 'section') {
           depth     = ref.profundidade + 1;
@@ -1683,24 +1780,91 @@ Router.register('orcamento-sintetico', async () => {
     return Number.isFinite(n) ? n : 0;
   }
 
-  async function criarComposicaoUsuarioDaLinha() {
-    const idItem = buscaCallback;
+  function criarComposicaoUsuarioDaLinha() {
+    abrirCriarComposicaoUsuarioDaLinha(buscaCallback || selectedId);
+  }
+
+  function abrirCriarComposicaoUsuarioDaLinha(idItem = buscaCallback || selectedId) {
     const item = itens.find(i => i.id_item === idItem);
     if (!item) return;
     const codigoBase = String(item.codigo || '').trim().replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)[./-]/i, '');
+    const codigoSugerido = codigoBase ? `USUARIO.${codigoBase}` : `USUARIO.${Date.now().toString().slice(-6)}`;
+    const ref = orcMesReferencia();
+    const uf = orc?.uf_referencia || orc?.obra_uf || '';
+
+    Modal.open({
+      title: 'Criar composicao do usuario para a linha',
+      size: 'modal-lg',
+      body: `
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:14px;color:#1e40af;font-size:.82rem;line-height:1.45">
+          A nova composicao sera cadastrada como fonte USUARIO e vinculada a linha selecionada do orcamento.
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Linha</label>
+            <input class="form-control" value="${Utils.esc(item.item_num || '')} - ${Utils.esc(item.descricao || '')}" readonly>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Codigo da composicao</label>
+            <input class="form-control" id="comp_linha_codigo" value="${Utils.esc(codigoSugerido)}">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label class="form-label">Descricao</label>
+            <input class="form-control" id="comp_linha_descricao" value="${Utils.esc(item.descricao || '')}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unidade</label>
+            <input class="form-control" id="comp_linha_unidade" value="${Utils.esc(item.unidade || '')}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Custo unitario (R$)</label>
+            <input class="form-control" id="comp_linha_custo" type="number" step="0.01" value="${Number(item.custo_unitario || 0).toFixed(2)}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Referencia</label>
+            <input class="form-control" id="comp_linha_ref" value="${Utils.esc(ref)}" placeholder="MM/AAAA">
+          </div>
+          <div class="form-group">
+            <label class="form-label">UF</label>
+            <input class="form-control" id="comp_linha_uf" value="${Utils.esc(uf)}" maxlength="2">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label class="form-label">Observacoes</label>
+            <textarea class="form-control" id="comp_linha_obs" rows="3">Criada a partir da linha ${Utils.esc(item.item_num || '')} do orcamento sintetico.</textarea>
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="btnSalvarCompLinha">Criar e vincular</button>
+      `,
+    });
+
+    setTimeout(() => {
+      document.getElementById('btnSalvarCompLinha')?.addEventListener('click', () => salvarComposicaoUsuarioDaLinha(idItem));
+    }, 60);
+  }
+
+  async function salvarComposicaoUsuarioDaLinha(idItem) {
+    const item = itens.find(i => i.id_item === idItem);
+    if (!item) return;
     const payload = {
-      codigo: codigoBase ? `USUARIO.${codigoBase}` : null,
+      codigo: document.getElementById('comp_linha_codigo')?.value?.trim() || null,
       fonte: 'USUARIO',
       formato: 'UNITARIO',
-      descricao: item.descricao || 'Composicao do usuario',
-      unidade: item.unidade || null,
-      mes_referencia: orcMesReferencia(),
-      uf_referencia: orc?.uf_referencia || orc?.obra_uf || null,
-      custo_unitario: toNumberLocal(item.custo_unitario),
+      descricao: document.getElementById('comp_linha_descricao')?.value?.trim() || item.descricao || 'Composicao do usuario',
+      unidade: document.getElementById('comp_linha_unidade')?.value?.trim() || item.unidade || null,
+      mes_referencia: document.getElementById('comp_linha_ref')?.value?.trim() || orcMesReferencia(),
+      uf_referencia: (document.getElementById('comp_linha_uf')?.value?.trim() || orc?.uf_referencia || orc?.obra_uf || '').toUpperCase() || null,
+      custo_unitario: toNumberLocal(document.getElementById('comp_linha_custo')?.value),
       situacao: 'Ativo',
-      observacoes: `Criada a partir da linha ${item.item_num || ''} do orcamento sintetico.`,
+      observacoes: document.getElementById('comp_linha_obs')?.value?.trim() || `Criada a partir da linha ${item.item_num || ''} do orcamento sintetico.`,
       itens: [],
     };
+    if (!payload.descricao) {
+      Toast.warning('Informe a descricao da composicao.');
+      return;
+    }
     try {
       const createFn = API.composicoes?.create || ((data) => API.post('/composicoes', data));
       const comp = await createFn(payload);
@@ -1720,6 +1884,7 @@ Router.register('orcamento-sintetico', async () => {
       if (idx >= 0) Object.assign(itens[idx], updates);
       Modal.close();
       rebuildTable();
+      await salvarTotais();
       Toast.success('Composicao do usuario criada e vinculada a linha.');
     } catch(e) {
       Toast.error(e.message);
