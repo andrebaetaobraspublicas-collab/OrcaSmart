@@ -1139,6 +1139,10 @@ async function resolverInsumoForAbc(db, item, contexto, insumoPriceCache = null)
   const best = candidatos[0] || null;
   const tipoInsumo = best?.tipo_insumo || item.tipo_item || 'INSUMO';
   const fallbackAliquotas = aliquotasIvaPadraoPorAno(contexto?.data_base_ano, tipoInsumo);
+  const coeficiente = toNum(item.coeficiente, 0);
+  const precoItem = toNum(item.preco_unitario, 0);
+  const custoParcial = toNum(item.custo_parcial, 0);
+  const precoAnalitico = precoItem || (coeficiente > 0 && custoParcial > 0 ? custoParcial / coeficiente : 0);
   const precoCatalogo = toNum(best?.preco_escolhido, 0);
   return {
     codigo: String(best?.codigo_insumo || item.codigo_item || item.codigo || '').trim(),
@@ -1146,7 +1150,7 @@ async function resolverInsumoForAbc(db, item, contexto, insumoPriceCache = null)
     unidade: item.unidade || '',
     tipo_item: tipoInsumo,
     coeficiente: item.coeficiente,
-    preco: precoCatalogo || toNum(item.preco_unitario, 0),
+    preco: precoAnalitico || precoCatalogo,
     ibs_percentual: toNum(best?.ibs_percentual, 0) || fallbackAliquotas.ibs,
     cbs_percentual: toNum(best?.cbs_percentual, 0) || fallbackAliquotas.cbs,
   };
