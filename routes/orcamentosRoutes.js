@@ -86,7 +86,10 @@ module.exports = function(db) {
   }));
 
   router.get('/:id/curva-abc-insumos', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.curvaAbcInsumos(db, req.params.id));
+    const workerDb = db.withConnection
+      ? await db.withConnection(conn => orcamentosService.curvaAbcInsumos(conn, req.params.id))
+      : await orcamentosService.curvaAbcInsumos(db, req.params.id);
+    res.json(workerDb);
   }));
 
   router.post('/:id/importar-sintetico-excel', express.raw({ type: () => true, limit: '30mb' }), asyncHandler(async (req, res) => {

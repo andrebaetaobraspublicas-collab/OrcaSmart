@@ -54,7 +54,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
 const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
 const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-abc-insumos-catalog';
+const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260710-long-ops-cache';
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -513,9 +513,21 @@ const tenantDbProxy = {
       throw new Error('Tenant nao definido para esta requisicao.');
     }
     const tenantDb = openSqlite(dbPath);
+    let catalogAttached = false;
     try {
+      if (bootState.sharedCatalogReady && fs.existsSync(SHARED_CATALOG_DB_PATH)) {
+        await new Promise((resolve) => {
+          tenantDb.run('ATTACH DATABASE ? AS catalog', [SHARED_CATALOG_DB_PATH], (err) => {
+            catalogAttached = !err;
+            resolve();
+          });
+        });
+      }
       return await task(tenantDb);
     } finally {
+      if (catalogAttached) {
+        await new Promise(resolve => tenantDb.run('DETACH DATABASE catalog', [], () => resolve()));
+      }
       await new Promise(resolve => tenantDb.close(resolve));
     }
   },

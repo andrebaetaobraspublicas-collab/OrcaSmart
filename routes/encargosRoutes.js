@@ -75,6 +75,11 @@ module.exports = function(db, options = {}) {
     return parseMultipartAll(req.body, req.headers['content-type']);
   }
 
+  async function writeWithSingleConnection(task) {
+    if (db.withConnection) return db.withConnection(task);
+    return task(db);
+  }
+
   router.get('/perfis', asyncHandler(async (req, res) => {
     res.json(await service.listPerfis(readDb, req.query));
   }));
@@ -159,7 +164,7 @@ module.exports = function(db, options = {}) {
       err.status = 400;
       throw err;
     }
-    res.json(await service.importarUniforme(db, 'SEINFRA', fields));
+    res.json(await writeWithSingleConnection(conn => service.importarUniforme(conn, 'SEINFRA', fields)));
   }));
 
   router.post('/importar-sudecap', uploadRaw, asyncHandler(async (req, res) => {
@@ -169,7 +174,7 @@ module.exports = function(db, options = {}) {
       err.status = 400;
       throw err;
     }
-    res.json(await service.importarUniforme(db, 'SUDECAP', fields));
+    res.json(await writeWithSingleConnection(conn => service.importarUniforme(conn, 'SUDECAP', fields)));
   }));
 
   router.post('/importar-sinapi', uploadRaw, asyncHandler(async (req, res) => {
@@ -179,17 +184,17 @@ module.exports = function(db, options = {}) {
       err.status = 400;
       throw err;
     }
-    res.json(await service.importarUniforme(db, 'SINAPI', fields));
+    res.json(await writeWithSingleConnection(conn => service.importarUniforme(conn, 'SINAPI', fields)));
   }));
 
   router.post('/importar-sicro', uploadRaw, asyncHandler(async (req, res) => {
     const { fields, files } = multipart(req);
-    res.json(await service.importarAnalitico(db, 'SICRO', files, fields));
+    res.json(await writeWithSingleConnection(conn => service.importarAnalitico(conn, 'SICRO', files, fields)));
   }));
 
   router.post('/importar-goinfra', uploadRaw, asyncHandler(async (req, res) => {
     const { fields, files } = multipart(req);
-    res.json(await service.importarAnalitico(db, 'GOINFRA', files, { ...fields, uf: fields.uf || 'GO' }));
+    res.json(await writeWithSingleConnection(conn => service.importarAnalitico(conn, 'GOINFRA', files, { ...fields, uf: fields.uf || 'GO' })));
   }));
 
   return router;

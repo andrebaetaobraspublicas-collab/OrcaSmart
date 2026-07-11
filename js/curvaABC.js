@@ -595,8 +595,26 @@ Router.register('curva-abc-insumos', async () => {
      <p>Calculando Curva ABC de Insumos…</p></div>`;
 
   let data;
-  try { data = await API.abc.insumos(idOrc); }
-  catch(e) { Toast.error(e.message); return; }
+  try {
+    data = await Promise.race([
+      API.abc.insumos(idOrc),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('A geração da Curva ABC de Insumos demorou demais. Tente novamente; se persistir, revise as composições auxiliares vinculadas.')), 120000)),
+    ]);
+  }
+  catch(e) {
+    Toast.error(e.message);
+    document.getElementById('pageContent').innerHTML = `
+      <div class="section-card" style="max-width:720px;margin:48px auto;padding:24px;text-align:center">
+        <h2 style="margin-bottom:8px">Não foi possível concluir a Curva ABC de Insumos</h2>
+        <p class="text-2" style="margin-bottom:18px">${Utils.esc(e.message)}</p>
+        <button class="btn btn-primary" id="btnTrocarOrcABCIErro">Escolher outro orçamento</button>
+      </div>`;
+    document.getElementById('btnTrocarOrcABCIErro')?.addEventListener('click', () => {
+      sessionStorage.removeItem('abcInsumosId');
+      Router.navigate('curva-abc-insumos');
+    });
+    return;
+  }
 
   const { itens, total_geral, total_ibs, total_cbs, resumo, orcamento } = data;
   const orc = orcamento || {};
