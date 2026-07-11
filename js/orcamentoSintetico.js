@@ -660,7 +660,7 @@ Router.register('orcamento-sintetico', async () => {
     window._osVincularLinha = (idItem) => {
       selectedId = idItem;
       const item = itens.find(i => i.id_item === idItem);
-      if (item) abrirBusca(item.tipo_item || 'composicao', idItem);
+      if (item) abrirBusca(item.tipo_item || 'auto', idItem);
     };
     window._osCriarCompLinha = abrirCriarComposicaoUsuarioDaLinha;
     window._osAbrirCompVinculada = async (idItem) => {
@@ -1579,19 +1579,28 @@ Router.register('orcamento-sintetico', async () => {
   function abrirVincular() {
     const item = itens.find(i => i.id_item === selectedId);
     if (!item || item.tipo_linha !== 'item') return;
-    abrirBusca(item.tipo_item || 'composicao', selectedId);
+    abrirBusca(item.tipo_item || 'auto', selectedId);
   }
 
   function abrirBusca(tipoItem, id_item) {
     buscaCallback    = id_item;
     buscaResultados  = [];
-    const isInsumo   = tipoItem === 'insumo';
+    const itemAtual   = itens.find(i => String(i.id_item) === String(id_item));
+    const fonteAtual  = String(itemAtual?.fonte || '').toUpperCase();
+    const codigoAtual = String(itemAtual?.codigo || '').trim();
+    const pareceInsumoSinapi =
+      fonteAtual.includes('SINAPI') && /^\d{1,5}$/.test(codigoAtual);
+    const isInsumo   = tipoItem === 'insumo' || itemAtual?.id_insumo || pareceInsumoSinapi;
 
     Modal.open({
       title: isInsumo ? '🔩 Selecionar Insumo' : '📋 Selecionar Composição de Custo',
       size: 'modal-xl',
       body: `
         <div style="display:flex;gap:8px;margin-bottom:12px">
+          <select class="form-control" id="buscaTipoVinculo" style="width:170px">
+            <option value="composicao" ${isInsumo ? '' : 'selected'}>Composicao</option>
+            <option value="insumo" ${isInsumo ? 'selected' : ''}>Insumo</option>
+          </select>
           <input class="form-control" id="buscaQ" placeholder="Buscar por código ou descrição..." autocomplete="off" style="flex:1">
           <select class="form-control" id="buscaFonte" style="width:170px">
             <option value="">Todas as fontes</option>
@@ -1609,20 +1618,46 @@ Router.register('orcamento-sintetico', async () => {
         </div>
       `,
       footer: `
-        ${isInsumo ? '' : '<button class="btn btn-sm" id="btnCriarCompLinha" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74">Criar composicao do usuario desta linha</button>'}
+        <button class="btn btn-sm" id="btnCriarCompLinha" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74">Criar composicao do usuario desta linha</button>
         <button class="btn btn-ghost" id="btnFecharBusca">Fechar</button>
       `,
     });
 
     setTimeout(() => {
+      const tipoBuscaEl = document.getElementById('buscaTipoVinculo');
+      const qBuscaEl = document.getElementById('buscaQ');
+      const fonteBuscaEl = document.getElementById('buscaFonte');
+      const btnCriarCompLinha = document.getElementById('btnCriarCompLinha');
+      if (qBuscaEl && codigoAtual) qBuscaEl.value = codigoAtual;
+      if (fonteBuscaEl && fonteAtual) {
+        const fonteNormalizada = fonteAtual.includes('SEINFRA') ? 'SEINFRA'
+          : fonteAtual.includes('SUDECAP') ? 'SUDECAP'
+          : fonteAtual.includes('GOINFRA') ? 'GOINFRA'
+          : fonteAtual.includes('CDHU') ? 'CDHU'
+          : fonteAtual.includes('SICRO') ? 'SICRO'
+          : fonteAtual.includes('SINAPI') ? 'SINAPI'
+          : fonteAtual.includes('USUARIO') ? 'USUARIO'
+          : '';
+        if (fonteNormalizada) fonteBuscaEl.value = fonteNormalizada;
+      }
+      const isBuscaInsumo = () => tipoBuscaEl?.value === 'insumo';
+      const syncTipoBusca = () => {
+        if (btnCriarCompLinha) btnCriarCompLinha.style.display = isBuscaInsumo() ? 'none' : '';
+      };
+      syncTipoBusca();
       document.getElementById('btnFecharBusca')?.addEventListener('click', () => Modal.close());
-      document.getElementById('btnCriarCompLinha')?.addEventListener('click', criarComposicaoUsuarioDaLinha);
-      document.getElementById('buscaQ')?.addEventListener('keydown', e => {
-        if (e.key === 'Enter') executarBusca(isInsumo);
+      btnCriarCompLinha?.addEventListener('click', criarComposicaoUsuarioDaLinha);
+      qBuscaEl?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') executarBusca(isBuscaInsumo());
       });
-      document.getElementById('buscaFonte')?.addEventListener('change', () => executarBusca(isInsumo));
-      document.getElementById('btnBuscarModal')?.addEventListener('click', () => executarBusca(isInsumo));
-      document.getElementById('buscaQ')?.focus();
+      fonteBuscaEl?.addEventListener('change', () => executarBusca(isBuscaInsumo()));
+      tipoBuscaEl?.addEventListener('change', () => {
+        syncTipoBusca();
+        executarBusca(isBuscaInsumo());
+      });
+      document.getElementById('btnBuscarModal')?.addEventListener('click', () => executarBusca(isBuscaInsumo()));
+      qBuscaEl?.focus();
+      if (codigoAtual) executarBusca(isInsumo);
     }, 80);
   }
 
@@ -1650,7 +1685,7 @@ Router.register('orcamento-sintetico', async () => {
 
       if (!buscaResultados.length) {
         document.getElementById('buscaLista').innerHTML =
-          `<p class="text-3 text-sm" style="text-align:center;padding:32px">Nenhum resultado encontrado.</p>`;
+          `<p class="text-3 text-sm" style="text-align:center;padding:32px">Nenhum resultado encontrado. Tente alternar entre Composicao e Insumo.</p>`;
         return;
       }
 
@@ -1674,6 +1709,7 @@ Router.register('orcamento-sintetico', async () => {
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
                   <code style="font-size:.75rem;color:var(--c-primary);font-weight:600">${Utils.esc(cod)}</code>
                   <span class="badge ${badge}" style="font-size:.62rem">${Utils.esc(fontV)}</span>
+                  <span class="badge ${isInsumo ? 'badge-green' : 'badge-blue'}" style="font-size:.62rem">${isInsumo ? 'Insumo' : 'Composicao'}</span>
                 </div>
                 <div style="font-size:.83rem;line-height:1.45;color:var(--c-text)">${Utils.esc(desc)}</div>
               </div>
