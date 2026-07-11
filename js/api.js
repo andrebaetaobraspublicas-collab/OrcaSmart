@@ -168,4 +168,16 @@ const API = {
     update: (id, data)  => API.put(`/datas-base/${id}`, data),
     delete: (id)        => API.delete(`/datas-base/${id}`),
   },
+
+  pavimentos: {
+    gerarOrcamento: (data) => API.post('/pavimentos/gerar-orcamento', data),
+  },
+
+  estrutural: {
+    gerarOrcamento: (data) => API.post('/estrutural/gerar-orcamento', data),
+  },
+
+  adminCanteiro: {
+    criarComposicoes: (data) => API.post('/admin-canteiro/criar-composicoes', data),
+  },
 };
