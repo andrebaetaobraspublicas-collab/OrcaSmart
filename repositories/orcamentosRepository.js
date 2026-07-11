@@ -726,6 +726,7 @@ async function recalcularCustos(db, idOrcamento) {
   const contexto = await getOrcamentoContexto(db, idOrcamento);
   const compCache = await buildComposicaoCacheForAbc(db);
   const itensCompCache = await buildItensComposicaoCacheForAbc(db);
+  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db);
   const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
   const memo = new Map();
 
@@ -736,7 +737,8 @@ async function recalcularCustos(db, idOrcamento) {
     if (visitados.has(id)) return null;
     visitados.add(id);
 
-    const itensComp = await getItensComposicaoForAbc(db, id, itensCompCache);
+    let itensComp = await getItensComposicaoForAbc(db, id, itensCompCache);
+    if (!itensComp.length) itensComp = itensSecaoCompCache.get(id) || [];
     if (!itensComp.length) {
       const direto = await custoComposicaoDiretoPorId(db, id);
       if (direto !== null) memo.set(id, direto);
@@ -1222,6 +1224,84 @@ async function buildItensComposicaoCacheForAbc(db) {
   return cache;
 }
 
+function tipoAbcPorSecaoSicro(letra) {
+  const normalized = String(letra || '').trim().toUpperCase();
+  if (normalized === 'A') return 'EQUIPAMENTO';
+  if (normalized === 'B') return 'MAO_DE_OBRA';
+  if (normalized === 'C') return 'MATERIAL';
+  if (normalized === 'D') return 'COMPOSICAO';
+  if (normalized === 'E') return 'TEMPO_FIXO';
+  if (normalized === 'F') return 'MOMENTO_TRANSPORTE';
+  return 'INSUMO';
+}
+
+function normalizarItemSecaoParaAbc(row) {
+  const quantidadeOriginal = toNum(row.quantidade, 0);
+  const custoTotal = toNum(row.custo_total, 0);
+  const coeficiente = quantidadeOriginal || (custoTotal > 0 ? 1 : 0);
+  const precoUnitario = toNum(row.preco_unitario, 0)
+    || (coeficiente > 0 && custoTotal > 0 ? custoTotal / coeficiente : 0);
+  return {
+    id_composicao: row.id_composicao,
+    codigo_item: row.codigo_item,
+    descricao: row.descricao,
+    unidade: row.unidade,
+    coeficiente,
+    tipo_item: tipoAbcPorSecaoSicro(row.letra_secao),
+    preco_unitario: precoUnitario,
+    custo_parcial: custoTotal || (coeficiente * precoUnitario),
+    ordem: row.ordem,
+    sort_id: row.sort_id,
+    letra_secao: row.letra_secao,
+    item_secao_analitica: true,
+  };
+}
+
+async function buildItensSecaoComposicaoCacheForAbc(db) {
+  const hasCatalog = await tableExists(db, 'composicoes_secao_itens', 'catalog');
+  const hasTenant = await tableExists(db, 'tenant_composicoes_secao_itens');
+  const hasMain = await tableExists(db, 'composicoes_secao_itens');
+  const selects = [];
+
+  if (hasCatalog) {
+    selects.push(`
+      SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
+             descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
+             id_item_secao AS sort_id
+      FROM catalog.composicoes_secao_itens`);
+  }
+  if (hasTenant) {
+    selects.push(`
+      SELECT 'tenant:' || id_composicao AS id_composicao, letra_secao, codigo_item,
+             descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
+             rowid AS sort_id
+      FROM tenant_composicoes_secao_itens
+      WHERE COALESCE(tenant_override_status,'active')='active'`);
+  }
+  if (!hasCatalog && hasMain) {
+    selects.push(`
+      SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
+             descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
+             id_item_secao AS sort_id
+      FROM composicoes_secao_itens`);
+  }
+
+  const cache = new Map();
+  if (!selects.length) return cache;
+  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
+  rows.sort((a, b) => String(a.id_composicao).localeCompare(String(b.id_composicao))
+    || String(a.letra_secao || '').localeCompare(String(b.letra_secao || ''))
+    || toNum(a.ordem, 0) - toNum(b.ordem, 0)
+    || toNum(a.sort_id, 0) - toNum(b.sort_id, 0));
+  rows.forEach((row) => {
+    const key = String(row.id_composicao || '').trim();
+    if (!key) return;
+    if (!cache.has(key)) cache.set(key, []);
+    cache.get(key).push(normalizarItemSecaoParaAbc(row));
+  });
+  return cache;
+}
+
 async function buildInsumoPriceCacheForAbc(db, contexto) {
   const selects = [];
 
@@ -1509,7 +1589,8 @@ async function curvaAbcInsumos(db, idOrcamento) {
     const id = String(idComposicao || '').trim();
     if (!id || visitados.has(id)) return false;
     visitados.add(id);
-    const itens = await getItensComposicaoForAbc(db, id, itensCompCache);
+    let itens = await getItensComposicaoForAbc(db, id, itensCompCache);
+    if (!itens.length) itens = itensSecaoCompCache.get(id) || [];
     if (!itens.length) return false;
     for (const item of itens) {
       const coef = toNum(item.coeficiente, 0);
@@ -1523,6 +1604,11 @@ async function curvaAbcInsumos(db, idOrcamento) {
           if (sub) break;
         }
         if (sub && await expandirComposicao(sub.id_composicao, qtd, servico, new Set(visitados))) continue;
+        const resolvidoInsumo = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
+        if (toNum(resolvidoInsumo.preco, 0) > 0) {
+          addInsumo(resolvidoInsumo, qtd, servico, resolvidoInsumo.preco, resolvidoInsumo.ibs_percentual, resolvidoInsumo.cbs_percentual);
+          continue;
+        }
         const resolvidoComp = {
           codigo: item.codigo_item,
           descricao: item.descricao,
