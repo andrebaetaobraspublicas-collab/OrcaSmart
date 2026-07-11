@@ -684,7 +684,7 @@ Router.register('composicoes', async () => {
                 </button>
                 <button type="button" class="btn btn-sm" id="fcBtnAddComposicao"
                   style="background:var(--c-primary-l);color:var(--c-primary);border:1px solid var(--c-primary)">
-                  ${Utils.icons.link} Composicao auxiliar
+                  ${Utils.icons.plus} Composicao auxiliar
                 </button>
                 <button type="button" class="btn btn-sm" id="fcBtnAddManual">
                   ${Utils.icons.plus} Item manual
