@@ -382,13 +382,29 @@ async function ensureBdiLinha(db) {
   if (!has) await run(db, 'ALTER TABLE orcamento_sintetico ADD COLUMN bdi_percentual_linha REAL');
 }
 
+async function sincronizarCustosSinteticoComComposicoes(db, rows = []) {
+  for (const row of rows || []) {
+    if (!row || row.tipo_linha !== 'item' || !row.id_composicao) continue;
+    const custo = await custoComposicaoDiretoPorId(db, row.id_composicao);
+    if (!Number.isFinite(custo) || custo <= 0) continue;
+    if (Math.abs(custo - toNum(row.custo_unitario, 0)) <= 0.0001) continue;
+    row.custo_unitario = Number(custo.toFixed(4));
+    await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [
+      row.custo_unitario,
+      row.id_item,
+    ]).catch(() => {});
+  }
+  return rows;
+}
+
 async function listSintetico(db, idOrcamento) {
   await ensureBdiLinha(db);
-  return all(db, `
+  const rows = await all(db, `
     SELECT *
     FROM orcamento_sintetico
     WHERE id_orcamento = ?
     ORDER BY ordem, id_item`, [idOrcamento]);
+  return sincronizarCustosSinteticoComComposicoes(db, rows);
 }
 
 async function maxOrdemSintetico(db, idOrcamento) {
@@ -564,10 +580,115 @@ async function recalcularCustosLegado(db, idOrcamento) {
   return { atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] };
 }
 
+async function custoCatalogoPorCodigo(db, codigo, fonte = '') {
+  const codigos = codigoVariantesComposicao(codigo, fonte);
+  if (!codigos.length) return null;
+  const marks = codigos.map(() => '?').join(',');
+  if (await tableExists(db, 'composicoes', 'catalog')) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM catalog.composicoes
+      WHERE codigo IN (${marks})
+      ORDER BY id_composicao DESC
+      LIMIT 1`, codigos).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+  if (await tableExists(db, 'composicoes')) {
+    const row = await one(db, `
+      SELECT custo_unitario
+      FROM composicoes
+      WHERE codigo IN (${marks})
+      ORDER BY id_composicao DESC
+      LIMIT 1`, codigos).catch(() => null);
+    const custo = toNum(row?.custo_unitario, null);
+    if (custo !== null && custo > 0) return custo;
+  }
+  return null;
+}
+
+async function tenantComposicaoPorCodigo(db, codigo, fonte = '') {
+  if (!(await tableExists(db, 'tenant_composicoes'))) return null;
+  const codigos = codigoVariantesComposicao(codigo, fonte);
+  if (!codigos.length) return null;
+  const marks = codigos.map(() => '?').join(',');
+  return one(db, `
+    SELECT rowid, codigo, custo_unitario
+    FROM tenant_composicoes
+    WHERE codigo IN (${marks}) AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY rowid DESC
+    LIMIT 1`, codigos).catch(() => null);
+}
+
+async function calcularTenantComposicaoSimples(db, tenantRowid, visitados = new Set()) {
+  const id = Number(tenantRowid);
+  if (!id || !(await tableExists(db, 'tenant_itens_composicao'))) return null;
+  const key = `tenant:${id}`;
+  if (visitados.has(key)) return null;
+  visitados.add(key);
+
+  const itens = await all(db, `
+    SELECT rowid AS _rowid, *
+    FROM tenant_itens_composicao
+    WHERE id_composicao=? AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY COALESCE(ordem,0), rowid`, [id]).catch(() => []);
+  if (!itens.length) return null;
+
+  let total = 0;
+  let possuiPreco = false;
+  for (const item of itens) {
+    const coef = toNum(item.coeficiente, 0);
+    if (!coef) continue;
+    let preco = null;
+
+    if (isComposicaoItemRobusto(item)) {
+      const codigo = item.codigo_item || item.codigo;
+      if (String(codigo || '').startsWith('tenant:')) {
+        preco = await calcularTenantComposicaoSimples(db, String(codigo).slice(7), new Set(visitados));
+      }
+      if (preco === null) {
+        const subTenant = await tenantComposicaoPorCodigo(db, codigo, item.fonte);
+        if (subTenant?.rowid && Number(subTenant.rowid) !== id) {
+          preco = await calcularTenantComposicaoSimples(db, subTenant.rowid, new Set(visitados));
+          if (preco === null) preco = toNum(subTenant.custo_unitario, null);
+        }
+      }
+      if (preco === null) preco = await custoCatalogoPorCodigo(db, codigo, item.fonte);
+    }
+
+    if (preco === null) preco = toNum(item.preco_unitario, null);
+    if ((preco === null || preco <= 0) && item.custo_parcial && coef) {
+      preco = toNum(item.custo_parcial, 0) / coef;
+    }
+    if (!Number.isFinite(preco) || preco <= 0) continue;
+
+    const parcial = Number((coef * preco).toFixed(4));
+    total += parcial;
+    possuiPreco = true;
+    if (item._rowid) {
+      await run(db, `
+        UPDATE tenant_itens_composicao
+        SET preco_unitario=?, custo_parcial=?
+        WHERE rowid=?`, [preco, parcial, item._rowid]).catch(() => {});
+    }
+  }
+
+  if (!possuiPreco) return null;
+  const custo = Number(total.toFixed(4));
+  await run(db, 'UPDATE tenant_composicoes SET custo_unitario=?, tenant_updated_at=? WHERE rowid=?', [
+    custo,
+    new Date().toISOString(),
+    id,
+  ]).catch(() => {});
+  return custo;
+}
+
 async function custoComposicaoDiretoPorId(db, idComposicao) {
   const raw = String(idComposicao || '').trim();
   if (!raw) return null;
   if (raw.startsWith('tenant:') && await tableExists(db, 'tenant_composicoes')) {
+    const recalculado = await calcularTenantComposicaoSimples(db, raw.slice(7));
+    if (recalculado !== null && recalculado > 0) return recalculado;
     const row = await one(db, `
       SELECT custo_unitario
       FROM tenant_composicoes

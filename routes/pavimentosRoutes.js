@@ -320,7 +320,7 @@ async function gerarOrcamento(db, payload = {}) {
     id_data_base: payload.id_data_base || null,
     uf_referencia: uf || obra.uf || null,
     versao: '1.0',
-    status: 'Em elaboracao',
+    status: 'Em elaboração',
     observacoes: 'Escopo restrito a etapa de pavimentacao: camadas do pavimento, base, sub-base, reforco e imprimacao quando aplicavel.',
   });
   await run(db, 'UPDATE orcamentos SET regime_previdenciario=? WHERE id_orcamento=?', [

@@ -98,7 +98,19 @@ Router.register('composicoes', async () => {
         API.unidades.list(),
       ]);
       await buscar();
+      abrirEdicaoPendenteDoOrcamento();
     } catch(e) { Toast.error(e.message); }
+  }
+
+  function abrirEdicaoPendenteDoOrcamento() {
+    let raw = null;
+    try { raw = sessionStorage.getItem('os_edit_composicao_pendente'); } catch(e) {}
+    if (!raw) return;
+    try { sessionStorage.removeItem('os_edit_composicao_pendente'); } catch(e) {}
+    let pending = {};
+    try { pending = JSON.parse(raw); } catch(e) { pending = { id: raw }; }
+    if (!pending.id) return;
+    setTimeout(() => iniciarEdicao(pending.id), 0);
   }
 
   async function buscar() {
@@ -2030,6 +2042,12 @@ Router.register('composicoes', async () => {
       carregar();
     } catch(e) { Toast.error(e.message); }
   }
+
+  window.OrcaSmartComposicoes = {
+    ...(window.OrcaSmartComposicoes || {}),
+    editar: iniciarEdicao,
+    abrirForm,
+  };
 
   carregar();
 });

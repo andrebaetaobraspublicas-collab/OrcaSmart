@@ -667,26 +667,28 @@ Router.register('orcamento-sintetico', async () => {
     window._osAbrirCompVinculada = async (idItem) => {
       const item = itens.find(i => i.id_item === idItem);
       if (!item?.id_composicao) return;
+      const idComp = item.id_composicao;
+      if (window.OrcaSmartComposicoes?.editar) {
+        try {
+          await window.OrcaSmartComposicoes.editar(idComp, {
+            origem: 'orcamento-sintetico',
+            id_orcamento: id_orc,
+            id_item: idItem,
+          });
+          return;
+        } catch (e) {
+          console.warn('Falha ao abrir editor global de composicao', e);
+        }
+      }
       try {
-        const comp = await API.composicoes.get(item.id_composicao);
-        Modal.open({
-          title: `Composicao vinculada - ${Utils.esc(comp.codigo || item.codigo || '')}`,
-          size: 'modal-lg',
-          body: `
-            <div class="card-soft" style="padding:14px">
-              <div class="text-xs text-3">Descricao</div>
-              <div style="font-weight:600;margin-bottom:10px">${Utils.esc(comp.descricao || item.descricao || '')}</div>
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-                <div><div class="text-xs text-3">Fonte</div><strong>${Utils.esc(comp.fonte || item.fonte || '')}</strong></div>
-                <div><div class="text-xs text-3">Data-base</div><strong>${Utils.esc(comp.mes_referencia || '')}</strong></div>
-                <div><div class="text-xs text-3">UF</div><strong>${Utils.esc(comp.uf_referencia || '')}</strong></div>
-                <div><div class="text-xs text-3">Custo</div><strong>${Utils.moeda(comp.custo_calculado || comp.custo_unitario || item.custo_unitario || 0)}</strong></div>
-              </div>
-            </div>
-          `,
-          footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>`,
-        });
-      } catch(e) { Toast.error(e.message); }
+        sessionStorage.setItem('os_edit_composicao_pendente', JSON.stringify({
+          id: idComp,
+          id_orcamento: id_orc,
+          id_item: idItem,
+        }));
+      } catch(e) {}
+      Toast.info('Abrindo o editor da composicao vinculada.');
+      Router.navigate('composicoes');
     };
     window._osDblClickLinha = (event, idItem) => {
       if (event?.target?.closest?.('button,input,select,textarea,a')) return;
