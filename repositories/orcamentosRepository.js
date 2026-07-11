@@ -477,12 +477,19 @@ async function deleteSinteticoItem(db, idItem) {
 }
 
 async function reordenarSintetico(db, idOrcamento, items = []) {
-  for (const item of items) {
-    await run(
-      db,
-      'UPDATE orcamento_sintetico SET ordem=?, item_num=?, profundidade=? WHERE id_item=? AND id_orcamento=?',
-      [item.ordem, item.item_num, item.profundidade, item.id_item, idOrcamento],
-    );
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    for (const item of items) {
+      await run(
+        db,
+        'UPDATE orcamento_sintetico SET ordem=?, item_num=?, profundidade=? WHERE id_item=? AND id_orcamento=?',
+        [item.ordem, item.item_num, item.profundidade, item.id_item, idOrcamento],
+      );
+    }
+    await run(db, 'COMMIT');
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
   }
 }
 
