@@ -489,6 +489,11 @@ Router.register('orcamento-sintetico', async () => {
               title="Vincular ou cadastrar composicao para esta linha"
               style="background:#fff7ed;border:1px solid #fdba74;color:#c2410c;border-radius:6px;cursor:pointer;font-size:11px;padding:1px 5px;margin-left:4px">buscar</button>`
         : '');
+    const criarComp = !item.id_composicao
+      ? `<button onclick="event.stopPropagation();window._osCriarCompLinha(${item.id_item})"
+            title="Criar composicao do usuario para esta linha"
+            style="background:#eef2ff;border:1px solid #93c5fd;color:#1d4ed8;border-radius:6px;cursor:pointer;font-size:11px;padding:1px 5px;margin-left:4px">criar</button>`
+      : '';
     const ins_lbl = item.tipo_item === 'insumo'
       ? `<span class="badge badge-success" style="font-size:.6rem;padding:1px 5px;margin-left:4px">INS</span>` : '';
 
@@ -534,6 +539,7 @@ Router.register('orcamento-sintetico', async () => {
         <td class="os-td os-num" style="text-align:right;font-weight:600;font-size:.85rem">${Utils.moeda(val)}</td>
         <td class="os-td" style="text-align:center;white-space:nowrap">
           ${linkComp}
+          ${criarComp}
           <button onclick="event.stopPropagation();window._osBdiLinha(${item.id_item})"
             title="${bdiCustom ? `BDI especifico da linha: ${Utils.num(bdiEfetivo,4)}%` : 'Usar BDI especifico nesta linha'}"
             style="background:${bdiCustom ? '#fef3c7' : 'transparent'};border:1px solid ${bdiCustom ? '#f59e0b' : 'transparent'};border-radius:6px;cursor:pointer;color:${bdiCustom ? '#b45309' : '#94a3b8'};font-weight:800;font-size:12px;padding:1px 5px;margin-right:2px">%</button>
@@ -656,6 +662,7 @@ Router.register('orcamento-sintetico', async () => {
       const item = itens.find(i => i.id_item === idItem);
       if (item) abrirBusca(item.tipo_item || 'composicao', idItem);
     };
+    window._osCriarCompLinha = abrirCriarComposicaoUsuarioDaLinha;
     window._osAbrirCompVinculada = async (idItem) => {
       const item = itens.find(i => i.id_item === idItem);
       if (!item?.id_composicao) return;
