@@ -40,6 +40,9 @@ const {
   mysqlModeEnabled,
   checkMysqlRuntime,
 } = require('./utils/mysqlRuntime');
+const {
+  createTenantMysqlRuntime,
+} = require('./utils/mysqlTenantRuntime');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -52,9 +55,10 @@ const APP_DIR = __dirname;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DOMAIN = (process.env.PUBLIC_DOMAIN || 'https://calculoobra.com.br').replace(/\/+$/, '');
-const APP_NAME = process.env.ORCASMART_APP_NAME || 'OrcaSmart2';
-const APP_VERSION = process.env.ORCASMART_APP_VERSION || '2.0.0-alpha.1';
-const BUILD_ID = process.env.ORCASMART_BUILD || 'orcasmart2-20260712-calculadoras-integracao';
+const REQUESTED_DB_ENGINE = databaseEngine();
+const APP_NAME = process.env.ORCASMART_APP_NAME || (REQUESTED_DB_ENGINE === 'mysql' ? 'OrcaSmart3' : 'OrcaSmart2');
+const APP_VERSION = process.env.ORCASMART_APP_VERSION || (REQUESTED_DB_ENGINE === 'mysql' ? '3.0.0-mysql.1' : '2.0.0-alpha.1');
+const BUILD_ID = process.env.ORCASMART_BUILD || (REQUESTED_DB_ENGINE === 'mysql' ? 'orcasmart3-mysql-runtime' : 'orcasmart2-20260712-calculadoras-integracao');
 const DB_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db');
 const DB_TEMPLATE_GZ_PATH = path.join(APP_DIR, 'database', 'orcamento_obras_template.db.gz');
 const TENANT_PRIVATE_TEMPLATE_PATH = path.join(APP_DIR, 'database', 'tenant_private_template.db');
@@ -84,7 +88,7 @@ const bootState = {
   tenantTemplateError: null,
   tenantTemplateStats: null,
   mysql: {
-    engine: databaseEngine(),
+    engine: REQUESTED_DB_ENGINE,
     enabled: mysqlModeEnabled(),
     configured: mysqlConfigStatus().configured,
     config: mysqlConfigStatus(),
@@ -279,11 +283,20 @@ function phase4RuntimePolicy() {
   const cutover = readPhase4CutoverReport();
   const mysqlRuntimeRequested = bootState.mysql.engine === 'mysql';
 
-  if (mysqlRuntimeRequested && !cutover.ready) {
+  if (mysqlRuntimeRequested && (!cutover.ready || !bootState.mysql.ready || masterDb.engine !== 'mysql')) {
     return {
       ...cutover,
       blocked: true,
-      policy: 'mysql solicitado, mas bloqueado ate o gate de prontidao ficar OK; mantenha SQLite',
+      policy: 'mysql solicitado, mas bloqueado ate conexao, master e gate de prontidao ficarem OK; mantenha SQLite',
+    };
+  }
+
+  if (mysqlRuntimeRequested) {
+    return {
+      ...cutover,
+      blocked: false,
+      ready: true,
+      policy: 'mysql ativo nas rotas de negocio com isolamento por tenant_id',
     };
   }
 
@@ -379,6 +392,10 @@ function normalizeTenantDatabasePath(idTenant, storedPath) {
 
 async function normalizeUserTenantDatabase(user) {
   if (!user) return user;
+  if (businessMysqlRuntimeActive()) {
+    user.tenant_db_path = user.tenant_db_path || `mysql:tenant:${user.id_tenant}`;
+    return user;
+  }
   const normalizedPath = normalizeTenantDatabasePath(user.id_tenant, user.tenant_db_path);
   if (normalizedPath && normalizedPath !== user.tenant_db_path) {
     await runMaster('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [normalizedPath, user.id_tenant]).catch(() => {});
@@ -390,6 +407,7 @@ async function normalizeUserTenantDatabase(user) {
 const tenantSchemaReady = new Set();
 
 async function ensureTenantDatabaseReady(dbPath) {
+  if (businessMysqlRuntimeActive()) return;
   const resolvedPath = path.resolve(dbPath || '');
   if (!resolvedPath || tenantSchemaReady.has(resolvedPath)) return;
   if (!resolvedPath.startsWith(path.resolve(TENANT_DB_DIR)) || !fs.existsSync(resolvedPath)) return;
@@ -507,6 +525,10 @@ const tenantDbProxy = {
   all(sql, params, cb) { return runTenantMethod('all', sql, params, cb); },
   run(sql, params, cb) { return runTenantMethod('run', sql, params, cb); },
   async withConnection(task) {
+    if (businessMysqlRuntimeActive()) {
+      const runtime = tenantMysqlRuntimeFromStore();
+      return runtime.withConnection(task);
+    }
     const store = requestDb.getStore();
     const dbPath = store && store.dbPath;
     if (!dbPath || !path.resolve(dbPath).startsWith(path.resolve(TENANT_DB_DIR))) {
@@ -539,10 +561,33 @@ const sharedCatalogReadProxy = {
   run(sql, params, cb) { return runSharedCatalogReadMethod('run', sql, params, cb); },
 };
 
+function businessMysqlRuntimeActive() {
+  const runtime = phase4RuntimePolicy();
+  return bootState.mysql.engine === 'mysql'
+    && bootState.mysql.ready
+    && masterDb.engine === 'mysql'
+    && runtime.ready
+    && !runtime.blocked;
+}
+
+function tenantMysqlRuntimeFromStore() {
+  const store = requestDb.getStore();
+  const tenantId = store && store.tenantId;
+  if (!tenantId) throw new Error('Tenant nao definido para esta requisicao.');
+  return createTenantMysqlRuntime({
+    tenantId,
+    config: mysqlConfig(),
+  });
+}
+
 function runTenantMethod(method, sql, params, cb) {
   if (typeof params === 'function') {
     cb = params;
     params = [];
+  }
+  if (businessMysqlRuntimeActive()) {
+    const runtime = tenantMysqlRuntimeFromStore();
+    return runtime[method](sql, params, cb);
   }
   const store = requestDb.getStore();
   const dbPath = store && store.dbPath;
@@ -607,6 +652,11 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
   if (typeof params === 'function') {
     cb = params;
     params = [];
+  }
+
+  if (businessMysqlRuntimeActive()) {
+    const runtime = tenantMysqlRuntimeFromStore();
+    return runtime[method](sql, params, cb);
   }
 
   if (method === 'run' && isCatalogSchemaEnsure(sql)) {
@@ -695,7 +745,7 @@ async function requireLogin(req, res, next) {
     console.error(`Falha ao preparar schema runtime do tenant ${user.id_tenant}:`, err);
   });
   req.user = user;
-  return requestDb.run({ dbPath: user.tenant_db_path }, next);
+  return requestDb.run({ dbPath: user.tenant_db_path, tenantId: user.id_tenant }, next);
 }
 
 function requireAdmin(req, res, next) {
@@ -818,7 +868,7 @@ app.post('/api/auth/register', async (req, res) => {
     if (exists) return res.status(409).json({ erro: 'E-mail já cadastrado.' });
 
     const tenant = await runMaster('INSERT INTO tenants (nome, slug, db_path) VALUES (?, ?, ?)', [nome, `${slugFromEmail(email)}-${Date.now()}`, 'pending']);
-    const dbPath = createTenantDatabase(tenant.lastID);
+    const dbPath = businessMysqlRuntimeActive() ? `mysql:tenant:${tenant.lastID}` : createTenantDatabase(tenant.lastID);
     await runMaster('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [dbPath, tenant.lastID]);
     const passwordHash = hashPassword(senha);
     const role = isConfiguredAdminEmail(email) ? 'admin' : 'owner';
