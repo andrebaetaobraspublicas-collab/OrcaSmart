@@ -173,6 +173,9 @@ function normalizeValue(value, column, meta) {
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric;
   }
+  if (/^(CHAR|VARCHAR|TEXT|LONGTEXT|MEDIUMTEXT|TINYTEXT)\b/i.test(columnType)) {
+    return String(value);
+  }
   return value;
 }
 

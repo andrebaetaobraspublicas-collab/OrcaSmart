@@ -109,6 +109,8 @@ const EXTRA_INDEXES = {
 
 const MANUAL_COLUMN_TYPES = {
   orcamento_sintetico: {
+    id_composicao: 'VARCHAR(191)',
+    id_insumo: 'VARCHAR(191)',
     descricao: 'TEXT',
   },
   tenants: {

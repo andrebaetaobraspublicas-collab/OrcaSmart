@@ -174,6 +174,9 @@ function normalizeValue(value, column, tableMeta) {
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric;
   }
+  if (/^(CHAR|VARCHAR|TEXT|LONGTEXT|MEDIUMTEXT|TINYTEXT)\b/i.test(columnType)) {
+    return String(value);
+  }
   return value;
 }
 
@@ -335,6 +338,8 @@ async function migrateToMysql(tenants, mysqlTables, options, config) {
     await connection.query(schemaSql());
     result.schemaApplied = true;
     await connection.query('ALTER TABLE `orcamento_sintetico` MODIFY `descricao` TEXT NOT NULL');
+    await connection.query('ALTER TABLE `orcamento_sintetico` MODIFY `id_composicao` VARCHAR(191) NULL');
+    await connection.query('ALTER TABLE `orcamento_sintetico` MODIFY `id_insumo` VARCHAR(191) NULL');
 
     if (!options.reset) {
       throw new Error('Migracao de tenant exige --reset para remover previamente os registros do(s) tenant(s) selecionado(s) e evitar duplicidades.');
