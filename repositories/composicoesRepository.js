@@ -418,14 +418,136 @@ async function precoInsumoReferencia(db, codigo, uf, mesRef, regime, scope = 'ca
   return precoCatalog !== null && precoCatalog > 0 ? precoCatalog : null;
 }
 
+function chaveComposicaoReferencia(codigo, uf, mesRef) {
+  return [
+    String(codigo || '').trim(),
+    String(uf || '').trim().toUpperCase(),
+    String(mesRef || '').trim(),
+  ].join('|');
+}
+
+async function materializarComposicoesReferencia(db, source, filters = {}) {
+  const uf = String(filters.uf || '').trim().toUpperCase();
+  const mesRef = String(filters.mes_ref || '').trim();
+  if (!uf || !mesRef) return { criadas: 0 };
+
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
+  const itemTable = isTenant ? 'tenant_itens_composicao' : 'catalog.itens_composicao';
+  const idCol = isTenant ? 'rowid' : 'id_composicao';
+  if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) return { criadas: 0 };
+
+  const templates = await all(db, `
+    SELECT ${idCol} AS id, *
+    FROM ${table}
+    WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+      AND mes_referencia=?
+      AND (uf_referencia IS NULL OR TRIM(COALESCE(uf_referencia,'')) = '')
+      ${isTenant ? "AND COALESCE(tenant_override_status,'active')='active'" : ''}`, [mesRef]);
+  if (!templates.length) return { criadas: 0 };
+
+  const existentes = new Set((await all(db, `
+    SELECT codigo, uf_referencia, mes_referencia
+    FROM ${table}
+    WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+      AND mes_referencia=?
+      AND UPPER(COALESCE(uf_referencia,''))=?`, [mesRef, uf]))
+    .map(row => chaveComposicaoReferencia(row.codigo, row.uf_referencia, row.mes_referencia)));
+
+  let criadas = 0;
+  for (const comp of templates) {
+    const key = chaveComposicaoReferencia(comp.codigo, uf, mesRef);
+    if (existentes.has(key)) continue;
+    const insert = isTenant
+      ? await run(db, `
+        INSERT INTO tenant_composicoes
+          (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,
+           custo_unitario,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`, [
+        comp.codigo,
+        comp.fonte,
+        comp.formato || 'UNITARIO',
+        comp.descricao,
+        comp.unidade,
+        comp.id_grupo_comp,
+        mesRef,
+        uf,
+        comp.situacao_ref,
+        comp.situacao || 'Ativo',
+        toNum(comp.custo_unitario, 0),
+      ])
+      : await run(db, `
+        INSERT INTO catalog.composicoes
+          (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,custo_unitario)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [
+        comp.codigo,
+        comp.fonte,
+        comp.formato || 'UNITARIO',
+        comp.descricao,
+        comp.unidade,
+        comp.id_grupo_comp,
+        mesRef,
+        uf,
+        comp.situacao_ref,
+        comp.situacao || 'Ativo',
+        toNum(comp.custo_unitario, 0),
+      ]);
+    const novoId = insert.lastID;
+    if (isTenant) await run(db, 'UPDATE tenant_composicoes SET id_composicao=? WHERE rowid=?', [novoId, novoId]).catch(() => {});
+    const itens = await all(db, `SELECT * FROM ${itemTable} WHERE id_composicao=? ORDER BY ordem`, [comp.id]);
+    for (const item of itens) {
+      if (isTenant) {
+        const result = await run(db, `
+          INSERT INTO tenant_itens_composicao
+            (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,preco_unitario,custo_parcial,situacao_item,ordem,
+             tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`, [
+          novoId,
+          item.tipo_item,
+          item.codigo_item,
+          item.descricao,
+          item.unidade,
+          toNum(item.coeficiente, 0),
+          toNum(item.preco_unitario, null),
+          toNum(item.custo_parcial, null),
+          item.situacao_item,
+          item.ordem,
+        ]);
+        await run(db, 'UPDATE tenant_itens_composicao SET id_item=? WHERE rowid=?', [result.lastID, result.lastID]).catch(() => {});
+      } else {
+        await run(db, `
+          INSERT INTO catalog.itens_composicao
+            (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,preco_unitario,custo_parcial,situacao_item,ordem)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`, [
+          novoId,
+          item.tipo_item,
+          item.codigo_item,
+          item.descricao,
+          item.unidade,
+          toNum(item.coeficiente, 0),
+          toNum(item.preco_unitario, null),
+          toNum(item.custo_parcial, null),
+          item.situacao_item,
+          item.ordem,
+        ]);
+      }
+    }
+    existentes.add(key);
+    criadas += 1;
+  }
+  return { criadas };
+}
+
 async function recalcularFonte(db, source, filters = {}) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
   const itemTable = isTenant ? 'tenant_itens_composicao' : 'catalog.itens_composicao';
   const idCol = isTenant ? 'rowid' : 'id_composicao';
   if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) {
-    return { analisadas: 0, atualizadas: 0, semPreco: 0 };
+    return { analisadas: 0, atualizadas: 0, semPreco: 0, criadas: 0 };
   }
+
+  const materializadas = await materializarComposicoesReferencia(db, source, filters);
 
   const where = ["UPPER(COALESCE(fonte,'')) IN ('SINAPI','SICRO')"];
   const params = [];
@@ -443,41 +565,78 @@ async function recalcularFonte(db, source, filters = {}) {
   }
 
   const comps = await all(db, `
-    SELECT ${idCol} AS id, codigo, uf_referencia, mes_referencia
+    SELECT ${idCol} AS id, codigo, uf_referencia, mes_referencia, custo_unitario
     FROM ${table}
     WHERE ${where.join(' AND ')}`, params);
 
-  let atualizadas = 0;
+  const custoPorCodigo = new Map(comps.map(comp => [
+    chaveComposicaoReferencia(comp.codigo, comp.uf_referencia, comp.mes_referencia),
+    toNum(comp.custo_unitario, 0),
+  ]));
+  const compPorId = new Map(comps.map(comp => [String(comp.id), comp]));
+  const atualizadasIds = new Set();
   let semPreco = 0;
   const regime = filters.regime || 'nao_desonerado';
-  for (const comp of comps) {
-    const itens = await all(db, `
-      SELECT codigo_item, coeficiente, tipo_item
-      FROM ${itemTable}
-      WHERE id_composicao = ?
-      ORDER BY ordem`, [comp.id]);
-    let total = 0;
-    let calculou = false;
-    let faltouPreco = false;
-    for (const item of itens) {
-      const preco = await precoInsumoReferencia(db, item.codigo_item, comp.uf_referencia, comp.mes_referencia, regime, source);
-      const coef = toNum(item.coeficiente, 0);
-      if (preco === null) {
-        faltouPreco = true;
+
+  for (let pass = 0; pass < Math.max(3, Math.min(12, comps.length)); pass += 1) {
+    let mudouNaPassada = false;
+    semPreco = 0;
+    for (const comp of comps) {
+      const itens = await all(db, `
+        SELECT ${isTenant ? 'rowid AS _rowid,' : ''} *
+        FROM ${itemTable}
+        WHERE id_composicao = ?
+        ORDER BY ordem`, [comp.id]);
+      let total = 0;
+      let calculou = false;
+      let faltouPreco = false;
+      for (const item of itens) {
+        const coef = toNum(item.coeficiente, 0);
+        let preco = null;
+        if (isTipoComposicao(item.tipo_item)) {
+          const key = chaveComposicaoReferencia(item.codigo_item, comp.uf_referencia, comp.mes_referencia);
+          preco = custoPorCodigo.get(key);
+          if (!preco) {
+            const variantes = codigoVariantes(item.codigo_item);
+            const fallback = [...custoPorCodigo.entries()]
+              .find(([k, value]) => value > 0 && variantes.includes(k.split('|')[0]) && k.endsWith(`|${comp.mes_referencia}`));
+            preco = fallback ? fallback[1] : null;
+          }
+        } else {
+          preco = await precoInsumoReferencia(db, item.codigo_item, comp.uf_referencia, comp.mes_referencia, regime, source);
+        }
+        if (preco === null || !Number.isFinite(Number(preco))) {
+          faltouPreco = true;
+          continue;
+        }
+        const parcial = Number((coef * toNum(preco, 0)).toFixed(4));
+        await run(db, `UPDATE ${itemTable} SET preco_unitario=?, custo_parcial=? WHERE ${isTenant ? 'rowid' : 'id_item'}=?`, [
+          toNum(preco, 0),
+          parcial,
+          isTenant ? item._rowid : item.id_item,
+        ]).catch(() => {});
+        total += parcial;
+        calculou = true;
+      }
+      if (!calculou || total <= 0) {
+        if (faltouPreco) semPreco += 1;
         continue;
       }
-      total += coef * preco;
-      calculou = true;
+      const custo = Number(total.toFixed(4));
+      const key = chaveComposicaoReferencia(comp.codigo, comp.uf_referencia, comp.mes_referencia);
+      if (Math.abs(toNum(custoPorCodigo.get(key), 0) - custo) > 0.0001) {
+        await run(db, `UPDATE ${table} SET custo_unitario = ? WHERE ${idCol} = ?`, [custo, comp.id]);
+        custoPorCodigo.set(key, custo);
+        const ref = compPorId.get(String(comp.id));
+        if (ref) ref.custo_unitario = custo;
+        atualizadasIds.add(String(comp.id));
+        mudouNaPassada = true;
+      }
     }
-    if (!calculou || total <= 0) {
-      if (faltouPreco) semPreco += 1;
-      continue;
-    }
-    await run(db, `UPDATE ${table} SET custo_unitario = ? WHERE ${idCol} = ?`, [Number(total.toFixed(4)), comp.id]);
-    atualizadas += 1;
+    if (!mudouNaPassada) break;
   }
 
-  return { analisadas: comps.length, atualizadas, semPreco };
+  return { analisadas: comps.length, atualizadas: atualizadasIds.size, semPreco, criadas: materializadas.criadas || 0 };
 }
 
 async function recalcularCustosReferenciais(db, filters = {}) {
@@ -495,12 +654,14 @@ async function recalcularCustosReferenciais(db, filters = {}) {
   const analisadas = catalog.analisadas + tenant.analisadas;
   const atualizados = catalog.atualizadas + tenant.atualizadas;
   const semPreco = catalog.semPreco + tenant.semPreco;
+  const criadas = (catalog.criadas || 0) + (tenant.criadas || 0);
   return {
     analisadas,
     atualizados,
     atualizadas: atualizados,
+    criadas,
     sem_preco: semPreco,
-    mensagem: `Recalculo concluido: ${atualizados} composicao(oes) atualizada(s) de ${analisadas} analisada(s).`,
+    mensagem: `Recalculo concluido: ${atualizados} composicao(oes) atualizada(s) de ${analisadas} analisada(s).${criadas ? ` ${criadas} composicao(oes) criada(s) para a UF/data-base selecionada(s).` : ''}`,
   };
 }
 

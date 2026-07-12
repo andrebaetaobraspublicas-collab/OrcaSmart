@@ -277,73 +277,38 @@ module.exports = function sinapiRoutes(db) {
     };
     const codeAt = (row, idx) => normCode(cell(row, idx));
     const isCode = value => /^\d{3,}$/.test(normCode(value));
-    const findCode = (row, start = 0) => {
-      for (let j = start; j < row.length; j++) {
-        if (isCode(row[j])) return j;
-      }
-      return -1;
-    };
-    const findText = (row, start = 0) => {
-      for (let j = start; j < row.length; j++) {
-        const value = cell(row, j);
-        if (value && !isCode(value) && normalizeText(value).length >= 6 && parseDecimal(value) === null) return j;
-      }
-      return -1;
-    };
-    const findUnit = (row, start = 0) => {
-      for (let j = start; j < row.length; j++) {
-        const value = cell(row, j).toUpperCase();
-        if (value && value.length <= 12 && parseDecimal(value) === null && !isCode(value)) return j;
-      }
-      return -1;
-    };
-    const findDecimal = (row, start = 0) => {
-      for (let j = start; j < row.length; j++) {
-        const n = parseDecimal(row[j]);
-        if (n !== null) return n;
-      }
-      return null;
-    };
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || [];
       if (!row.length) continue;
 
-      const tipoIdx = row.findIndex(value => itemKind(value));
-      if (tipoIdx >= 0 && current) {
-        const codigoIdx = findCode(row, tipoIdx + 1);
-        const descricaoIdx = codigoIdx >= 0 ? findText(row, codigoIdx + 1) : -1;
-        const unidadeIdx = descricaoIdx >= 0 ? findUnit(row, descricaoIdx + 1) : -1;
-        if (codigoIdx < 0 || descricaoIdx < 0) continue;
+      const codigoComp = codeAt(row, 1);
+      const tipoItem = itemKind(row[2]);
+      const codigoItem = codeAt(row, 3);
+      const descricao = cell(row, 4);
+      const unidade = cell(row, 5).toUpperCase();
+      const coeficiente = parseDecimal(row[6]);
+      const situacao = cell(row, 7);
+
+      if (tipoItem && current && current.codigo === codigoComp && isCode(codigoItem)) {
         current.itens.push({
-          tipo_item: itemKind(row[tipoIdx]),
-          codigo_item: codeAt(row, codigoIdx),
-          descricao: cell(row, descricaoIdx),
-          unidade: unidadeIdx >= 0 ? cell(row, unidadeIdx).toUpperCase() : '',
-          coeficiente: findDecimal(row, Math.max(unidadeIdx + 1, descricaoIdx + 1)) || 0,
-          situacao: cell(row, Math.max(unidadeIdx + 2, descricaoIdx + 2)),
+          tipo_item: tipoItem,
+          codigo_item: codigoItem,
+          descricao,
+          unidade,
+          coeficiente: coeficiente || 0,
+          situacao,
         });
         continue;
       }
 
-      const codigoIdx = findCode(row, 0);
-      if (codigoIdx < 0) continue;
-      const codigoComp = codeAt(row, codigoIdx);
-      const descricaoIdx = findText(row, codigoIdx + 1);
-      const unidadeIdx = descricaoIdx >= 0 ? findUnit(row, descricaoIdx + 1) : -1;
-      if (!/^\d+/.test(codigoComp) || descricaoIdx < 0) continue;
-
-      const beforeCode = row.slice(0, codigoIdx).map(v => cell([v], 0)).filter(Boolean);
-      const grupo = beforeCode[beforeCode.length - 1] || cell(row, 0) || 'SINAPI';
-      const unidade = unidadeIdx >= 0 ? cell(row, unidadeIdx).toUpperCase() : '';
-      const looksLikeHeader = unidade || normalizeText(cell(row, descricaoIdx)).length >= 12;
-      if (looksLikeHeader) {
+      if (!tipoItem && isCode(codigoComp) && descricao && unidade) {
         current = {
           codigo: codigoComp,
-          descricao: cell(row, descricaoIdx),
+          descricao,
           unidade,
-          grupo: grupo || 'SINAPI',
-          situacao: cell(row, Math.max(unidadeIdx + 2, descricaoIdx + 2)),
+          grupo: cell(row, 0) || 'SINAPI',
+          situacao,
           itens: [],
         };
         composicoes.push(current);
@@ -608,7 +573,6 @@ module.exports = function sinapiRoutes(db) {
             return r.lastID;
           }
 
-          const compUf = ufParam === 'TODAS' ? null : ufParam;
           const compKey = (codigo, uf, ref) => [
             String(codigo || '').trim(),
             String(uf || '').trim().toUpperCase(),
@@ -622,43 +586,44 @@ module.exports = function sinapiRoutes(db) {
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
           for (const comp of comps) {
             const idGrupo = await getGrupo(comp.grupo);
-            const keyComp = compKey(comp.codigo, compUf, mesRef);
-            let idComp = compMap.get(keyComp);
-            if (idComp) {
-              if (!sobrepor) continue;
-              await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE ${compIdWhere}=?`,
-                [comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao, idComp]);
-              await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
-              out.composicoes_atualizadas += 1;
-            } else {
-              const r = useTenantComps
-                ? await runC(`
-                  INSERT INTO tenant_composicoes
-                    (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,
-                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-                  VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo','create','active',datetime('now'),datetime('now'))`,
-                  [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao])
-                : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
-                  [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
-              idComp = r.lastID;
-              if (useTenantComps) await runC('UPDATE tenant_composicoes SET id_composicao=? WHERE rowid=?', [idComp, idComp]);
-              compMap.set(keyComp, idComp);
-              out.composicoes_inseridas += 1;
-            }
-            let ordem = 0;
-            for (const item of comp.itens) {
-              if (useTenantComps) {
-                await runC(`
-                  INSERT INTO tenant_itens_composicao
-                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
-                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-                  VALUES (?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`,
-                  [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+            for (const compUf of ufs) {
+              const keyComp = compKey(comp.codigo, compUf, mesRef);
+              let idComp = compMap.get(keyComp);
+              if (idComp) {
+                await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE ${compIdWhere}=?`,
+                  [comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao, idComp]);
+                await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
+                out.composicoes_atualizadas += 1;
               } else {
-                await runC(`INSERT INTO ${itemTable} (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem) VALUES (?,?,?,?,?,?,?,?)`,
-                  [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+                const r = useTenantComps
+                  ? await runC(`
+                    INSERT INTO tenant_composicoes
+                      (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,
+                       tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                    VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo','create','active',datetime('now'),datetime('now'))`,
+                    [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao])
+                  : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
+                    [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
+                idComp = r.lastID;
+                if (useTenantComps) await runC('UPDATE tenant_composicoes SET id_composicao=? WHERE rowid=?', [idComp, idComp]);
+                compMap.set(keyComp, idComp);
+                out.composicoes_inseridas += 1;
               }
-              out.itens_inseridos += 1;
+              let ordem = 0;
+              for (const item of comp.itens) {
+                if (useTenantComps) {
+                  await runC(`
+                    INSERT INTO tenant_itens_composicao
+                      (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
+                       tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`,
+                    [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+                } else {
+                  await runC(`INSERT INTO ${itemTable} (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem) VALUES (?,?,?,?,?,?,?,?)`,
+                    [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+                }
+                out.itens_inseridos += 1;
+              }
             }
           }
         }

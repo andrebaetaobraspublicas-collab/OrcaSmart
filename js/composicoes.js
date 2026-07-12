@@ -1615,7 +1615,7 @@ Router.register('composicoes', async () => {
         const res = await API.composicoes.recalcularCustos(params);
         Modal.close();
         Toast.success(res.mensagem);
-        if (res.atualizados > 0) await buscar();
+        if ((res.atualizados || 0) > 0 || (res.criadas || 0) > 0) await buscar();
       } catch(e) {
         Toast.error('Erro ao recalcular: ' + e.message);
         btn.disabled = false;
