@@ -171,6 +171,72 @@ async function gerarOrcamentoEstrutural(db, payload = {}) {
   };
 }
 
+async function incluirOrcamentoEstrutural(db, idOrcamento, payload = {}) {
+  if (!idOrcamento) throw httpError(400, 'Selecione o orcamento de destino.');
+
+  const orcamento = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento=? LIMIT 1', [idOrcamento]);
+  if (!orcamento) throw httpError(404, 'Orcamento nao encontrado.');
+
+  const itens = buildEstruturaItens(payload, {});
+  if (!itens.length) throw httpError(400, 'Nenhum item estrutural foi informado.');
+
+  const maxRow = await one(
+    db,
+    'SELECT COALESCE(MAX(ordem), 0) AS max_ordem FROM orcamento_sintetico WHERE id_orcamento=?',
+    [idOrcamento]
+  ).catch(() => ({ max_ordem: 0 }));
+  const sectionRow = await one(
+    db,
+    "SELECT COUNT(*) AS total FROM orcamento_sintetico WHERE id_orcamento=? AND tipo_linha='section'",
+    [idOrcamento]
+  ).catch(() => ({ total: 0 }));
+
+  let ordem = Number(maxRow?.max_ordem || 0) + 1;
+  const baseSectionIndex = Number(sectionRow?.total || 0);
+  const secoes = new Map();
+  const itemCounters = new Map();
+
+  for (const item of itens) {
+    if (!secoes.has(item.secao)) {
+      const secaoIndex = baseSectionIndex + secoes.size + 1;
+      await orcamentosService.createSinteticoItem(db, idOrcamento, {
+        tipo_linha: 'section',
+        item_num: String(secaoIndex),
+        profundidade: 0,
+        descricao: item.secao,
+        ordem: ordem++,
+      });
+      secoes.set(item.secao, secaoIndex);
+    }
+
+    const secaoIndex = secoes.get(item.secao);
+    const itemCount = (itemCounters.get(item.secao) || 0) + 1;
+    itemCounters.set(item.secao, itemCount);
+
+    await orcamentosService.createSinteticoItem(db, idOrcamento, {
+      tipo_linha: 'item',
+      item_num: `${secaoIndex}.${itemCount}`,
+      profundidade: 1,
+      codigo: item.codigo,
+      fonte: item.fonte || 'USUARIO',
+      descricao: item.descricao,
+      unidade: item.unidade,
+      quantidade: item.quantidade,
+      custo_unitario: item.custo_unitario,
+      preco_unitario: item.custo_unitario,
+      ordem: ordem++,
+    });
+  }
+
+  await orcamentosService.updateTotais(db, idOrcamento).catch(() => {});
+
+  return {
+    id_orcamento: idOrcamento,
+    itens_incluidos: itens.length,
+    mensagem: 'Servicos estruturais incluidos no orcamento.',
+  };
+}
+
 module.exports = function estruturalRoutes(db) {
   const router = express.Router();
   const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -178,6 +244,13 @@ module.exports = function estruturalRoutes(db) {
 
   router.post('/gerar-orcamento', asyncHandler(async (req, res) => {
     const result = await withWriteConnection(writeDb => gerarOrcamentoEstrutural(writeDb, req.body || {}));
+    res.status(201).json(result);
+  }));
+
+  router.post('/incluir-orcamento/:id_orcamento', asyncHandler(async (req, res) => {
+    const result = await withWriteConnection(writeDb =>
+      incluirOrcamentoEstrutural(writeDb, req.params.id_orcamento, req.body || {})
+    );
     res.status(201).json(result);
   }));
 
