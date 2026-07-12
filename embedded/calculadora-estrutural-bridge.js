@@ -52,8 +52,51 @@
   }
 
   function isBudgetScreen() {
-    const text = norm(document.body?.innerText || '');
-    return /orcamento global|planilha orcamentaria|composicoes sinapi|servicos sinapi/.test(text);
+    const text = textLeaves().map(({ text: value }) => norm(value)).join(' ');
+    return /codigo\s+descricao do servico/.test(text)
+      || /planilha orcamentaria/.test(text)
+      || (/orcamento global/.test(text) && /total geral|total estimado|servicos sinapi/.test(text));
+  }
+
+  function isVisible(el) {
+    if (!el || !(el instanceof Element)) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function textLeaves() {
+    return Array.from(document.querySelectorAll('body *'))
+      .filter((el) => el.children.length === 0 && isVisible(el))
+      .map((el) => ({ el, text: (el.textContent || '').trim() }))
+      .filter((item) => item.text);
+  }
+
+  function findVisibleText(pattern) {
+    return textLeaves().find(({ text }) => pattern.test(norm(text)))?.el || null;
+  }
+
+  function findBudgetHost() {
+    const header = findVisibleText(/descricao do servico|quant\.?|p\.\s*unit/);
+    let host = header;
+    while (host?.parentElement) {
+      const parent = host.parentElement;
+      const rect = parent.getBoundingClientRect();
+      if (rect.width >= 640) host = parent;
+      else break;
+      if (norm(parent.textContent || '').includes('total geral')) break;
+    }
+    if (host && host !== document.body) return host;
+
+    const title = findVisibleText(/^orcamento global$/);
+    if (title) {
+      let node = title.parentElement;
+      while (node?.parentElement && node.getBoundingClientRect().width < 640) node = node.parentElement;
+      if (node && node !== document.body) return node;
+    }
+
+    return document.querySelector('main') || document.body;
   }
 
   function readMetric(label) {
@@ -181,7 +224,7 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      .os-estrutura-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+      .os-estrutura-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;margin:0 0 12px}
       .os-btn{appearance:none;border:1px solid #2563eb;background:#2563eb;color:white;border-radius:8px;padding:10px 14px;font:600 14px system-ui,-apple-system,Segoe UI,sans-serif;cursor:pointer}
       .os-btn.secondary{background:white;color:#1d4ed8}
       .os-btn:hover{filter:brightness(.96)}
@@ -265,7 +308,8 @@
   }
 
   function successMessage(isCreate, result) {
-    const base = isCreate ? 'Orcamento estrutural criado com sucesso.' : 'Servicos estruturais incluidos no orcamento.';
+    const incluidos = Number(result?.itens_incluidos || result?.itens_criados || 0);
+    const base = isCreate ? 'Orcamento estrutural criado com sucesso.' : `${incluidos || 'Servicos'} servico(s) estrutural(is) incluido(s) no orcamento.`;
     const vinculados = Number(result?.vinculos || result?.vinculados || 0);
     const verificados = Number(result?.vinculos_verificados || 0);
     if (vinculados) return `${base} ${vinculados} composicao(oes) SINAPI vinculada(s).`;
@@ -352,8 +396,13 @@
         payload.uf_referencia = modal.querySelector('#osUf').value.trim().toUpperCase();
         payload.id_data_base = modal.querySelector('#osDataBase').value || null;
       } else {
-        payload.id_orcamento = destino.value;
-        url = `/api/estrutural/incluir-orcamento/${encodeURIComponent(destino.value)}`;
+        const idOrcamento = Number(destino.value);
+        if (!idOrcamento) {
+          toast('Selecione o orcamento de destino.');
+          return;
+        }
+        payload.id_orcamento = idOrcamento;
+        url = `/api/estrutural/incluir-orcamento/${encodeURIComponent(idOrcamento)}`;
       }
 
       try {
@@ -367,6 +416,8 @@
         const result = await res.json();
         closeModal();
         toast(successMessage(isCreate, result));
+        const destinoOrcamento = isCreate ? result.id_orcamento : payload.id_orcamento;
+        if (destinoOrcamento) sessionStorage.setItem('osSintId', String(destinoOrcamento));
         setTimeout(() => { window.location.hash = '#orcamento-sintetico'; }, 700);
       } catch (err) {
         toast('Erro ao integrar com o Orcamento Sintetico: ' + (err.message || err));
@@ -383,9 +434,7 @@
     }
     if (existing) return;
     ensureStyle();
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const reportButton = buttons.find((button) => /relatorio|pdf|imprimir/i.test(norm(button.textContent)));
-    const host = reportButton?.parentElement || document.querySelector('main') || document.body;
+    const host = findBudgetHost();
     const actions = document.createElement('div');
     actions.id = ACTIONS_ID;
     actions.className = 'os-estrutura-actions';
@@ -393,7 +442,7 @@
       <button class="os-btn" type="button" id="osCriarOrcamentoEstrutural">Criar orcamento sintetico</button>
       <button class="os-btn secondary" type="button" id="osIncluirOrcamentoEstrutural">Incluir em orcamento existente</button>
     `;
-    host.appendChild(actions);
+    host.prepend(actions);
     actions.querySelector('#osCriarOrcamentoEstrutural').onclick = () => openModal('create');
     actions.querySelector('#osIncluirOrcamentoEstrutural').onclick = () => openModal('include');
   }
