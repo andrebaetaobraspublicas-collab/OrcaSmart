@@ -1,7 +1,7 @@
 /* js/administracaoCanteiro.js */
 
 (function () {
-  const VERSION = '20260712-parametrico';
+  const VERSION = '20260712-conferencia-composicoes';
 
   function ensureEmbeddedCalculatorStyles() {
     if (document.getElementById('embedded-calculator-styles')) return;
