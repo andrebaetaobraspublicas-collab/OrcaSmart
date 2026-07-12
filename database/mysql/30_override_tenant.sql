@@ -322,6 +322,41 @@ CREATE TABLE IF NOT EXISTS `tenant_precos_insumos` (
   KEY `idx_tenant_precos_insumos_tenant_id` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `tenant_datas_base` (
+  `id_tenant_datas_base` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `id_data_base` BIGINT UNSIGNED NULL,
+  `mes` BIGINT NULL,
+  `ano` BIGINT NULL,
+  `data_referencia` VARCHAR(32) NULL,
+  `descricao` TEXT NULL,
+  `tenant_catalog_id` BIGINT UNSIGNED NULL,
+  `tenant_override_action` VARCHAR(255) NOT NULL DEFAULT 'create',
+  `tenant_override_status` VARCHAR(255) NOT NULL DEFAULT 'active',
+  `tenant_created_at` DATETIME NULL,
+  `tenant_updated_at` DATETIME NULL,
+  PRIMARY KEY (`id_tenant_datas_base`),
+  KEY `idx_tenant_datas_base_tenant_id` (`tenant_id`),
+  KEY `idx_tenant_datas_base_catalog_id` (`tenant_catalog_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tenant_unidades_medida` (
+  `id_tenant_unidades_medida` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `id_unidade` BIGINT UNSIGNED NULL,
+  `sigla` TEXT NULL,
+  `descricao` TEXT NULL,
+  `tipo_unidade` VARCHAR(120) NULL,
+  `tenant_catalog_id` BIGINT UNSIGNED NULL,
+  `tenant_override_action` VARCHAR(255) NOT NULL DEFAULT 'create',
+  `tenant_override_status` VARCHAR(255) NOT NULL DEFAULT 'active',
+  `tenant_created_at` DATETIME NULL,
+  `tenant_updated_at` DATETIME NULL,
+  PRIMARY KEY (`id_tenant_unidades_medida`),
+  KEY `idx_tenant_unidades_medida_tenant_id` (`tenant_id`),
+  KEY `idx_tenant_unidades_medida_catalog_id` (`tenant_catalog_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `tenant_referential_overrides` (
   `tenant_id` BIGINT UNSIGNED NOT NULL,
   `id_override` BIGINT UNSIGNED NOT NULL,
