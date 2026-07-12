@@ -1,7 +1,7 @@
 /* js/dimensionamentoPavimentos.js */
 
 const DimensionamentoPavimentos = (() => {
-  const VERSION = '20260712-pavimentos-standalone-orcamento';
+  const VERSION = '20260712-pavimentos-orcamento-fetch';
 
   Object.assign(API, {
     pavimentos: {

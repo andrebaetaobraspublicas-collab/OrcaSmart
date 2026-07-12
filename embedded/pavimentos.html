@@ -2263,17 +2263,6 @@ function exportarPdfRelatorio() {
   window.print();
 }
 
-function getOrcaSmartBridge() {
-  return {
-    API: window.parent && window.parent.API,
-    Modal: window.parent && window.parent.Modal,
-    Toast: window.parent && window.parent.Toast,
-    Utils: window.parent && window.parent.Utils,
-    parentDoc: window.parent && window.parent.document,
-    parentWindow: window.parent || window
-  };
-}
-
 function ufOptions(selected) {
   const ufs = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
   return ufs.map(uf => `<option value="${uf}" ${String(selected || '').toUpperCase() === uf ? 'selected' : ''}>${uf}</option>`).join('');
@@ -2281,6 +2270,65 @@ function ufOptions(selected) {
 
 function htmlEsc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+async function apiRequest(method, path, body) {
+  const opts = {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch('/api' + path, opts);
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; }
+  catch (_) { throw new Error(`Resposta inválida do servidor (${res.status}).`); }
+  if (res.status === 401 || res.status === 402) {
+    try { window.parent.location.href = res.status === 402 ? '/login.html?subscription=required' : '/login.html'; }
+    catch (_) { window.location.href = res.status === 402 ? '/login.html?subscription=required' : '/login.html'; }
+    throw new Error(data.erro || 'Autenticação necessária.');
+  }
+  if (!res.ok) throw new Error(data.erro || data.error || data.message || `Erro HTTP ${res.status}`);
+  return data;
+}
+
+function notify(type, message) {
+  try {
+    const toast = window.parent && window.parent.Toast;
+    if (toast && typeof toast[type] === 'function') {
+      toast[type](message);
+      return;
+    }
+  } catch (_) {}
+  const el = document.createElement('div');
+  el.textContent = message;
+  el.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:99999;max-width:420px;background:#10233a;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:12px 14px;box-shadow:0 12px 34px rgba(0,0,0,.25);font:13px IBM Plex Sans,Arial,sans-serif';
+  if (type === 'error') el.style.background = '#7f1d1d';
+  if (type === 'warning') el.style.background = '#78350f';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+function closeBudgetModal() {
+  document.getElementById('pavBudgetOverlay')?.remove();
+}
+
+function openBudgetModal({ body, footer }) {
+  closeBudgetModal();
+  const overlay = document.createElement('div');
+  overlay.id = 'pavBudgetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(15,23,42,.48);display:flex;align-items:center;justify-content:center;padding:28px';
+  overlay.innerHTML = `
+    <div style="width:min(920px,96vw);max-height:88vh;overflow:auto;background:#fff;border:1px solid #d4cec5;border-radius:10px;box-shadow:0 28px 80px rgba(0,0,0,.30)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;border-bottom:1px solid #d4cec5">
+        <strong style="font-size:17px;color:#1e2433">Gerar orçamento detalhado de pavimentação</strong>
+        <button type="button" onclick="closeBudgetModal()" style="border:0;background:transparent;font-size:22px;cursor:pointer;color:#64748b">×</button>
+      </div>
+      <div style="padding:18px 20px">${body}</div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid #d4cec5;background:#f8fafc">${footer}</div>
+    </div>`;
+  document.body.appendChild(overlay);
 }
 
 function currentPavimentoPayload() {
@@ -2337,32 +2385,26 @@ function currentPavimentoPayload() {
 
 async function abrirOrcamentoDetalhado() {
   dimensionar();
-  const bridge = getOrcaSmartBridge();
-  const { API, Modal, Toast, parentDoc } = bridge;
-  if (!API || !Modal || !Toast || !parentDoc) {
-    alert('Abra esta calculadora pelo OrçaSmart para gerar o orçamento detalhado.');
-    return;
-  }
   const payloadBase = currentPavimentoPayload();
   if (!payloadBase) {
-    Toast.warning('Dimensione o pavimento antes de gerar o orçamento detalhado.');
+    notify('warning', 'Dimensione o pavimento antes de gerar o orçamento detalhado.');
     return;
   }
   let obras = [];
   let datas = [];
   try {
     const [obrasResp, datasResp] = await Promise.all([
-      API.obras.list('', ''),
-      API.datasBase.list(),
+      apiRequest('GET', '/obras?q=&situacao='),
+      apiRequest('GET', '/datas-base'),
     ]);
     obras = Array.isArray(obrasResp) ? obrasResp : (obrasResp.items || []);
     datas = Array.isArray(datasResp) ? datasResp : (datasResp.items || []);
   } catch (e) {
-    Toast.error('Não foi possível carregar obras e datas-base: ' + (e.message || e));
+    notify('error', 'Não foi possível carregar obras e datas-base: ' + (e.message || e));
     return;
   }
   if (!obras.length) {
-    Toast.warning('Cadastre uma obra antes de gerar o orçamento detalhado.');
+    notify('warning', 'Cadastre uma obra antes de gerar o orçamento detalhado.');
     return;
   }
   const dataOptions = datas.map(d => {
@@ -2373,9 +2415,7 @@ async function abrirOrcamentoDetalhado() {
     const uf = o.uf ? `/${o.uf}` : '';
     return `<option value="${o.id_obra}" data-uf="${htmlEsc(o.uf || '')}">${htmlEsc((o.nome_obra || 'Obra sem nome') + uf)}</option>`;
   }).join('');
-  Modal.open({
-    title: 'Gerar orçamento detalhado de pavimentação',
-    size: 'modal-lg',
+  openBudgetModal({
     body: `
       <div style="display:grid;gap:12px">
         <p class="text-sm text-2">O orçamento será criado no módulo Orçamento Sintético com as camadas dimensionadas nesta calculadora.</p>
@@ -2416,50 +2456,53 @@ async function abrirOrcamentoDetalhado() {
       </div>
     `,
     footer: `
-      <button class="btn btn-ghost" id="pavBudgetCancel">Cancelar</button>
-      <button class="btn btn-primary" id="pavBudgetGenerate">Gerar orçamento</button>
+      <button class="btn-secondary" id="pavBudgetCancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="pavBudgetGenerate" type="button">Gerar orçamento</button>
     `,
   });
   setTimeout(() => {
-    const obraSel = parentDoc.getElementById('pavBudgetObra');
-    const ufSel = parentDoc.getElementById('pavBudgetUf');
+    const obraSel = document.getElementById('pavBudgetObra');
+    const ufSel = document.getElementById('pavBudgetUf');
     const syncUf = () => {
       const opt = obraSel?.selectedOptions?.[0];
       if (opt?.dataset.uf) ufSel.value = opt.dataset.uf;
     };
     syncUf();
     obraSel?.addEventListener('change', syncUf);
-    parentDoc.getElementById('pavBudgetCancel')?.addEventListener('click', () => Modal.close());
-    parentDoc.getElementById('pavBudgetGenerate')?.addEventListener('click', gerarOrcamentoDetalhado);
+    document.getElementById('pavBudgetCancel')?.addEventListener('click', closeBudgetModal);
+    document.getElementById('pavBudgetGenerate')?.addEventListener('click', gerarOrcamentoDetalhado);
   }, 80);
 }
 
 async function gerarOrcamentoDetalhado() {
-  const bridge = getOrcaSmartBridge();
-  const { API, Modal, Toast, parentDoc, parentWindow } = bridge;
   const payloadBase = currentPavimentoPayload();
-  const btn = parentDoc.getElementById('pavBudgetGenerate');
+  const btn = document.getElementById('pavBudgetGenerate');
   const original = btn?.innerHTML;
   if (btn) { btn.disabled = true; btn.innerHTML = 'Gerando...'; }
   try {
     const payload = {
-      id_obra: Number(parentDoc.getElementById('pavBudgetObra')?.value || 0),
-      fonte: parentDoc.getElementById('pavBudgetFonte')?.value || 'SICRO',
-      uf_referencia: parentDoc.getElementById('pavBudgetUf')?.value || payloadBase.ctx.uf || '',
-      id_data_base: Number(parentDoc.getElementById('pavBudgetData')?.value || 0) || null,
-      bdi_percentual: Number(parentDoc.getElementById('pavBudgetBdi')?.value || 0),
-      regime_previdenciario: parentDoc.getElementById('pavBudgetRegime')?.value || 'Onerado',
+      id_obra: Number(document.getElementById('pavBudgetObra')?.value || 0),
+      fonte: document.getElementById('pavBudgetFonte')?.value || 'SICRO',
+      uf_referencia: document.getElementById('pavBudgetUf')?.value || payloadBase.ctx.uf || '',
+      id_data_base: Number(document.getElementById('pavBudgetData')?.value || 0) || null,
+      bdi_percentual: Number(document.getElementById('pavBudgetBdi')?.value || 0),
+      regime_previdenciario: document.getElementById('pavBudgetRegime')?.value || 'Onerado',
       ctx: payloadBase.ctx,
       camadas: payloadBase.camadas,
     };
-    const res = await API.pavimentos.gerarOrcamento(payload);
-    Modal.close();
+    const res = await apiRequest('POST', '/pavimentos/gerar-orcamento', payload);
+    closeBudgetModal();
     const aviso = res.avisos?.length ? ` ${res.avisos.length} aviso(s) de composição.` : '';
-    Toast.success(`Orçamento detalhado gerado com ${res.total_itens} item(ns).${aviso}`);
-    parentWindow.sessionStorage.setItem('osSintId', res.id_orcamento);
-    parentWindow.location.hash = 'orcamento-sintetico';
+    notify('success', `Orçamento detalhado gerado com ${res.total_itens} item(ns).${aviso}`);
+    try {
+      window.parent.sessionStorage.setItem('osSintId', res.id_orcamento);
+      window.parent.location.hash = 'orcamento-sintetico';
+    } catch (_) {
+      sessionStorage.setItem('osSintId', res.id_orcamento);
+      window.location.hash = 'orcamento-sintetico';
+    }
   } catch (e) {
-    Toast.error(e.message || String(e));
+    notify('error', e.message || String(e));
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = original; }
   }
