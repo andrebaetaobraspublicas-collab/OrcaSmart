@@ -1,0 +1,2544 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calculadora de Pavimentos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    /* ══ PALETA "PLANTA TÉCNICA" ══════════════════════════════════════════════ */
+    :root {
+      --bg:          #f0ede8;        /* pergaminho técnico */
+      --bg2:         #e8e4dd;        /* fundo mais escuro p/ contraste */
+      --panel:       #ffffff;        /* cards / sidebar */
+      --panel2:      #f7f5f2;        /* campos de formulário */
+      --border:      #d4cec5;
+      --border2:     #b8b0a4;
+      --text:        #1e2433;        /* azul-grafite quase preto */
+      --muted:       #6b6560;        /* marrom-cinza */
+      --accent:      #1d4e7c;        /* azul-ardósia engenharia */
+      --accent2:     #2a6496;        /* azul mais claro */
+      --accent-dim:  rgba(29,78,124,0.08);
+      --terracota:   #8b3a2a;        /* terracota / solo */
+      --terra-dim:   rgba(139,58,42,0.10);
+      --ok:          #1a6640;
+      --ok-dim:      rgba(26,102,64,0.10);
+      --warn:        #8b5e1a;
+      --warn-dim:    rgba(139,94,26,0.12);
+      --danger:      #8b2020;
+      --danger-dim:  rgba(139,32,32,0.10);
+      --mono:        'IBM Plex Mono', monospace;
+      --sans:        'IBM Plex Sans', sans-serif;
+      --r:           5px;
+      --shadow:      0 1px 4px rgba(0,0,0,0.08), 0 2px 12px rgba(0,0,0,0.04);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── TOPBAR ─────────────────────────────────────────────────────────────── */
+    .topbar {
+      background: linear-gradient(90deg, var(--accent), #173f66);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 58px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    }
+
+    .topbar-logo {
+      font-family: var(--sans);
+      font-weight: 700;
+      font-size: 18px;
+      color: #ffffff;
+      letter-spacing: 0;
+      line-height: 1.05;
+    }
+
+    .topbar-mark {
+      width: 36px;
+      height: 36px;
+      border: 2px solid rgba(255,255,255,0.86);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      position: relative;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .topbar-mark::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-left: 3px solid #f5c518;
+      border-bottom: 3px solid #f5c518;
+      transform: rotate(-45deg) translateY(-1px);
+    }
+
+    .topbar-title { display: grid; gap: 2px; }
+
+    .topbar-sep { width: 1px; height: 22px; background: rgba(255,255,255,0.2); }
+
+    .topbar-sub {
+      font-size: 12px;
+      color: rgba(255,255,255,0.75);
+      font-weight: 300;
+    }
+
+    .topbar-version {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.18);
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    .topbar-disclaimer {
+      margin-left: auto;
+      font-size: 11px;
+      color: #fde68a;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(253,230,138,0.35);
+      border-radius: 4px;
+      padding: 3px 10px;
+    }
+
+    @keyframes om-road-flow { from { background-position-y: 0; } to { background-position-y: 240px; } }
+    @keyframes om-fade-up { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes om-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes om-load { from { width: 0%; } to { width: 100%; } }
+    @keyframes om-grid-drift { from { background-position: 0 0; } to { background-position: 0 60px; } }
+    @keyframes om-glow { 0%,100% { opacity: .5; } 50% { opacity: .9; } }
+    @keyframes om-blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+    .startup-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      overflow: hidden;
+      background: radial-gradient(120% 90% at 50% 18%, #1d1b16 0%, #100f0c 55%, #0a0907 100%);
+      color: #f3efe6;
+      transition: opacity .8s ease, visibility .8s ease;
+    }
+
+    .startup-screen.hide {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .startup-grid {
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(245,197,24,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(245,197,24,.05) 1px, transparent 1px);
+      background-size: 60px 60px;
+      animation: om-grid-drift 6s linear infinite;
+      mask-image: linear-gradient(to bottom, #000 0%, transparent 58%);
+    }
+
+    .startup-glow {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 140%;
+      height: 46%;
+      transform: translate(-50%, -100%);
+      background: radial-gradient(60% 80% at 50% 100%, rgba(245,197,24,.16), transparent 70%);
+      filter: blur(8px);
+      animation: om-glow 4s ease-in-out infinite;
+    }
+
+    .startup-road {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: 200%;
+      height: 64%;
+      transform: translateX(-50%) perspective(560px) rotateX(58deg);
+      transform-origin: bottom center;
+      overflow: hidden;
+    }
+
+    .startup-road::before {
+      content: "";
+      position: absolute;
+      inset: -20% -10% 0 -10%;
+      background: repeating-linear-gradient(0deg, transparent 0 86px, #f5c518 86px 152px), linear-gradient(90deg, #1a1916 0%, #26241f 8%, #26241f 92%, #1a1916 100%);
+      background-size: 14px 240px, 100% 100%;
+      background-position: center 0, center 0;
+      background-repeat: repeat-y, no-repeat;
+      animation: om-road-flow .9s linear infinite;
+      box-shadow: inset 1px 0 0 rgba(243,239,230,.55), inset -1px 0 0 rgba(243,239,230,.55);
+      mask-image: linear-gradient(to top, #000 30%, transparent 92%);
+    }
+
+    .startup-road::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(10,9,7,.85) 0%, transparent 34%);
+    }
+
+    .startup-layers {
+      position: absolute;
+      right: 5.5%;
+      bottom: 7%;
+      width: 210px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+
+    .startup-layer-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .18em;
+      color: rgba(243,239,230,.45);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .startup-layer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      justify-content: flex-end;
+      opacity: 0;
+      animation: om-fade-up .6s ease forwards;
+    }
+
+    .startup-layer span:first-child {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: rgba(243,239,230,.6);
+      white-space: nowrap;
+    }
+
+    .startup-layer span:last-child {
+      display: block;
+      width: 96px;
+      border-radius: 2px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    }
+
+    .startup-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .startup-kicker {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      opacity: 0;
+      animation: om-fade-up .8s ease .15s forwards;
+    }
+
+    .startup-kicker span:first-child,
+    .startup-kicker span:last-child {
+      width: 34px;
+      height: 1px;
+      background: rgba(245,197,24,.8);
+    }
+
+    .startup-kicker strong {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: .34em;
+      color: #f5c518;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .startup-title {
+      font-weight: 700;
+      font-size: clamp(40px, 7vw, 104px);
+      line-height: .98;
+      letter-spacing: -.02em;
+      margin-top: 22px;
+      opacity: 0;
+      animation: om-fade-up .9s cubic-bezier(.2,.7,.2,1) .35s forwards;
+      text-shadow: 0 14px 40px rgba(0,0,0,.55);
+    }
+
+    .startup-title span { color: #f5c518; }
+
+    .startup-copy {
+      margin-top: 20px;
+      max-width: 540px;
+      font-size: clamp(14px, 1.5vw, 18px);
+      color: rgba(243,239,230,.62);
+      opacity: 0;
+      animation: om-fade-up .9s ease .6s forwards;
+    }
+
+    .startup-loading {
+      margin-top: 54px;
+      width: min(360px, 72vw);
+      opacity: 0;
+      animation: om-fade-in .8s ease .9s forwards;
+    }
+
+    .startup-loading-row {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .16em;
+      color: rgba(243,239,230,.5);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .startup-percent { color: #f5c518; animation: om-blink 1.1s steps(1) infinite; }
+
+    .startup-bar {
+      height: 3px;
+      width: 100%;
+      background: rgba(243,239,230,.12);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .startup-bar div {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #f5c518, #ffe08a);
+      border-radius: 3px;
+      box-shadow: 0 0 16px rgba(245,197,24,.6);
+      animation: om-load 2.8s linear .9s forwards;
+    }
+
+    /* ── TABS ───────────────────────────────────────────────────────────────── */
+    .tab-bar {
+      background: var(--panel);
+      border-bottom: 2px solid var(--border);
+      padding: 0 20px;
+      display: flex;
+    }
+
+    .tab {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 11px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color .15s, border-color .15s;
+      letter-spacing: 0.05em;
+      user-select: none;
+    }
+
+    .tab:hover { color: var(--accent); }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--terracota);
+    }
+
+    /* ── LAYOUT ─────────────────────────────────────────────────────────────── */
+    .workspace {
+      display: grid;
+      grid-template-columns: 370px 1fr;
+      height: calc(100vh - 50px - 38px);
+      overflow: hidden;
+    }
+
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 18px 16px;
+    }
+
+    .content {
+      overflow-y: auto;
+      padding: 18px 22px;
+      background: var(--bg);
+    }
+
+    /* ── FORM ───────────────────────────────────────────────────────────────── */
+    .section { margin-bottom: 20px; }
+
+    .section-title {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      color: var(--accent2);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+
+    .field { margin-bottom: 9px; }
+
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 4px;
+      letter-spacing: 0.03em;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 7px 9px;
+      font-family: var(--sans);
+      font-size: 13px;
+      color: var(--text);
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      border-color: var(--accent2);
+      box-shadow: 0 0 0 3px rgba(42,100,150,0.12);
+    }
+
+    .field textarea { min-height: 56px; resize: vertical; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+    /* Tag de info ao lado do campo de solo */
+    .solo-tag {
+      display: inline-block;
+      background: var(--terra-dim);
+      border: 1px solid rgba(139,58,42,0.25);
+      color: var(--terracota);
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      margin-top: 5px;
+    }
+
+    /* Info box solo */
+    .solo-info {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--terracota);
+      border-radius: var(--r);
+      padding: 9px 12px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .solo-info strong { color: var(--text); display: block; margin-bottom: 2px; font-size: 12px; }
+
+    /* ── CALC BOX ───────────────────────────────────────────────────────────── */
+    .calc-box {
+      background: var(--accent-dim);
+      border: 1px solid rgba(29,78,124,0.2);
+      border-radius: var(--r);
+      padding: 11px 13px;
+      margin: 8px 0;
+    }
+
+    .calc-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--accent2);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .calc-value {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .calc-formula {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 5px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+
+    /* ── BOTÕES ─────────────────────────────────────────────────────────────── */
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--r);
+      padding: 10px 18px;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      transition: background .15s;
+      box-shadow: var(--shadow);
+    }
+
+    .btn-primary:hover { background: var(--accent2); }
+
+    .btn-secondary {
+      background: var(--panel2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 10px 16px;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .btn-secondary:hover { background: var(--border); }
+
+    .btn-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+
+    .desktop-project-panel {
+      background: var(--accent-dim);
+      border: 1px solid rgba(29,78,124,0.16);
+      border-radius: var(--r);
+      padding: 11px 12px;
+    }
+
+    .desktop-project-list {
+      display: grid;
+      gap: 7px;
+      max-height: 178px;
+      overflow-y: auto;
+    }
+
+    .desktop-new-project {
+      width: 100%;
+      border: 1px solid rgba(29,78,124,0.28);
+      background: var(--accent);
+      color: #fff;
+      border-radius: var(--r);
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .desktop-project-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 8px 9px;
+      cursor: pointer;
+      color: var(--text);
+      text-align: left;
+      transition: border-color .15s, background .15s;
+    }
+
+    .desktop-project-item:hover {
+      border-color: var(--accent2);
+      background: #fff;
+    }
+
+    .desktop-project-item span {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .desktop-project-item strong {
+      font-size: 12px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .desktop-project-item small {
+      color: var(--muted);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .desktop-project-actions {
+      display: flex;
+      gap: 5px;
+      flex: 0 0 auto;
+    }
+
+    .desktop-project-actions button {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 6px;
+      cursor: pointer;
+    }
+
+    .desktop-project-actions button:hover { border-color: var(--accent2); }
+
+    .desktop-project-empty {
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px dashed var(--border2);
+      border-radius: var(--r);
+      padding: 9px;
+    }
+
+    .license-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: none;
+      place-items: center;
+      background: rgba(16, 15, 12, .86);
+      backdrop-filter: blur(3px);
+      padding: 24px;
+    }
+
+    .license-modal.show { display: grid; }
+
+    body.license-locked .topbar,
+    body.license-locked .tab-bar,
+    body.license-locked .workspace {
+      filter: blur(2px);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .license-card {
+      width: min(820px, 94vw);
+      max-height: min(86vh, 780px);
+      background: #fff;
+      border-radius: 6px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.34);
+      padding: 24px;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .license-kicker {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .16em;
+      color: var(--terracota);
+      text-transform: uppercase;
+    }
+
+    .license-card h2 {
+      font-size: clamp(22px, 3vw, 30px);
+      line-height: 1.25;
+      margin-bottom: 0;
+      color: var(--accent);
+    }
+
+    .license-text {
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      background: var(--panel2);
+      padding: 16px 18px;
+      max-height: 48vh;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .license-text p { margin-bottom: 12px; }
+    .license-text p:last-child { margin-bottom: 0; }
+
+    .license-text ul {
+      margin: 10px 0 14px 20px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .license-accept {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px;
+      border-radius: var(--r);
+      background: var(--accent-dim);
+      border: 1px solid rgba(29,78,124,.20);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .license-accept input {
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .license-error {
+      min-height: 18px;
+      margin-top: 10px;
+      color: var(--danger);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .license-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 0;
+    }
+
+    .license-actions button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--r);
+      padding: 10px 14px;
+      font-family: var(--mono);
+      font-weight: 600;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .license-actions button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    /* ── KPIs ───────────────────────────────────────────────────────────────── */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .kpi {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 13px 15px;
+      box-shadow: var(--shadow);
+    }
+
+    .kpi-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .kpi-value {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .kpi-sub {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── CARDS ──────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 16px 18px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .card-title {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 13px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── LAYER VIZ ──────────────────────────────────────────────────────────── */
+    .pavement-viz {
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .layer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.12);
+      transition: filter .15s;
+      cursor: default;
+    }
+
+    .layer-bar:hover { filter: brightness(0.96); }
+    .layer-bar:last-child { border-bottom: none; }
+
+    .layer-name { font-weight: 600; font-size: 12px; }
+    .layer-mat  { font-size: 10px; opacity: 0.75; }
+    .layer-thick { font-family: var(--mono); font-size: 13px; font-weight: 600; text-align:right; }
+    .layer-mod   { font-family: var(--mono); font-size: 9px; opacity: 0.65; text-align:right; }
+
+    /* ── TABELA ─────────────────────────────────────────────────────────────── */
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+
+    thead th {
+      background: var(--accent);
+      color: rgba(255,255,255,0.9);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      padding: 7px 11px;
+      text-align: left;
+    }
+
+    tbody td {
+      padding: 8px 11px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      color: var(--text);
+    }
+
+    tbody tr:hover td { background: var(--panel2); }
+
+    /* ── ALERTAS ────────────────────────────────────────────────────────────── */
+    .alert {
+      border-radius: var(--r);
+      padding: 10px 13px;
+      margin-bottom: 7px;
+      font-size: 12px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .alert-icon { flex-shrink:0; font-size:14px; line-height:1.4; }
+    .alert-ok   { background:var(--ok-dim);     border:1px solid rgba(26,102,64,0.25);  color:#145230; }
+    .alert-warn { background:var(--warn-dim);   border:1px solid rgba(139,94,26,0.25);  color:#6b4710; }
+    .alert-danger { background:var(--danger-dim); border:1px solid rgba(139,32,32,0.25); color:#6b1010; }
+
+    /* ── COMPARAÇÃO ─────────────────────────────────────────────────────────── */
+    .comp-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 70px 90px 110px;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .comp-row:last-child { border-bottom: none; }
+
+    .comp-header { color: var(--muted); font-family: var(--mono); font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase; }
+
+    .comp-bar-wrap { height: 8px; background: var(--border); border-radius: 99px; overflow: hidden; }
+    .comp-bar { height:100%; border-radius:99px; transition: width .5s ease; }
+
+    .comp-label { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent); }
+    .comp-val   { font-family: var(--mono); font-size: 12px; text-align: right; }
+    .comp-cost  { font-family: var(--mono); font-size: 12px; color: var(--ok); text-align: right; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .badge-gold  { background:rgba(180,130,0,0.14);  color:#7a5500; }
+    .badge-blue  { background:var(--accent-dim);      color:var(--accent2); }
+    .badge-green { background:var(--ok-dim);           color:var(--ok); }
+
+    /* ── ANÁLISE ECO ────────────────────────────────────────────────────────── */
+    .eco-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .eco-card {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 13px 15px;
+    }
+
+    .eco-card-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .eco-card-value { font-family: var(--mono); font-size: 18px; font-weight: 600; }
+
+    .eco-line {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .eco-line:last-child { border-bottom: none; }
+    .eco-line-name { color: var(--muted); }
+    .eco-line-val  { font-family: var(--mono); }
+
+    /* ── MEMORIAL ───────────────────────────────────────────────────────────── */
+    .memorial {
+      background: #fdfaf6;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 16px 18px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text);
+      white-space: pre-wrap;
+      line-height: 1.75;
+      max-height: 580px;
+      overflow-y: auto;
+    }
+
+    .mem-section { color: var(--accent);    font-weight: 600; }
+    .mem-eq      { color: var(--terracota); }
+    .mem-result  { color: var(--ok);        font-weight: 600; }
+    .mem-obs     { color: var(--muted); }
+
+    /* ── CANVAS ─────────────────────────────────────────────────────────────── */
+    canvas { display:block; width:100%; }
+
+    /* ── SCROLLBAR ──────────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width:5px; height:5px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:99px; }
+
+    /* ── PRINT ──────────────────────────────────────────────────────────────── */
+    @media print {
+      .topbar, .tab-bar, .sidebar, .btn-row { display:none !important; }
+      .workspace { display:block; height:auto; overflow:visible; }
+      .content { padding:0; background:white; }
+      .card, .kpi { box-shadow:none; }
+    }
+
+    @media (max-width:920px) {
+      .workspace { grid-template-columns:1fr; height:auto; overflow:visible; }
+      .kpi-row   { grid-template-columns:1fr 1fr; }
+    }
+
+    /* ── EMPTY STATE ────────────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 14px;
+      color: var(--muted);
+    }
+
+    .empty-icon {
+      width: 72px;
+      height: 72px;
+      border: 2px dashed var(--border2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      color: var(--border2);
+    }
+
+    .empty-text { font-family: var(--mono); font-size: 12px; text-align: center; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="startupScreen" class="startup-screen">
+  <div class="startup-grid"></div>
+  <div class="startup-glow"></div>
+  <div class="startup-road"></div>
+  <div class="startup-layers" aria-hidden="true">
+    <div class="startup-layer-title">Seção do pavimento</div>
+    <div class="startup-layer" style="animation-delay:.45s"><span>Revestimento</span><span style="height:16px;background:#26241f"></span></div>
+    <div class="startup-layer" style="animation-delay:.60s"><span>Base</span><span style="height:22px;background:#4a463d"></span></div>
+    <div class="startup-layer" style="animation-delay:.75s"><span>Sub-base</span><span style="height:26px;background:#6b665a"></span></div>
+    <div class="startup-layer" style="animation-delay:.90s"><span>Subleito</span><span style="height:34px;background:#8a7a5f"></span></div>
+  </div>
+  <div class="startup-center">
+    <div class="startup-kicker"><span></span><strong>Engenharia Rodoviária</strong><span></span></div>
+    <h1 class="startup-title">Calculadora<br><span>de Pavimentos</span></h1>
+    <p class="startup-copy">Método de dimensionamento estrutural para pavimentos flexíveis e rígidos.</p>
+    <div class="startup-loading">
+      <div class="startup-loading-row"><span>Inicializando sistema</span><span id="startupPercent" class="startup-percent">0%</span></div>
+      <div class="startup-bar"><div></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="licenseModal" class="license-modal" role="dialog" aria-modal="true" aria-labelledby="licenseTitle">
+  <div class="license-card">
+    <div class="license-kicker">IMPORTANTE - LEIA ANTES DE UTILIZAR O SISTEMA</div>
+    <h2 id="licenseTitle">Aviso de Responsabilidade Técnica</h2>
+    <div class="license-text" tabindex="0">
+      <p>Este software constitui ferramenta de apoio à engenharia, destinada a auxiliar na modelagem, análise e dimensionamento de elementos estruturais. Os resultados produzidos dependem integralmente da qualidade, exatidão e completude dos dados de entrada fornecidos pelo usuário.</p>
+      <p>O software não substitui a análise técnica, o julgamento profissional, a experiência, a supervisão e a responsabilidade do engenheiro legalmente habilitado, que permanece como único responsável pela concepção estrutural, pela definição das hipóteses de cálculo, pela escolha do modelo estrutural, pela interpretação dos resultados, pela verificação de sua consistência e pela aprovação do projeto final.</p>
+      <p>É obrigação do usuário:</p>
+      <ul>
+        <li>conferir todos os dados de entrada;</li>
+        <li>verificar a adequação das hipóteses adotadas;</li>
+        <li>revisar criticamente todos os resultados obtidos;</li>
+        <li>confirmar a compatibilidade do projeto com as normas técnicas aplicáveis;</li>
+        <li>realizar verificações independentes sempre que necessário.</li>
+      </ul>
+      <p>O desenvolvedor não garante que o software seja adequado para qualquer finalidade específica ou para todas as situações de projeto, nem assegura que os resultados obtidos estejam livres de erros decorrentes de informações incorretas, hipóteses inadequadas, utilização indevida, limitações do modelo matemático ou interpretação equivocada dos resultados.</p>
+      <p>Na máxima extensão permitida pela legislação aplicável, o desenvolvedor não será responsável por danos diretos, indiretos, incidentais, lucros cessantes, perdas econômicas, atrasos, paralisações, falhas construtivas ou quaisquer prejuízos decorrentes da utilização do software ou da confiança exclusiva em seus resultados.</p>
+      <p>Ao utilizar este sistema, o usuário declara possuir conhecimento técnico compatível com sua utilização e reconhece que toda decisão de engenharia deverá ser tomada exclusivamente pelo profissional legalmente habilitado, que assume integral responsabilidade técnica pelo projeto.</p>
+    </div>
+    <label class="license-accept">
+      <input id="licenseAccept" type="checkbox"/>
+      <span>Li e concordo com o aviso de responsabilidade técnica e reconheço que os resultados devem ser conferidos por profissional legalmente habilitado.</span>
+    </label>
+    <div class="license-actions">
+      <div id="licenseError" class="license-error" aria-live="polite"></div>
+      <button id="licenseContinue" type="button" disabled>CONCORDAR E ABRIR SISTEMA</button>
+    </div>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="topbar-mark" aria-hidden="true"></div>
+  <div class="topbar-title">
+    <div class="topbar-logo">Calculadora de Pavimentos</div>
+    <div class="topbar-sub">Sistema de Dimensionamento de Pavimentos</div>
+  </div>
+  <div class="topbar-sep"></div>
+  <div class="topbar-version">2025.06</div>
+  <div class="topbar-disclaimer">⚠ Protótipo técnico — não substitui projeto executivo assinado por profissional habilitado</div>
+</div>
+
+<!-- TABS -->
+<div class="tab-bar">
+  <div class="tab active" data-tab="projeto"  onclick="switchTab('projeto')">01 · PROJETO</div>
+  <div class="tab"        data-tab="solo"     onclick="switchTab('solo')">02 · SOLO</div>
+  <div class="tab"        data-tab="trafego"  onclick="switchTab('trafego')">03 · TRÁFEGO</div>
+  <div class="tab"        data-tab="custo"    onclick="switchTab('custo')">04 · CUSTO</div>
+</div>
+
+<div class="workspace">
+  <!-- ═══ SIDEBAR ════════════════════════════════════════════════════════════ -->
+  <div class="sidebar">
+
+    <!-- ── ABA 1: PROJETO ─────────────────────────────────────────────────── -->
+    <div id="tab-projeto" class="tab-content">
+      <div class="section">
+        <div class="section-title">Identificação</div>
+        <div class="field"><label>Empreendimento</label><input id="obra" value="Pavimentação Urbana – Trecho Centro"/></div>
+        <div class="field"><label>Trecho / Local</label><input id="trecho" value="Av. Principal – Km 0+000 a 1+000"/></div>
+        <div class="grid2">
+          <div class="field"><label>Município</label><input id="municipio" value="Brasília"/></div>
+          <div class="field"><label>UF</label><input id="uf" value="DF"/></div>
+        </div>
+        <div class="field"><label>Responsável técnico / CREA</label><input id="responsavel" value="Eng. Fulano · CREA 00000-D/DF"/></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Tipo e Método</div>
+        <div class="field">
+          <label>Tipo de pavimento</label>
+          <select id="tipo" onchange="recalcN()">
+            <option value="flexivel">Flexível</option>
+            <option value="semirrigido">Semirrígido</option>
+            <option value="rigido">Rígido</option>
+            <option value="intertravado">Intertravado</option>
+            <option value="aeroportuario">Aeroportuário</option>
+            <option value="industrial">Industrial</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Método de dimensionamento</label>
+          <select id="metodo">
+            <option value="DNER">DNER (DNIT) – Catálogo empírico CBR/N</option>
+            <option value="MEDINA">MeDiNa – Mecanístico-empírico simplificado</option>
+            <option value="AASHTO">AASHTO 1993 – Número Estrutural SN</option>
+            <option value="ASPHALT">Asphalt Institute – Ênfase asfáltica</option>
+            <option value="PCA">PCA – Pavimento rígido (concreto)</option>
+            <option value="FAA">FAA – Aeroportuário</option>
+          </select>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Vida útil (anos)</label><input id="vida" type="number" value="10" min="1" max="50" step="1" oninput="recalcN()"/></div>
+          <div class="field"><label>Confiabilidade (%)</label><input id="confiabilidade" type="number" value="90" min="50" max="99.9" step="0.1"/></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Dimensões</div>
+        <div class="grid2">
+          <div class="field"><label>Largura da pista (m)</label><input id="largura" type="number" value="7.2" min="1" step="0.1"/></div>
+          <div class="field"><label>Extensão (km)</label><input id="extensao" type="number" value="1.0" min="0.01" step="0.01"/></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>N.º de faixas</label><input id="faixas" type="number" value="2" min="1" step="1" oninput="recalcN()"/></div>
+          <div class="field"><label>Distrib. por faixa (%)</label><input id="distribFaixa" type="number" value="50" min="20" max="80" step="1" oninput="recalcN()"/></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ABA 2: SOLO ─────────────────────────────────────────────────────── -->
+    <div id="tab-solo" class="tab-content" style="display:none">
+      <div class="section">
+        <div class="section-title">Classificação do solo</div>
+        <div class="field">
+          <label>Tipo de solo (HRB / SUCS)</label>
+          <select id="tipoSolo" onchange="onSoloChange()">
+            <optgroup label="── Solos granulares (HRB A-1 a A-3) ──">
+              <option value="A-1-a">A-1-a · GW/GP – Pedregulho bem graduado</option>
+              <option value="A-1-b">A-1-b · SW/SP – Areia com pedregulho</option>
+              <option value="A-2-4">A-2-4 · GM/SM – Areia siltosa (LL ≤ 40, IP ≤ 10)</option>
+              <option value="A-2-5">A-2-5 · GM/SM – Areia siltosa (LL > 40, IP ≤ 10)</option>
+              <option value="A-2-6">A-2-6 · GC/SC – Areia argilosa (LL ≤ 40, IP > 10)</option>
+              <option value="A-2-7">A-2-7 · GC/SC – Areia argilosa (LL > 40, IP > 10)</option>
+              <option value="A-3">A-3 · SP – Areia fina uniforme</option>
+            </optgroup>
+            <optgroup label="── Solos finos siltosos (HRB A-4 e A-5) ──">
+              <option value="A-4">A-4 · ML/OL – Silte de baixa plasticidade</option>
+              <option value="A-5">A-5 · MH/OH – Silte elástico / alta plasticidade</option>
+            </optgroup>
+            <optgroup label="── Solos finos argilosos (HRB A-6 e A-7) ──">
+              <option value="A-6">A-6 · CL – Argila de baixa plasticidade</option>
+              <option value="A-7-5">A-7-5 · MH – Argila siltosa elástica</option>
+              <option value="A-7-6" selected>A-7-6 · CH – Argila argilosa laterítica</option>
+            </optgroup>
+            <optgroup label="── Solos orgânicos / turfas ──">
+              <option value="A-8">A-8 · Pt – Turfa / solo orgânico altamente compressível</option>
+            </optgroup>
+            <optgroup label="── Solos tropicais / regionais ──">
+              <option value="LAd">LAd · Latossolo Amarelo distrófico</option>
+              <option value="LVd">LVd · Latossolo Vermelho distrófico</option>
+              <option value="LVAd">LVAd · Latossolo Vermelho-Amarelo distrófico</option>
+              <option value="RQ">RQ · Neossolo Quartzarênico (areia quartzosa)</option>
+              <option value="RY">RY · Neossolo Flúvico (solo aluvial)</option>
+              <option value="GX">GX · Gleissolo (solo hidromórfico)</option>
+              <option value="OX">OX · Organossolo (turfoso / orgânico)</option>
+            </optgroup>
+          </select>
+        </div>
+        <!-- Painel descritivo do solo selecionado -->
+        <div class="solo-info" id="soloInfo">Selecione um tipo de solo para ver suas características.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Ensaios de suporte</div>
+        <div class="grid2">
+          <div class="field"><label>CBR / ISC (%)</label><input id="cbr" type="number" value="8" min="1" max="100" step="0.1" oninput="updateSoloTag()"/></div>
+          <div class="field"><label>Módulo resiliente MR (MPa)</label><input id="mr" type="number" value="80" min="10" step="1"/></div>
+        </div>
+        <div class="field"><label>Expansão (%)</label><input id="expansao" type="number" value="0.5" min="0" step="0.01"/></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Caracterização geotécnica</div>
+        <div class="grid2">
+          <div class="field"><label>LL – Limite de liquidez (%)</label><input id="ll" type="number" value="35" min="0" step="0.1"/></div>
+          <div class="field"><label>IP – Índice de plasticidade (%)</label><input id="ip" type="number" value="12" min="0" step="0.1"/></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Umidade ótima (%)</label><input id="umidade" type="number" value="14" min="0" step="0.1"/></div>
+          <div class="field"><label>Coeficiente de Poisson</label><input id="poisson" type="number" value="0.35" min="0.1" max="0.5" step="0.01"/></div>
+        </div>
+        <div class="field"><label>Observações do solo</label><textarea id="obsSolo">Solo compactado a 100% PN. Verificar sazonalidade de umidade e variações do lençol freático.</textarea></div>
+      </div>
+    </div>
+
+    <!-- ── ABA 3: TRÁFEGO ──────────────────────────────────────────────────── -->
+    <div id="tab-trafego" class="tab-content" style="display:none">
+      <div class="section">
+        <div class="section-title">Contagem classificada</div>
+        <div class="grid2">
+          <div class="field"><label>VDM total (veíc/dia)</label><input id="vdm" type="number" value="12000" min="0" step="1" oninput="recalcN()"/></div>
+          <div class="field"><label>Veículos comerciais (%)</label><input id="pesados" type="number" value="18" min="0" max="100" step="0.1" oninput="recalcN()"/></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Crescimento anual (%)</label><input id="crescimento" type="number" value="3.0" min="0" step="0.1" oninput="recalcN()"/></div>
+          <div class="field"><label>FEC – Fator equiv. de carga</label><input id="fec" type="number" value="2.5" min="0.1" step="0.1" oninput="recalcN()"/></div>
+        </div>
+        <div class="field"><label>FC – Fator climático/sazonal</label><input id="fc" type="number" value="1.0" min="0.5" max="2.0" step="0.05" oninput="recalcN()"/></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Número N calculado</div>
+        <div class="calc-box" id="nCalcBox">
+          <div class="calc-label">RESULTADO — NÚMERO N (ESAL)</div>
+          <div class="calc-value" id="nCalcValue">—</div>
+          <div class="calc-formula" id="nCalcFormula">Preencha os dados de tráfego para calcular.</div>
+        </div>
+        <div class="field"><label>Ou informe N manualmente (sobrescreve o calculado)</label><input id="numeroN" type="number" value="" step="1" placeholder="Deixe em branco para usar o calculado"/></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Observações</div>
+        <div class="field"><textarea id="obs">Tráfego misto: ônibus urbanos, caminhões 2 eixos e combinações. Contagem realizada nos dias úteis.</textarea></div>
+      </div>
+    </div>
+
+    <!-- ── ABA 4: CUSTO ────────────────────────────────────────────────────── -->
+    <div id="tab-custo" class="tab-content" style="display:none">
+      <div class="section">
+        <div class="section-title">Custos unitários (R$/m³)</div>
+        <div class="field"><label>Revestimento asfáltico (CBUQ)</label><input id="custoRev"      type="number" value="950"  min="0" step="1"/></div>
+        <div class="field"><label>Placa de concreto</label>            <input id="custoConcreto" type="number" value="1100" min="0" step="1"/></div>
+        <div class="field"><label>Base granular / BGS</label>          <input id="custoBase"     type="number" value="260"  min="0" step="1"/></div>
+        <div class="field"><label>Sub-base granular</label>            <input id="custoSub"      type="number" value="180"  min="0" step="1"/></div>
+        <div class="field"><label>Reforço / solo estabilizado</label>  <input id="custoRef"      type="number" value="220"  min="0" step="1"/></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Encargos e complementos</div>
+        <div class="grid2">
+          <div class="field"><label>BDI (%)</label>                <input id="bdi"         type="number" value="25"  min="0"  max="50" step="0.1"/></div>
+          <div class="field"><label>Imprimação (R$/m²)</label>     <input id="imprimacao"  type="number" value="3.5" min="0"           step="0.1"/></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Pintura de ligação (R$/m²)</label><input id="pinturaLig"  type="number" value="2.0" min="0" step="0.1"/></div>
+          <div class="field"><label>Compactação (R$/m³)</label>       <input id="compactacao" type="number" value="18"  min="0" step="1"/></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Ciclo de vida</div>
+        <div class="grid2">
+          <div class="field"><label>Intervalo manutenção (anos)</label><input id="interMnt" type="number" value="5"  min="1" step="1"/></div>
+          <div class="field"><label>Custo manutenção (R$/m²)</label>   <input id="custoMnt" type="number" value="18" min="0" step="1"/></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTÕES (sempre visíveis) -->
+    <div class="btn-row">
+      <button class="btn-primary"    onclick="dimensionar()">▶ DIMENSIONAR</button>
+      <button class="btn-secondary"  onclick="abrirOrcamentoDetalhado()">▦ ORÇAMENTO DETALHADO</button>
+      <button class="btn-secondary"  onclick="exportarPdfRelatorio()">⎙ PDF</button>
+      <button class="btn-secondary"  onclick="limpar()">✕ LIMPAR</button>
+    </div>
+  </div><!-- /sidebar -->
+
+  <!-- ═══ CONTENT ════════════════════════════════════════════════════════════ -->
+  <div class="content" id="mainContent">
+    <div class="empty-state">
+      <div class="empty-icon">⬡</div>
+      <div class="empty-text">
+        Preencha os parâmetros nas abas à esquerda<br>
+        e clique em <strong>DIMENSIONAR</strong>
+      </div>
+    </div>
+  </div>
+</div><!-- /workspace -->
+
+<!-- ══════════════════════════ JAVASCRIPT ════════════════════════════════════ -->
+<script>
+const REPORT_LEGAL_NOTICE = 'Este relatório foi gerado automaticamente pelo sistema e possui caráter auxiliar. Os resultados devem ser obrigatoriamente conferidos por profissional legalmente habilitado. A responsabilidade técnica pelo projeto estrutural, pela verificação dos resultados e pelo atendimento às normas técnicas é exclusiva do engenheiro responsável.';
+
+// ─── BANCO DE SOLOS ───────────────────────────────────────────────────────────
+const SOLOS = {
+  // ── GRANULARES ─────────────────────────────────────────────────────────────
+  'A-1-a': {
+    desc: 'Pedregulho bem graduado com ou sem finos. Excelente material de subleito e base quando compactado.',
+    cbr_tipico: [60, 80], mr_tipico: [200, 350], poisson: 0.30,
+    expansao: 0.1, ll_max: null, ip_max: 6,
+    reforco_recom: false,
+    fator_soporte: 0.55,  // multiplicador sobre espessuras base (< 1 = solo melhor → menos espessura)
+    alertas: [],
+    cor_hrb: '#b45309'
+  },
+  'A-1-b': {
+    desc: 'Areia com pedregulho, bem graduada, pouco ou sem finos. Boa capacidade de suporte.',
+    cbr_tipico: [40, 65], mr_tipico: [150, 280], poisson: 0.30,
+    expansao: 0.1, ll_max: null, ip_max: 6,
+    reforco_recom: false, fator_soporte: 0.62,
+    alertas: [],
+    cor_hrb: '#b45309'
+  },
+  'A-2-4': {
+    desc: 'Areia siltosa de baixa plasticidade. Comportamento satisfatório como subleito se bem compactada.',
+    cbr_tipico: [20, 45], mr_tipico: [100, 200], poisson: 0.33,
+    expansao: 0.3, ll_max: 40, ip_max: 10,
+    reforco_recom: false, fator_soporte: 0.80,
+    alertas: ['Verificar estabilidade em presença de água.'],
+    cor_hrb: '#d97706'
+  },
+  'A-2-5': {
+    desc: 'Areia siltosa com LL elevado. Comportamento variável com umidade; requer atenção à compactação.',
+    cbr_tipico: [15, 35], mr_tipico: [80, 170], poisson: 0.33,
+    expansao: 0.5, ll_max: null, ip_max: 10,
+    reforco_recom: false, fator_soporte: 0.90,
+    alertas: ['Risco de colapso higroscópico. Controlar umidade de compactação.'],
+    cor_hrb: '#d97706'
+  },
+  'A-2-6': {
+    desc: 'Areia argilosa de baixa plasticidade. Pode apresentar expansão moderada.',
+    cbr_tipico: [10, 30], mr_tipico: [70, 150], poisson: 0.35,
+    expansao: 0.8, ll_max: 40, ip_max: null,
+    reforco_recom: false, fator_soporte: 1.05,
+    alertas: ['Controlar IP. Verificar expansão por emborrachamento.'],
+    cor_hrb: '#f59e0b'
+  },
+  'A-2-7': {
+    desc: 'Areia argilosa de alta plasticidade. Subleito marginal; exige atenção especial à drenagem.',
+    cbr_tipico: [6, 20], mr_tipico: [50, 120], poisson: 0.36,
+    expansao: 1.0, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 1.20,
+    alertas: ['Alta variação de volume com umidade. Reforço de subleito recomendado.'],
+    cor_hrb: '#f59e0b'
+  },
+  'A-3': {
+    desc: 'Areia fina uniforme, sem plasticidade. Pouca coesão; dificuldade de compactação.',
+    cbr_tipico: [15, 35], mr_tipico: [80, 180], poisson: 0.28,
+    expansao: 0.1, ll_max: null, ip_max: 0,
+    reforco_recom: false, fator_soporte: 0.85,
+    alertas: ['Solo não coesivo: risco de liquefação e erosão por sucção. Usar geotêxtil.'],
+    cor_hrb: '#fcd34d'
+  },
+  // ── SILTOSOS ───────────────────────────────────────────────────────────────
+  'A-4': {
+    desc: 'Silte de baixa plasticidade (ML/OL). Suscetível à erosão e ao emborrachamento.',
+    cbr_tipico: [3, 10], mr_tipico: [35, 80], poisson: 0.38,
+    expansao: 0.5, ll_max: 40, ip_max: 10,
+    reforco_recom: true, fator_soporte: 1.50,
+    alertas: ['Risco de emborrachamento sob tráfego. Drenagem subterrânea essencial.'],
+    cor_hrb: '#78716c'
+  },
+  'A-5': {
+    desc: 'Silte elástico (MH/OH). Alta compressibilidade e expansão; subleito ruim.',
+    cbr_tipico: [2, 8], mr_tipico: [20, 60], poisson: 0.40,
+    expansao: 1.5, ll_max: null, ip_max: 10,
+    reforco_recom: true, fator_soporte: 1.70,
+    alertas: ['Expansão elevada. Reforço ou estabilização química obrigatórios.', 'CBR muito baixo: avaliar substituição de solo.'],
+    cor_hrb: '#a8a29e'
+  },
+  // ── ARGILOSOS ──────────────────────────────────────────────────────────────
+  'A-6': {
+    desc: 'Argila de baixa a média plasticidade (CL). Subleito comum; requer bom controle de compactação.',
+    cbr_tipico: [4, 12], mr_tipico: [40, 100], poisson: 0.38,
+    expansao: 0.8, ll_max: 40, ip_max: null,
+    reforco_recom: false, fator_soporte: 1.25,
+    alertas: ['Controlar umidade e grau de compactação. Sensível à variação sazonal.'],
+    cor_hrb: '#ef4444'
+  },
+  'A-7-5': {
+    desc: 'Argila siltosa elástica (MH). Alta compressibilidade e deformação permanente.',
+    cbr_tipico: [3, 8], mr_tipico: [30, 70], poisson: 0.40,
+    expansao: 1.2, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 1.55,
+    alertas: ['Deformação permanente elevada. MeDiNa recomendado para verificação mecânica.', 'Reforço de subleito geralmente necessário.'],
+    cor_hrb: '#dc2626'
+  },
+  'A-7-6': {
+    desc: 'Argila plástica laterítica (CH). Solo muito comum no Brasil. Alta plasticidade e expansão.',
+    cbr_tipico: [3, 12], mr_tipico: [35, 90], poisson: 0.40,
+    expansao: 1.5, ll_max: null, ip_max: null,
+    reforco_recom: false, fator_soporte: 1.30,  // laterítico pode ter CBR razoável
+    alertas: ['Verificar se é laterítico ou argiloso não-laterítico: comportamento bem diferente.'],
+    cor_hrb: '#b91c1c'
+  },
+  'A-8': {
+    desc: 'Turfa / solo orgânico altamente compressível. Inadequado como subleito sem tratamento.',
+    cbr_tipico: [0, 2], mr_tipico: [5, 20], poisson: 0.45,
+    expansao: 3.0, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 3.00,
+    alertas: ['SOLO INADEQUADO: substituição ou estabilização profunda obrigatória.', 'Recalques diferenciados e altíssima compressibilidade.', 'Solicitar laudo geotécnico específico.'],
+    cor_hrb: '#4b5563'
+  },
+  // ── TROPICAIS ──────────────────────────────────────────────────────────────
+  'LAd': {
+    desc: 'Latossolo Amarelo distrófico. Textura argilosa a muito argilosa, poroso, bem drenado. Comportamento geotécnico geralmente bom apesar da alta fração argila.',
+    cbr_tipico: [6, 20], mr_tipico: [80, 180], poisson: 0.35,
+    expansao: 0.3, ll_max: null, ip_max: null,
+    reforco_recom: false, fator_soporte: 1.05,
+    alertas: ['Classificação MCT pode indicar comportamento laterítico (LA ou LA\'). Verificar.'],
+    cor_hrb: '#d97706'
+  },
+  'LVd': {
+    desc: 'Latossolo Vermelho distrófico. Textura argilosa, óxidos de ferro, boa drenagem. Frequente em planaltos brasileiros.',
+    cbr_tipico: [8, 25], mr_tipico: [90, 200], poisson: 0.34,
+    expansao: 0.3, ll_max: null, ip_max: null,
+    reforco_recom: false, fator_soporte: 0.95,
+    alertas: ['Comportamento laterítico: apesar do IP elevado, expansão geralmente baixa.'],
+    cor_hrb: '#b45309'
+  },
+  'LVAd': {
+    desc: 'Latossolo Vermelho-Amarelo distrófico. Textura variável. Propriedades intermediárias entre LV e LA.',
+    cbr_tipico: [6, 18], mr_tipico: [70, 160], poisson: 0.35,
+    expansao: 0.4, ll_max: null, ip_max: null,
+    reforco_recom: false, fator_soporte: 1.00,
+    alertas: ['Verificar granulometria: perfis mais arenosos têm comportamento distinto.'],
+    cor_hrb: '#ca8a04'
+  },
+  'RQ': {
+    desc: 'Neossolo Quartzarênico (areia quartzosa). Baixa coesão, alta permeabilidade, subleito fraco.',
+    cbr_tipico: [3, 10], mr_tipico: [30, 80], poisson: 0.28,
+    expansao: 0.1, ll_max: null, ip_max: 0,
+    reforco_recom: true, fator_soporte: 1.40,
+    alertas: ['Risco de erosão interna e piping. Geotêxtil não-tecido recomendado.', 'Compactação difícil. Verificar umidade ótima de campo.'],
+    cor_hrb: '#fde68a'
+  },
+  'RY': {
+    desc: 'Neossolo Flúvico (solo aluvial). Sedimentos recentes de várzea; heterogêneo e instável.',
+    cbr_tipico: [2, 8], mr_tipico: [20, 60], poisson: 0.40,
+    expansao: 1.0, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 1.80,
+    alertas: ['Lençol freático geralmente próximo. Drenagem subterrânea essencial.', 'Heterogeneidade pode causar recalques diferenciados.'],
+    cor_hrb: '#6b7280'
+  },
+  'GX': {
+    desc: 'Gleissolo (solo hidromórfico). Saturação frequente; baixa capacidade de suporte.',
+    cbr_tipico: [1, 5], mr_tipico: [15, 40], poisson: 0.42,
+    expansao: 2.0, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 2.20,
+    alertas: ['Solo saturado. Rebaixamento do lençol imprescindível antes da obra.', 'Risco de recalques. Ensaios de adensamento recomendados.'],
+    cor_hrb: '#0d9488'
+  },
+  'OX': {
+    desc: 'Organossolo turfoso. Alta matéria orgânica, compressibilidade extrema; impróprio como subleito.',
+    cbr_tipico: [0, 2], mr_tipico: [5, 15], poisson: 0.45,
+    expansao: 4.0, ll_max: null, ip_max: null,
+    reforco_recom: true, fator_soporte: 3.50,
+    alertas: ['SOLO IMPRÓPRIO: substituição total ou aterro sobre estacas necessário.', 'Recalques por compressão secundária por décadas.', 'Solicitar laudo de geotécnica especializada.'],
+    cor_hrb: '#292524'
+  }
+};
+
+// ─── UI ───────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const num = id => parseFloat($(id) && $(id).value) || 0;
+const txt = id => $(id) ? ($(id).value || '') : '';
+
+function fmt(n, d=2) { return n.toLocaleString('pt-BR', {minimumFractionDigits:d, maximumFractionDigits:d}); }
+function fmtInt(n) { return Math.round(n).toLocaleString('pt-BR'); }
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  $('tab-' + name).style.display = 'block';
+  document.querySelector(`[data-tab="${name}"]`).classList.add('active');
+}
+
+// ─── SOLO: ao trocar o tipo ───────────────────────────────────────────────────
+function onSoloChange() {
+  const key = txt('tipoSolo');
+  const s = SOLOS[key];
+  if (!s) { $('soloInfo').textContent = ''; return; }
+
+  // Preencher valores típicos nos campos
+  const cbrMid = Math.round((s.cbr_tipico[0] + s.cbr_tipico[1]) / 2);
+  const mrMid  = Math.round((s.mr_tipico[0]  + s.mr_tipico[1])  / 2);
+  $('cbr').value     = cbrMid;
+  $('mr').value      = mrMid;
+  $('poisson').value = s.poisson;
+  $('expansao').value = s.expansao;
+  if (s.ll_max) $('ll').value = s.ll_max - 5;
+  if (s.ip_max && s.ip_max > 0) $('ip').value = Math.min(s.ip_max - 1, 15);
+
+  // Painel descritivo
+  const alertasHtml = s.alertas.length
+    ? `<br><strong>Atenções:</strong><br>` + s.alertas.map(a => `• ${a}`).join('<br>')
+    : '';
+  $('soloInfo').innerHTML =
+    `<strong>${key} — ${s.desc.split('.')[0]}.</strong>` +
+    `<br>CBR típico: ${s.cbr_tipico[0]}–${s.cbr_tipico[1]}% &nbsp;|&nbsp; MR típico: ${s.mr_tipico[0]}–${s.mr_tipico[1]} MPa` +
+    alertasHtml;
+
+  updateSoloTag();
+}
+
+function updateSoloTag() {
+  // nada adicional necessário por enquanto
+}
+
+// ─── NÚMERO N ─────────────────────────────────────────────────────────────────
+function calcularN() {
+  const vdm = num('vdm'), p = num('pesados')/100, t = num('vida');
+  const i = num('crescimento')/100, fec = num('fec'), fc = num('fc');
+  const fd = num('distribFaixa')/100;
+  if (!vdm || !t) return null;
+  const fg = i > 0 ? ((Math.pow(1+i, t) - 1) / i) : t;
+  const N  = vdm * p * fec * 365 * fg * fd * fc;
+  return { N, fg, vdm, p, fec, fc, fd, t, i };
+}
+
+function recalcN() {
+  const r = calcularN();
+  if (!r) return;
+  const {N, vdm, p, fec, fg, fc, fd, t, i} = r;
+  $('nCalcValue').textContent = fmtInt(N);
+  $('nCalcFormula').textContent =
+    `N = VDM × %com × FEC × 365 × FG × Fd × Fc\n` +
+    `N = ${fmtInt(vdm)} × ${fmt(p*100,0)}% × ${fmt(fec,2)} × 365 × ${fmt(fg,3)} × ${fmt(fd,2)} × ${fmt(fc,2)}\n` +
+    `FG = [(1+${fmt(i*100,1)}%)^${t} − 1] / ${fmt(i*100,1)}% = ${fmt(fg,3)}`;
+}
+
+// ─── FATOR DO SOLO para ajuste de espessuras ─────────────────────────────────
+function getSoloFator(cbr) {
+  // Fator empírico base (DNER) + ajuste pelo tipo de solo selecionado
+  const key = txt('tipoSolo');
+  const s = SOLOS[key];
+  const fatorBase = Math.max(0.50, Math.min(2.20, 10 / Math.max(cbr, 1)));
+  const fatorTipo = s ? s.fator_soporte : 1.0;
+  return fatorBase * fatorTipo;
+}
+
+// ─── MÉTODOS DE DIMENSIONAMENTO ───────────────────────────────────────────────
+const METODOS = {
+  DNER: {
+    nome: 'DNER/DNIT – Método empírico do CBR',
+    norma: 'DNIT 667/2024-ME (ex DNER-PRO 011/79); Método do CBR / Método de Projeto de Pavimentos Flexíveis',
+    equacao: 'Ábaco de espessura total Hm, H20, Hn = f(N, CBR) + equivalência estrutural (R·Kr + B·Kb + h20·Ks ≥ H)',
+    calc(cbr, n, vida, mr, conf) {
+      const Habaco = (CBR) => 77.67 * Math.pow(Math.max(n, 1e4), 0.0482)
+                                    * Math.pow(Math.max(CBR, 2), -0.598);
+      const Im   = Math.max(cbr, 2);
+      const Isb  = 20;
+      const Ib   = 80;
+      const Hm  = Habaco(Im);
+      const H20 = Habaco(Isb);
+      const Hn  = Habaco(Ib);
+
+      let Rmin, revDesc;
+      if      (n <= 1e6)  { Rmin = 2.5;  revDesc = 'Tratamento superficial betuminoso'; }
+      else if (n <= 5e6)  { Rmin = 5.0;  revDesc = 'Revestimento betuminoso 5,0 cm'; }
+      else if (n <= 1e7)  { Rmin = 7.5;  revDesc = 'Concreto betuminoso 7,5 cm'; }
+      else if (n <= 5e7)  { Rmin = 10.0; revDesc = 'Concreto betuminoso 10,0 cm'; }
+      else                { Rmin = 12.5; revDesc = 'Concreto betuminoso 12,5 cm'; }
+
+      const Kr = 2.00;
+      const Kb = 1.00;
+      const Ks = 1.00;
+
+      let rev = Rmin;
+      let base = (H20 - rev * Kr) / Kb;
+      base = Math.max(base, 15);
+      base = Math.ceil(base);
+
+      let sub = (Hm - rev * Kr - base * Kb) / Ks;
+      sub = Math.max(sub, 15);
+      sub = Math.ceil(sub);
+
+      let refor = 0;
+      if (cbr < 2) refor = 20;
+      else if (cbr < 3) refor = 15;
+
+      const memorial = [
+        `N = ${fmtInt(n)}  |  CBR subleito = ${cbr}%`,
+        'Espessura total pelo ábaco H = 77,67·N^0,0482·CBR^(−0,598):',
+        `  • Hm  (sobre subleito, CBR=${Im}%)  = ${Hm.toFixed(1)} cm`,
+        `  • H20 (sobre sub-base, CBR=20%)      = ${H20.toFixed(1)} cm`,
+        `  • Hn  (sobre base, CBR=80%)          = ${Hn.toFixed(1)} cm`,
+        `Espessura mínima de revestimento (tabela de N): R = ${Rmin.toFixed(1)} cm — ${revDesc}`,
+        `Coeficientes de equivalência estrutural: Kr=${Kr.toFixed(2)} (CAUQ); Kb=${Kb.toFixed(2)} (base granular); Ks=${Ks.toFixed(2)} (sub-base granular)`,
+        `Base: R·Kr + B·Kb ≥ H20 → B = ⌈(H20 − R·Kr)/Kb⌉ = ⌈(${H20.toFixed(1)} − ${(rev*Kr).toFixed(1)})/${Kb.toFixed(2)}⌉ = ${base} cm`,
+        `Sub-base: R·Kr + B·Kb + h20·Ks ≥ Hm → h20 = ⌈(Hm − R·Kr − B·Kb)/Ks⌉ = ${sub} cm`,
+        refor>0 ? `Reforço do subleito: ${refor} cm (CBR < 3%)` : 'Reforço dispensado (CBR ≥ 3%)',
+        'Nota: método empírico — não considera módulo de resiliência (MR). Materiais granulares na base/sub-base só se justificam quando houver carência de solos com boas características na região da obra.'
+      ];
+      return { rev, base, sub, refor, memorial };
+    }
+  },
+  MEDINA: {
+    nome: 'MeDiNa – Mecanístico-Empírico',
+    norma: 'DNIT MeDiNa 2020; critérios fadiga e deformação permanente',
+    equacao: 'εt ≤ εt,adm (fadiga); εv ≤ εv,adm (rutting)',
+    calc(cbr, n, vida, mr, conf) {
+      const logN = Math.log10(Math.max(n, 1e4));
+      const sf   = getSoloFator(cbr);
+      const mrFat = Math.max(0.7, Math.min(1.4, 80 / Math.max(mr, 1)));
+      let rev   = 5 + 1.2 * (logN - 5);
+      let base  = 14 * sf * mrFat + 1.5 * (logN - 5);
+      let sub   = 12 * sf;
+      let refor = cbr < 6 ? 12 : 0;
+      const et_adm = Math.pow(n / 1.1e-4, -1/4.84) * 1e-4;
+      const ev_adm = 0.0008 * Math.pow(mr, -0.36);
+      const memorial = [
+        `MR subleito = ${mr} MPa → Fator MR = ${mrFat.toFixed(3)}`,
+        `Fator solo (tipo ${txt('tipoSolo')}) = ${sf.toFixed(3)}`,
+        `εt,adm (fadiga) ≈ ${(et_adm*1e6).toFixed(1)} µε`,
+        `εv,adm (rutting) ≈ ${(ev_adm*1e6).toFixed(1)} µε`,
+        `Revestimento ≈ ${rev.toFixed(1)} cm`,
+        `Base ≈ ${base.toFixed(1)} cm; Sub-base ≈ ${sub.toFixed(1)} cm`,
+        `Nota: simplificação paramétrica. Usar AEAP mecanístico completo em projeto.`
+      ];
+      return { rev, base, sub, refor, memorial };
+    }
+  },
+  AASHTO: {
+    nome: 'AASHTO 1993 – Número Estrutural SN',
+    norma: 'AASHTO Guide for Design of Pavement Structures, 1993',
+    equacao: 'log(W₁₈)=ZR×S₀+9,36×log(SN+1)−0,20+log(ΔPSI/2,7)/(0,4+1094/(SN+1)^5.19)+2,32×log(MR)−8,07',
+    calc(cbr, n, vida, mr, conf) {
+      const zr = conf>=99?-2.327:conf>=95?-1.645:conf>=90?-1.282:conf>=85?-1.037:-0.674;
+      const s0 = 0.45;
+      const dpsi = 4.2 - 2.5;
+      const mrPsi = mr * 145.0377;
+      let SN = 3.0;
+      for (let k=0; k<200; k++) {
+        const rhs = zr*s0 + 9.36*Math.log10(SN+1) - 0.20
+          + Math.log10(dpsi/2.7)/(0.4 + 1094/Math.pow(SN+1,5.19))
+          + 2.32*Math.log10(mrPsi) - 8.07;
+        const err = rhs - Math.log10(Math.max(n,1e4));
+        SN -= err * 0.20;
+        if (Math.abs(err) < 0.0001) break;
+      }
+      SN = Math.max(1.5, Math.min(7, SN));
+      const a1 = 0.44, a2 = 0.14, a3 = 0.11, m2 = 1.0, m3 = 1.0;
+      const IN2CM = 2.54;
+      let revCm = Math.max(5, 6 + 1.3*(Math.log10(Math.max(n,1e4))-5));
+      let D1 = revCm / IN2CM;
+      let SN1 = a1 * D1;
+      let SNrest = Math.max(0, SN - SN1);
+      let D2 = SNrest / (a2 * m2);
+      let baseCm = Math.min(30, Math.max(15, D2 * IN2CM));
+      D2 = baseCm / IN2CM;
+      let SN2 = a2 * m2 * D2;
+      let SN3rem = Math.max(0, SN - SN1 - SN2);
+      let D3 = SN3rem / (a3 * m3);
+      let subCm = Math.min(40, Math.max(15, D3 * IN2CM));
+      let rev = revCm, base = baseCm, sub = subCm;
+      let refor = cbr < 5 ? 18 : 0;
+      const memorial = [
+        `ZR (conf ${conf}%) = ${zr.toFixed(3)};  S₀ = ${s0};  ΔPSI = ${dpsi.toFixed(1)}`,
+        `MR subleito = ${mr} MPa = ${fmtInt(mrPsi)} psi (AASHTO usa MR em psi)`,
+        `SN dimensionado (iterativo) = ${SN.toFixed(2)}`,
+        'Coef. estruturais: a₁=0,44 (CA); a₂=0,14 (base); a₃=0,11 (sub-base); m₂=m₃=1,0',
+        'SN = a₁·D₁ + a₂·m₂·D₂ + a₃·m₃·D₃  (D em polegadas)',
+        `D₁(rev)=${D1.toFixed(2)}" → SN₁=${SN1.toFixed(2)}; base=${baseCm.toFixed(1)} cm → SN₂=${SN2.toFixed(2)}`,
+        `SN remanescente para a sub-base = ${SN3rem.toFixed(2)} → sub-base = ${subCm.toFixed(1)} cm`,
+        SN3rem/(a3*m3)*IN2CM > 40 ? 'Atenção: o SN exige sub-base > 40 cm — avaliar reforço, estabilização ou aumento de MR.' : `Revestimento = ${rev.toFixed(1)} cm; Base = ${base.toFixed(1)} cm; Sub-base = ${sub.toFixed(1)} cm`
+      ];
+      return { rev, base, sub, refor, sn: SN, memorial };
+    }
+  },
+  ASPHALT: {
+    nome: 'Asphalt Institute – Thickness Design',
+    norma: 'MS-1 / MS-2 Asphalt Institute',
+    equacao: 'hCA = k₁ × N^k₂ × MR^k₃',
+    calc(cbr, n, vida, mr, conf) {
+      const logN = Math.log10(Math.max(n, 1e4));
+      const mrPsi = mr * 145.0377;
+      let Ta = 6.0 + 8.5*(logN - 5) - 4.0*(Math.log10(Math.max(mrPsi,1000)) - 3.7);
+      Ta = Math.max(12, Math.min(45, Ta));
+      let rev  = Math.max(7.5, Math.min(20, 5 + 2.0*(logN-5)));
+      const TaRest = Math.max(0, Ta - rev);
+      let base = Math.max(15, Math.min(25, TaRest * 2.0 * 0.55));
+      let sub  = Math.max(15, TaRest * 2.7 * 0.45);
+      let refor = cbr < 5 ? 15 : 0;
+      const memorial = [
+        `MR subleito = ${mr} MPa = ${fmtInt(mrPsi)} psi`,
+        `Espessura total equivalente (CA full-depth) Ta = ${Ta.toFixed(1)} cm`,
+        `Ta = 6,0 + 8,5·(logN−5) − 4,0·(log(MR_psi)−3,7), logN=${logN.toFixed(2)}`,
+        `Revestimento asfáltico adotado = ${rev.toFixed(1)} cm`,
+        'Substituição do CA restante por granulares (1 cm de CA ≈ 2 cm de base ≈ 2,7 cm de sub-base):',
+        `Base ≈ ${base.toFixed(1)} cm; Sub-base ≈ ${sub.toFixed(1)} cm`,
+        'Nota: usar nomogramas/ábacos MS-1 (full-depth e emulsão) no projeto executivo.'
+      ];
+      return { rev, base, sub, refor, memorial };
+    }
+  },
+  PCA: {
+    nome: 'PCA – Pavimento Rígido',
+    norma: 'PCA "Thickness Design for Concrete Highways", 1984',
+    equacao: 'Placa de concreto: fadiga + erosão',
+    calc(cbr, n, vida, mr, conf) {
+      const logN  = Math.log10(Math.max(n, 1e4));
+      const sf    = getSoloFator(cbr);
+      let placa   = 16 + 2.2*(logN-5) + (cbr<5?3:0);
+      placa = Math.max(16, Math.min(34, Math.round(placa)));
+      let sub   = Math.round(cbr < 6 ? 18 : 15);
+      let refor = cbr < 5 ? 20 : 0;
+      const memorial = [
+        `Placa de concreto: t = 16 + 2,2×(logN−5) + ajuste CBR`,
+        `log₁₀(N) = ${logN.toFixed(3)} → placa = ${placa} cm`,
+        `Fator solo (tipo ${txt('tipoSolo')}) = ${sf.toFixed(3)}`,
+        `Sub-base = ${sub} cm`,
+        cbr<5 ? `Reforço de subleito: 20 cm (CBR < 5%)` : `Reforço dispensado (CBR ≥ 5%)`
+      ];
+      return { rigido:true, placa, sub, refor, memorial };
+    }
+  },
+  FAA: {
+    nome: 'FAA – Aeroportuário',
+    norma: 'AC 150/5370-10H (FAA) + ICAO Aerodrome Design Manual',
+    equacao: 'CBR/tráfego aeronáutico (empírico FAA)',
+    calc(cbr, n, vida, mr, conf) {
+      const logN = Math.log10(Math.max(n, 1e4));
+      const sf   = getSoloFator(cbr);
+      let rev   = 8 + 1.5*(logN-5);
+      let base  = 22 * sf;
+      let sub   = 25 * sf;
+      let refor = cbr < 6 ? 20 : 0;
+      const memorial = [
+        `Método FAA empírico — CBR e tráfego de aeronaves`,
+        `Fator solo (tipo ${txt('tipoSolo')}) = ${sf.toFixed(3)}`,
+        `Revestimento = 8 + 1,5×(logN−5) = ${rev.toFixed(1)} cm`,
+        `Base = 22×fs = ${base.toFixed(1)} cm; Sub-base = 25×fs = ${sub.toFixed(1)} cm`,
+        `Nota: para pistas executivas usar COMFAA 3.0.`
+      ];
+      return { rev, base, sub, refor, memorial };
+    }
+  }
+};
+
+// ─── MONTAR CAMADAS ───────────────────────────────────────────────────────────
+function calcularEstrutura(mid, tipo, cbr, n, vida, mr, conf) {
+  const m = METODOS[mid];
+  if (!m) return null;
+  const r = m.calc(cbr, n, vida, mr, conf);
+
+  const CORES = { rev:'#374151', placa:'#94a3b8', base:'#9a3412', sub:'#b45309', refor:'#166534', subleito:'#92400e' };
+
+  if (!r.rigido) {
+    if (tipo==='semirrigido')   { r.base *= 0.85; r.rev += 1; }
+    if (tipo==='intertravado')  { r.rev = 8; r.base = Math.max(r.base||0, 18); r.sub = Math.max(r.sub||0, 15); }
+    if (tipo==='aeroportuario') { r.rev = Math.max(r.rev||0, 10); r.base = Math.max(r.base||0, 25); }
+    if (tipo==='industrial')    { r.base = Math.max(r.base||0, 20); r.sub = Math.max(r.sub||0, 18); }
+    r.rev   = Math.max(2.5, Math.round((r.rev||0)*2)/2);
+    r.base  = Math.max(12, Math.round(r.base||0));
+    r.sub   = Math.max(10, Math.round(r.sub||0));
+    r.refor = Math.round(r.refor||0);
+  } else {
+    r.placa = Math.round(r.placa);
+    r.sub   = Math.round(r.sub);
+    r.refor = Math.round(r.refor||0);
+  }
+
+  const soloKey = txt('tipoSolo');
+  const soloDesc = soloKey || txt('classificacao') || 'Subleito natural';
+
+  let camadas = [];
+  if (r.rigido) {
+    camadas = [
+      { nome:'Placa de concreto', mat:'Concreto CCP – fck ≥ 35 MPa / fctk ≥ 4,5 MPa', esp:r.placa, mod:'MR 4000–5500 MPa', fn:'Resistência à flexo-tração, distribuição de cargas', cor:CORES.placa },
+      { nome:'Sub-base', mat:'Brita graduada, CCR ou BGTC', esp:r.sub, mod:'MR 250–600 MPa; k>54 MPa/m', fn:'Apoio uniforme, anti-bombeamento', cor:CORES.sub }
+    ];
+    if (r.refor>0) camadas.push({ nome:'Reforço do subleito', mat:'Solo selecionado ou cimento-solo', esp:r.refor, mod:'CBR≥10%', fn:'Melhorar suporte e uniformidade', cor:CORES.refor });
+  } else {
+    const matRev  = tipo==='intertravado' ? 'Bloco intertravado de concreto' : tipo==='semirrigido' ? 'CBUQ sobre camada cimentada' : 'CBUQ / CAP 50-70 / SMA';
+    const matBase = tipo==='semirrigido' ? 'Solo-cimento / BGTC / RCC' : 'Brita graduada simples – Faixa B/C DNIT';
+    camadas = [
+      { nome:'Revestimento', mat:matRev,  esp:r.rev,  mod:'MR 2000–8000 MPa; RT>0,8 MPa', fn:'Resistência à fadiga, impermeabilização, rolamento', cor:CORES.rev },
+      { nome:'Base',         mat:matBase, esp:r.base, mod:'MR 300–800 MPa; IS>0,7', fn:'Distribuição de tensões, capacidade estrutural', cor:CORES.base },
+      { nome:'Sub-base',     mat:'Brita corrida, macadame ou solo-brita', esp:r.sub, mod:'MR 150–400 MPa', fn:'Transição estrutural, drenagem interna', cor:CORES.sub }
+    ];
+    if (r.refor>0) camadas.push({ nome:'Reforço do subleito', mat:'Solo selecionado / estabilizado', esp:r.refor, mod:'CBR≥CBR subleito+3%', fn:'Elevar suporte, reduzir espessuras', cor:CORES.refor });
+  }
+
+  camadas.push({ nome:'Subleito', mat:`${soloKey} – ${soloDesc}`, esp:0, mod:`CBR ${cbr}% / MR ${mr} MPa`, fn:'Fundação natural do pavimento', cor:CORES.subleito });
+  const total = camadas.filter(c=>c.esp>0).reduce((s,c)=>s+c.esp,0);
+  return { camadas, total, memorial:r.memorial, sn:r.sn };
+}
+
+// ─── ALERTAS ─────────────────────────────────────────────────────────────────
+function getAlertas(cbr, mr, n, vida, total) {
+  const soloKey = txt('tipoSolo');
+  const solo = SOLOS[soloKey];
+  const items = [];
+
+  if (cbr < 3) items.push({tipo:'danger', msg:'CBR muito baixo (< 3%). Recomenda-se estabilização química ou substituição de solo.'});
+  if (cbr >= 3 && cbr < 6) items.push({tipo:'warn', msg:'CBR baixo (3–6%). Atenção à drenagem, compactação e reforço do subleito.'});
+  if (mr < 50) items.push({tipo:'warn', msg:'Módulo resiliente reduzido (< 50 MPa). Verificar ensaios laboratoriais e sazonalidade.'});
+  if (n > 1e7) items.push({tipo:'warn', msg:'Tráfego elevado (N > 10⁷). Recomenda-se método mecanístico completo.'});
+  if (vida < 10) items.push({tipo:'warn', msg:'Vida útil < 10 anos. Justificar tecnicamente. Pode indicar solução provisória.'});
+  if (total > 80) items.push({tipo:'warn', msg:'Estrutura espessa (> 80 cm). Avaliar alternativas estabilizadas.'});
+  if (num('expansao') > 1.5) items.push({tipo:'danger', msg:'Expansão do solo > 1,5%. Risco de levantamento do pavimento. Tratar subleito.'});
+
+  if (solo) {
+    solo.alertas.forEach(a => items.push({tipo:'warn', msg:`[${soloKey}] ${a}`}));
+    if (solo.reforco_recom && cbr < 10) items.push({tipo:'warn', msg:`Tipo ${soloKey}: reforço de subleito frequentemente necessário para este solo.`});
+  }
+
+  if (items.length === 0) items.push({tipo:'ok', msg:'Parâmetros dentro das faixas normais. Valide com ensaios e método normativo oficial.'});
+  return items;
+}
+
+// ─── CUSTO ───────────────────────────────────────────────────────────────────
+function calcCusto(camadas, area, custos) {
+  return camadas.filter(c=>c.esp>0).reduce((tot, c) => {
+    const vol = area * c.esp / 100;
+    let unit = custos.sub;
+    if (c.nome.includes('Revestimento') || c.nome.includes('Bloco')) unit = custos.rev;
+    else if (c.nome.includes('Placa')) unit = custos.concreto;
+    else if (c.nome === 'Base') unit = custos.base;
+    else if (c.nome.includes('Sub-base')) unit = custos.sub;
+    else unit = custos.ref;
+    return tot + vol * unit;
+  }, 0);
+}
+
+// ─── COMPARAÇÃO ───────────────────────────────────────────────────────────────
+function renderComparacao(tipo, cbr, n, vida, mr, conf, custos, area) {
+  const mids = Object.keys(METODOS);
+  const results = mids.map(mid => {
+    const r = calcularEstrutura(mid, tipo, cbr, n, vida, mr, conf);
+    if (!r) return null;
+    return { mid, nome:METODOS[mid].nome.split('–')[0].trim(), total:r.total, custo:calcCusto(r.camadas,area,custos) };
+  }).filter(Boolean).sort((a,b)=>a.total-b.total);
+
+  const maxT   = Math.max(...results.map(r=>r.total), 1);
+  const minC   = Math.min(...results.map(r=>r.custo));
+  const barCols = ['#1d4e7c','#2a6496','#8b3a2a','#b45309','#166534','#374151'];
+
+  let html = `<div class="comp-row comp-header"><div>MÉTODO</div><div>ESPESSURA TOTAL</div><div style="text-align:right">cm</div><div style="text-align:right">CUSTO DIR.</div><div style="text-align:center">NOTA</div></div>`;
+
+  results.forEach((r,i) => {
+    const pct = (r.total/maxT)*100;
+    let badge = i===0 ? `<span class="badge badge-gold">↓ menor esp.</span>` :
+                r.custo===minC ? `<span class="badge badge-green">↓ menor custo</span>` :
+                `<span class="badge badge-blue">#${i+1}</span>`;
+    html += `<div class="comp-row">
+      <div class="comp-label">${r.nome}</div>
+      <div><div class="comp-bar-wrap"><div class="comp-bar" style="width:${pct}%;background:${barCols[i%barCols.length]}"></div></div></div>
+      <div class="comp-val">${r.total} cm</div>
+      <div class="comp-cost">R$ ${fmt(r.custo/1000,0)}k</div>
+      <div class="comp-rank">${badge}</div>
+    </div>`;
+  });
+  return html;
+}
+
+// ─── CHARTS ──────────────────────────────────────────────────────────────────
+function drawBar(id, labels, values, colors, title) {
+  const canvas = $(id); if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#f7f5f2'; ctx.fillRect(0,0,W,H);
+
+  const maxV = Math.max(...values,1)*1.25, ml=50,mr2=16,mt=36,mb=38;
+  const cW=W-ml-mr2, cH=H-mt-mb;
+  const bW=(cW/labels.length)*0.6;
+
+  ctx.fillStyle='#6b6560'; ctx.font='11px IBM Plex Mono,monospace'; ctx.textAlign='left';
+  ctx.fillText(title, ml, 22);
+
+  for(let i=0;i<=4;i++){
+    const y=mt+cH-(i/4)*cH;
+    ctx.strokeStyle='#d4cec5'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(ml,y); ctx.lineTo(W-mr2,y); ctx.stroke();
+    ctx.fillStyle='#6b6560'; ctx.font='9px IBM Plex Mono,monospace';
+    ctx.textAlign='right'; ctx.fillText(Math.round(maxV*i/4), ml-4, y+3);
+  }
+
+  labels.forEach((lb,i)=>{
+    const x = ml + i*(cW/labels.length) + (cW/labels.length-bW)/2;
+    const bH=(values[i]/maxV)*cH, y=mt+cH-bH;
+    ctx.fillStyle=colors[i]||'#1d4e7c';
+    ctx.beginPath(); ctx.roundRect(x,y,bW,bH,[3,3,0,0]); ctx.fill();
+    ctx.fillStyle='#1e2433'; ctx.textAlign='center';
+    ctx.font='bold 10px IBM Plex Mono,monospace';
+    ctx.fillText(Math.round(values[i])+'cm', x+bW/2, y-5);
+    ctx.fillStyle='#6b6560'; ctx.font='9px IBM Plex Mono,monospace';
+    ctx.fillText(lb, x+bW/2, mt+cH+16);
+  });
+  ctx.textAlign='left';
+}
+
+function drawTensoes(id, total) {
+  const canvas=$(id); if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#f7f5f2'; ctx.fillRect(0,0,W,H);
+
+  const ml=58,mt=36,mr2=16,mb=38, cW=W-ml-mr2, cH=H-mt-mb;
+  ctx.fillStyle='#6b6560'; ctx.font='11px IBM Plex Mono,monospace';
+  ctx.fillText('Distribuição conceitual de tensões × profundidade (normalizada)', ml,22);
+
+  ctx.strokeStyle='#b8b0a4'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(ml,mt); ctx.lineTo(ml,mt+cH); ctx.lineTo(ml+cW,mt+cH); ctx.stroke();
+
+  ctx.beginPath();
+  for(let i=0;i<=200;i++){
+    const x=ml+(i/200)*cW;
+    const y=mt+cH-Math.exp(-3.5*(i/200))*cH;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle='#1d4e7c'; ctx.lineWidth=2.5; ctx.stroke();
+
+  ctx.beginPath();
+  for(let i=0;i<=200;i++){
+    const x=ml+(i/200)*cW;
+    const y=mt+cH-Math.exp(-3.5*(i/200))*cH;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.lineTo(ml+cW,mt+cH); ctx.lineTo(ml,mt+cH); ctx.closePath();
+  ctx.fillStyle='rgba(29,78,124,0.07)'; ctx.fill();
+
+  ctx.fillStyle='#6b6560'; ctx.font='9px IBM Plex Mono,monospace';
+  ctx.fillText('σ/σ₀', ml-40, mt+4);
+  ctx.fillText('Superfície', ml+3, mt+cH-5);
+  ctx.textAlign='right';
+  ctx.fillText('Prof. ≈ '+total+' cm', ml+cW, mt+cH-5);
+  ctx.textAlign='left';
+}
+
+// ─── MEMORIAL ─────────────────────────────────────────────────────────────────
+function gerarMemorial(resultado, camadas, total, custo, area, n, nCalcObj) {
+  const mid  = txt('metodo');
+  const m    = METODOS[mid];
+  const agora= new Date().toLocaleString('pt-BR');
+  const vida = num('vida');
+  const cbr  = num('cbr');
+  const mr   = num('mr');
+  const bdi  = num('bdi')/100;
+  const soloKey = txt('tipoSolo');
+  const s    = SOLOS[soloKey];
+
+  const L = [];
+  const add = (t, cls) => L.push(`<span class="${cls||''}">${t}</span>`);
+  const br = () => L.push('');
+
+  add('══════════════════════════════════════════════════════════════════','mem-section');
+  add('  MEMORIAL DESCRITIVO E DE CÁLCULO — DIMENSIONAMENTO DE PAVIMENTO','mem-section');
+  add('══════════════════════════════════════════════════════════════════','mem-section');
+  br();
+  add('AVISO RESUMIDO DE RESPONSABILIDADE TÉCNICA','mem-section');
+  add(`   ${REPORT_LEGAL_NOTICE}`,'mem-obs');
+  br();
+  add('1. IDENTIFICAÇÃO');
+  add(`   Empreendimento : ${txt('obra')}`);
+  add(`   Trecho/Local   : ${txt('trecho')}`);
+  add(`   Município/UF   : ${txt('municipio')}/${txt('uf')}`);
+  add(`   Responsável    : ${txt('responsavel')}`);
+  add(`   Data/Hora      : ${agora}`);
+  br();
+  add('2. REFERÊNCIAS TÉCNICAS E NORMATIVAS','mem-section');
+  add(`   Método adotado         : ${m.nome}`);
+  add(`   Base normativa         : ${m.norma}`);
+  add(`   Expressão de cálculo   : ${m.equacao}`,'mem-eq');
+  br();
+  add('3. PARÂMETROS GEOTÉCNICOS DO SUBLEITO','mem-section');
+  add(`   Classificação HRB/SUCS : ${soloKey}`,'mem-eq');
+  if(s) {
+    add(`   Faixa típica de CBR   : ${s.cbr_tipico[0]}–${s.cbr_tipico[1]}%`,'mem-obs');
+    add(`   Faixa típica de MR    : ${s.mr_tipico[0]}–${s.mr_tipico[1]} MPa`,'mem-obs');
+    add(`   Fator de suporte      : ${s.fator_soporte.toFixed(3)} (ajuste de espessura pelo tipo de solo)`,'mem-eq');
+    add(`   Descrição geotécnica  : ${s.desc}`,'mem-obs');
+    if(s.alertas.length) {
+      add(`   Atenções técnicas     :`,'mem-obs');
+      s.alertas.forEach(a => add(`   • ${a}`,'mem-obs'));
+    }
+  }
+  add(`   CBR adotado           : ${cbr}%`,'mem-result');
+  add(`   MR adotado            : ${mr} MPa`,'mem-result');
+  add(`   Expansão              : ${num('expansao')}% | IP: ${num('ip')}% | LL: ${num('ll')}%`);
+  add(`   Coeficiente de Poisson: ${num('poisson')}`);
+  br();
+  add('4. PARÂMETROS DE PROJETO','mem-section');
+  add(`   Tipo de pavimento  : ${txt('tipo')}`);
+  add(`   Vida útil          : ${vida} anos`);
+  add(`   Confiabilidade     : ${num('confiabilidade')}%`);
+  br();
+  add('5. TRÁFEGO DE PROJETO E NÚMERO N','mem-section');
+  if(nCalcObj && !num('numeroN')) {
+    add(`   VDM = ${fmtInt(num('vdm'))} veíc/dia; comerciais = ${num('pesados')}%`);
+    add(`   Crescimento = ${num('crescimento')}% a.a.; Período = ${vida} anos`);
+    add(`   FG = ${nCalcObj.fg.toFixed(4)}; FEC = ${num('fec')}; Fd = ${(num('distribFaixa')/100).toFixed(2)}; Fc = ${num('fc')}`,'mem-eq');
+    add(`   N = VDM × %com × FEC × 365 × FG × Fd × Fc`,'mem-eq');
+    add(`   N = ${fmtInt(nCalcObj.N)}`,'mem-result');
+  } else {
+    add(`   Número N informado manualmente = ${fmtInt(n)}`,'mem-result');
+  }
+  add(`   Número N adotado = ${fmtInt(n)}`,'mem-result');
+  br();
+  add('6. MEMORIAL DE DIMENSIONAMENTO DO MÉTODO','mem-section');
+  resultado.memorial.forEach(l => add(`   ${l}`,'mem-eq'));
+  if(resultado.sn) add(`   SN dimensionado = ${resultado.sn.toFixed(2)}`,'mem-result');
+  br();
+  add('7. ESTRUTURA DIMENSIONADA','mem-section');
+  camadas.forEach(c => {
+    if(c.esp>0) add(`   ▪ ${c.nome.padEnd(22)} ${(c.esp+' cm').padStart(7)}  ${c.mat}`,'mem-result');
+    else        add(`   ▪ ${c.nome.padEnd(22)} ${'fundação'.padStart(7)}  ${c.mat}`,'mem-obs');
+  });
+  add(`   ─────────────────────────────────────────────────────────────`);
+  add(`   Espessura total: ${total} cm`,'mem-result');
+  br();
+  add('8. QUANTITATIVOS E CUSTOS','mem-section');
+  add(`   Área: ${fmt(area,2)} m²  (${num('largura')} m × ${num('extensao')} km × 1000)`);
+  camadas.filter(c=>c.esp>0).forEach(c=>add(`   ▪ ${c.nome.padEnd(22)} ${fmt(area*c.esp/100,1)} m³`));
+  add(`   Custo direto: R$ ${fmt(custo,2)}`,'mem-result');
+  add(`   BDI (${num('bdi')}%):     R$ ${fmt(custo*bdi,2)}`);
+  add(`   Total c/ BDI: R$ ${fmt(custo*(1+bdi),2)}`,'mem-result');
+  add(`   Custo por m²: R$ ${fmt(custo*(1+bdi)/Math.max(area,1),2)}`,'mem-result');
+  br();
+  add('9. RECOMENDAÇÕES TÉCNICAS','mem-section');
+  add(`   • Verificar as condições de drenagem superficial e subsuperficial.`,'mem-obs');
+  add(`   • Confirmar os parâmetros do subleito por ensaios representativos de campo e laboratório.`,'mem-obs');
+  add(`   • Validar o Número N com contagem classificada, composição de tráfego e fatores de equivalência de carga.`,'mem-obs');
+  add(`   • Compatibilizar os materiais especificados para base e sub-base com a disponibilidade local e a faixa de aplicação do método adotado.`,'mem-obs');
+  add(`   • Este memorial tem caráter preliminar e não substitui projeto executivo assinado por profissional habilitado.`,'mem-obs');
+  br();
+  add('10. OBSERVAÇÕES DO PROJETISTA','mem-section');
+  add(`   ${txt('obs')}`,'mem-obs');
+  br();
+  add('══════════════════════════════════════════════════════════════════','mem-section');
+
+  return L.join('\n');
+}
+
+// ─── DIMENSIONAR PRINCIPAL ────────────────────────────────────────────────────
+function dimensionar() {
+  const mid  = txt('metodo');
+  const tipo = txt('tipo');
+  const cbr  = num('cbr');
+  const mr   = num('mr');
+  const vida = num('vida');
+  const conf = num('confiabilidade');
+  const largura   = num('largura');
+  const extensao  = num('extensao');
+  const area = largura * extensao * 1000;
+
+  const nCalcObj = calcularN();
+  const manualN  = num('numeroN');
+  const N = manualN > 0 ? manualN : (nCalcObj ? nCalcObj.N : 5e6);
+
+  const custos = {
+    rev:num('custoRev'), concreto:num('custoConcreto'),
+    base:num('custoBase'), sub:num('custoSub'), ref:num('custoRef')
+  };
+
+  const resultado = calcularEstrutura(mid, tipo, cbr, N, vida, mr, conf);
+  if(!resultado) return;
+
+  const { camadas, total } = resultado;
+  const custo = calcCusto(camadas, area, custos);
+  const bdi   = num('bdi')/100;
+  const custoBdi  = custo * (1+bdi);
+  const imprimacao = num('imprimacao') * area;
+  const pinturaLig = num('pinturaLig') * area;
+  const compactVol = camadas.filter(c=>c.esp>0).reduce((s,c)=>s+area*c.esp/100,0);
+  const compactacao = num('compactacao') * compactVol;
+  const custoTotal = custo + imprimacao + pinturaLig + compactacao;
+  const nMnt = Math.floor(vida / Math.max(num('interMnt'),1));
+  const custoCiclo = custoTotal + nMnt * num('custoMnt') * area;
+
+  const alertasItems = getAlertas(cbr, mr, N, vida, total);
+
+  // ── Seção transversal ──────────────────────────────────────────────────────
+  const comEsp = camadas.filter(c=>c.esp>0);
+  const totalEsp = comEsp.reduce((s,c)=>s+c.esp,0);
+  const layerViz = `<div class="pavement-viz">
+    ${camadas.map(c => {
+      const h = c.esp>0 ? Math.max(30, Math.round(c.esp/totalEsp*190)+30) : 30;
+      const textCol = (c.nome==='Revestimento') ? '#fff' : '#1a1a1a';
+      return `<div class="layer-bar" style="background:${c.cor};min-height:${h}px;color:${textCol}">
+        <div><div class="layer-name">${c.nome}</div><div class="layer-mat">${c.mat}</div></div>
+        <div><div class="layer-thick">${c.esp>0?c.esp+' cm':'fund.'}</div><div class="layer-mod" style="color:${c.nome==='Revestimento'?'rgba(255,255,255,0.65)':'rgba(0,0,0,0.45)'}">${c.mod}</div></div>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  // ── Tabela de camadas ──────────────────────────────────────────────────────
+  const tabelaCamadas = `<table>
+    <thead><tr><th>Camada</th><th>Material</th><th>Esp.</th><th>Módulo/parâmetro</th><th>Função estrutural</th></tr></thead>
+    <tbody>${camadas.map(c=>`<tr>
+      <td><span style="display:inline-block;width:9px;height:9px;background:${c.cor};border-radius:2px;margin-right:6px;vertical-align:middle"></span>${c.nome}</td>
+      <td>${c.mat}</td>
+      <td style="font-family:var(--mono);font-weight:600">${c.esp>0?c.esp+' cm':'—'}</td>
+      <td style="font-family:var(--mono);font-size:11px">${c.mod}</td>
+      <td style="color:var(--muted)">${c.fn}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+
+  // ── Info solo ──────────────────────────────────────────────────────────────
+  const soloKey = txt('tipoSolo');
+  const soloData = SOLOS[soloKey];
+  const soloChip = soloData
+    ? `<span style="font-family:var(--mono);font-size:10px;background:var(--terra-dim);border:1px solid rgba(139,58,42,0.25);color:var(--terracota);padding:2px 8px;border-radius:99px;margin-left:8px">${soloKey}</span>` : '';
+
+  const comparacaoHtml = renderComparacao(tipo, cbr, N, vida, mr, conf, custos, area);
+  const memorialHtml   = gerarMemorial(resultado, camadas, total, custo, area, N, nCalcObj);
+
+  // Dados para gráfico de barras
+  const cNames = comEsp.map(c=>c.nome.split(' ')[0]);
+  const cEsps  = comEsp.map(c=>c.esp);
+  const cCols  = comEsp.map(c=>c.cor);
+
+  // Eco breakdown
+  const ecoLines = [];
+  comEsp.forEach(c=>{
+    let u = custos.sub;
+    if(c.nome.includes('Revestimento')||c.nome.includes('Bloco')) u=custos.rev;
+    else if(c.nome.includes('Placa')) u=custos.concreto;
+    else if(c.nome==='Base') u=custos.base;
+    else if(c.nome.includes('Sub-base')) u=custos.sub;
+    else u=custos.ref;
+    ecoLines.push({nome:c.nome, val:fmt(area*c.esp/100*u,0)});
+  });
+  ecoLines.push({nome:'Imprimação', val:fmt(imprimacao,0)});
+  ecoLines.push({nome:'Pintura de ligação', val:fmt(pinturaLig,0)});
+  ecoLines.push({nome:'Compactação', val:fmt(compactacao,0)});
+
+  // ── HTML FINAL ─────────────────────────────────────────────────────────────
+  $('mainContent').innerHTML = `
+  <!-- KPIs -->
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="kpi-label">MÉTODO ADOTADO</div>
+      <div class="kpi-value" style="font-size:13px;margin-top:5px">${METODOS[mid].nome.split('–')[0].trim()}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">NÚMERO N / ESAL</div>
+      <div class="kpi-value">${fmtInt(N)}</div>
+      <div class="kpi-sub">${nCalcObj&&!num('numeroN')?'calculado':'informado'}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">ESPESSURA TOTAL</div>
+      <div class="kpi-value">${total} cm</div>
+      <div class="kpi-sub">${comEsp.length} camadas</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">CUSTO TOTAL (c/ BDI)</div>
+      <div class="kpi-value" style="font-size:17px;color:var(--terracota)">R$ ${fmt(custoBdi/1000,1)}k</div>
+      <div class="kpi-sub">R$ ${fmt(custoBdi/area,2)}/m²</div>
+    </div>
+  </div>
+
+  <!-- SOLO INFO BANNER -->
+  ${soloData ? `<div class="card" style="border-left:3px solid var(--terracota);padding:12px 16px;margin-bottom:14px">
+    <div style="display:flex;align-items:flex-start;gap:14px">
+      <div style="flex:1">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--terracota);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px">SOLO DE SUBLEITO${soloChip}</div>
+        <div style="font-size:12px;color:var(--text)">${soloData.desc}</div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px">CBR típico: ${soloData.cbr_tipico[0]}–${soloData.cbr_tipico[1]}% &nbsp;|&nbsp; MR típico: ${soloData.mr_tipico[0]}–${soloData.mr_tipico[1]} MPa &nbsp;|&nbsp; Fator de suporte: ${soloData.fator_soporte.toFixed(2)}</div>
+      </div>
+    </div>
+  </div>` : ''}
+
+  <!-- ALERTAS -->
+  <div style="margin-bottom:14px">${alertasItems.map(it=>`<div class="alert alert-${it.tipo}"><div class="alert-icon">${it.tipo==='ok'?'✓':it.tipo==='warn'?'△':'✕'}</div><div>${it.msg}</div></div>`).join('')}</div>
+
+  <!-- SEÇÃO + TABELA -->
+  <div style="display:grid;grid-template-columns:210px 1fr;gap:14px;margin-bottom:14px">
+    <div>
+      <div class="card-title" style="font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">Seção transversal</div>
+      ${layerViz}
+    </div>
+    <div>
+      <div class="card-title" style="font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">Camadas dimensionadas</div>
+      ${tabelaCamadas}
+    </div>
+  </div>
+
+  <!-- GRÁFICOS -->
+  <div class="card">
+    <div class="card-title">Gráficos técnicos</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <canvas id="graficoBarras"  width="400" height="210"></canvas>
+      <canvas id="graficoTensoes" width="400" height="210"></canvas>
+    </div>
+  </div>
+
+  <!-- COMPARAÇÃO -->
+  <div class="card">
+    <div class="card-title">Comparação entre métodos</div>
+    ${comparacaoHtml}
+    <p style="font-size:11px;color:var(--muted);margin-top:10px">* Custos estimados com os mesmos parâmetros de entrada e tipo de solo, sem BDI.</p>
+  </div>
+
+  <!-- ANÁLISE ECONÔMICA -->
+  <div class="card">
+    <div class="card-title">Análise econômica</div>
+    <div class="eco-grid">
+      <div class="eco-card">
+        <div class="eco-card-label">CUSTO DIRETO — SEM BDI</div>
+        <div class="eco-card-value" style="color:var(--accent)">R$ ${fmt(custo,2)}</div>
+        <div style="margin-top:10px">${ecoLines.map(l=>`<div class="eco-line"><span class="eco-line-name">${l.nome}</span><span class="eco-line-val">R$ ${l.val}</span></div>`).join('')}</div>
+      </div>
+      <div class="eco-card">
+        <div class="eco-card-label">CUSTOS POR EXTENSÃO</div>
+        <div class="eco-card-value" style="color:var(--terracota)">R$ ${fmt(custoTotal/Math.max(extensao,0.01)/1000,1)}k/km</div>
+        <div style="margin-top:10px">
+          <div class="eco-line"><span class="eco-line-name">Custo total s/ BDI</span><span class="eco-line-val">R$ ${fmt(custoTotal,0)}</span></div>
+          <div class="eco-line"><span class="eco-line-name">BDI (${num('bdi')}%)</span><span class="eco-line-val">R$ ${fmt(custoTotal*bdi,0)}</span></div>
+          <div class="eco-line"><span class="eco-line-name">Total com BDI</span><span class="eco-line-val" style="font-weight:600">R$ ${fmt(custoTotal*(1+bdi),0)}</span></div>
+          <div class="eco-line"><span class="eco-line-name">Por m²</span><span class="eco-line-val">R$ ${fmt(custoTotal*(1+bdi)/area,2)}</span></div>
+          <div class="eco-line"><span class="eco-line-name">Ciclo de vida ${vida} anos</span><span class="eco-line-val" style="color:var(--warn)">R$ ${fmt(custoCiclo,0)}</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MEMORIAL -->
+  <div class="card">
+    <div class="card-title">Memória de cálculo técnica</div>
+    <div class="memorial">${memorialHtml}</div>
+  </div>`;
+
+  requestAnimationFrame(() => {
+    drawBar('graficoBarras', cNames, cEsps, cCols, 'Espessura por camada (cm)');
+    drawTensoes('graficoTensoes', total);
+  });
+}
+
+// ─── LIMPAR ───────────────────────────────────────────────────────────────────
+function limpar() {
+  $('mainContent').innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-text">Preencha os parâmetros nas abas à esquerda<br>e clique em <strong>DIMENSIONAR</strong></div></div>`;
+}
+
+function exportarPdfRelatorio() {
+  window.print();
+}
+
+function getOrcaSmartBridge() {
+  return {
+    API: window.parent && window.parent.API,
+    Modal: window.parent && window.parent.Modal,
+    Toast: window.parent && window.parent.Toast,
+    Utils: window.parent && window.parent.Utils,
+    parentDoc: window.parent && window.parent.document,
+    parentWindow: window.parent || window
+  };
+}
+
+function ufOptions(selected) {
+  const ufs = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+  return ufs.map(uf => `<option value="${uf}" ${String(selected || '').toUpperCase() === uf ? 'selected' : ''}>${uf}</option>`).join('');
+}
+
+function htmlEsc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function currentPavimentoPayload() {
+  const mid  = txt('metodo');
+  const tipo = txt('tipo');
+  const cbr  = num('cbr');
+  const mr   = num('mr');
+  const vida = num('vida');
+  const conf = num('confiabilidade');
+  const largura = num('largura');
+  const extensao = num('extensao');
+  const nCalcObj = calcularN();
+  const manualN = num('numeroN');
+  const esalProjeto = manualN > 0 ? manualN : (nCalcObj ? nCalcObj.N : 5e6);
+  const resultado = calcularEstrutura(mid, tipo, cbr, esalProjeto, vida, mr, conf);
+  if (!resultado || !resultado.camadas || !resultado.camadas.length) return null;
+  return {
+    ctx: {
+      obra: txt('obra'),
+      trecho: txt('trecho'),
+      municipio: txt('municipio'),
+      uf: txt('uf'),
+      responsavel: txt('responsavel'),
+      tipo,
+      metodo: mid,
+      cbr,
+      mr,
+      poisson: num('poisson'),
+      ip: num('ip'),
+      ll: num('ll'),
+      solo: txt('tipoSolo') || txt('classificacao') || 'Subleito natural',
+      esalManual: manualN,
+      esalCalculado: nCalcObj ? nCalcObj.N : 0,
+      esalProjeto,
+      origemEsal: manualN > 0 ? 'Manual' : 'Calculado por VDM',
+      vida,
+      vdm: num('vdm'),
+      pesados: num('pesados'),
+      crescimento: num('crescimento'),
+      feq: num('fec'),
+      fd: num('distribFaixa') / 100,
+      ff: 1,
+      fc: num('fc'),
+      confiabilidade: conf,
+      largura,
+      extensao,
+      area: largura * extensao * 1000,
+      bdi: num('bdi'),
+      obs: txt('obs')
+    },
+    camadas: resultado.camadas
+  };
+}
+
+async function abrirOrcamentoDetalhado() {
+  dimensionar();
+  const bridge = getOrcaSmartBridge();
+  const { API, Modal, Toast, parentDoc } = bridge;
+  if (!API || !Modal || !Toast || !parentDoc) {
+    alert('Abra esta calculadora pelo OrçaSmart para gerar o orçamento detalhado.');
+    return;
+  }
+  const payloadBase = currentPavimentoPayload();
+  if (!payloadBase) {
+    Toast.warning('Dimensione o pavimento antes de gerar o orçamento detalhado.');
+    return;
+  }
+  let obras = [];
+  let datas = [];
+  try {
+    const [obrasResp, datasResp] = await Promise.all([
+      API.obras.list('', ''),
+      API.datasBase.list(),
+    ]);
+    obras = Array.isArray(obrasResp) ? obrasResp : (obrasResp.items || []);
+    datas = Array.isArray(datasResp) ? datasResp : (datasResp.items || []);
+  } catch (e) {
+    Toast.error('Não foi possível carregar obras e datas-base: ' + (e.message || e));
+    return;
+  }
+  if (!obras.length) {
+    Toast.warning('Cadastre uma obra antes de gerar o orçamento detalhado.');
+    return;
+  }
+  const dataOptions = datas.map(d => {
+    const label = `${String(d.mes).padStart(2, '0')}/${d.ano}${d.descricao ? ' - ' + d.descricao : ''}`;
+    return `<option value="${d.id_data_base}">${htmlEsc(label)}</option>`;
+  }).join('');
+  const obraOptions = obras.map(o => {
+    const uf = o.uf ? `/${o.uf}` : '';
+    return `<option value="${o.id_obra}" data-uf="${htmlEsc(o.uf || '')}">${htmlEsc((o.nome_obra || 'Obra sem nome') + uf)}</option>`;
+  }).join('');
+  Modal.open({
+    title: 'Gerar orçamento detalhado de pavimentação',
+    size: 'modal-lg',
+    body: `
+      <div style="display:grid;gap:12px">
+        <p class="text-sm text-2">O orçamento será criado no módulo Orçamento Sintético com as camadas dimensionadas nesta calculadora.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label>Obra de destino
+            <select class="form-control" id="pavBudgetObra">${obraOptions}</select>
+          </label>
+          <label>Fonte de composições
+            <select class="form-control" id="pavBudgetFonte">
+              <option value="SICRO">SICRO</option>
+              <option value="SINAPI">SINAPI</option>
+            </select>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <label>UF
+            <select class="form-control" id="pavBudgetUf">${ufOptions(payloadBase.ctx.uf)}</select>
+          </label>
+          <label>Data-base
+            <select class="form-control" id="pavBudgetData">${dataOptions || '<option value="">Sem data-base</option>'}</select>
+          </label>
+          <label>BDI (%)
+            <input class="form-control" id="pavBudgetBdi" type="number" min="0" step="0.01" value="${payloadBase.ctx.bdi || 0}">
+          </label>
+        </div>
+        <label>Regime previdenciário
+          <select class="form-control" id="pavBudgetRegime">
+            <option value="Onerado">Onerado</option>
+            <option value="Desonerado">Desonerado</option>
+          </select>
+        </label>
+        <div style="border:1px solid #a7f3d0;background:#ecfdf5;color:#065f46;border-radius:8px;padding:10px 12px;font-size:.84rem">
+          A seleção das composições será feita automaticamente por ranqueamento técnico de descrições, fonte, UF, data-base e unidade.
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${payloadBase.camadas.filter(c => c.esp > 0).map(c => `<span style="border:1px solid #d1d5db;background:#f8fafc;border-radius:999px;padding:4px 9px;font-size:.76rem">${htmlEsc(c.nome)}: ${fmt(c.esp, 1)} cm</span>`).join('')}
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="btn btn-ghost" id="pavBudgetCancel">Cancelar</button>
+      <button class="btn btn-primary" id="pavBudgetGenerate">Gerar orçamento</button>
+    `,
+  });
+  setTimeout(() => {
+    const obraSel = parentDoc.getElementById('pavBudgetObra');
+    const ufSel = parentDoc.getElementById('pavBudgetUf');
+    const syncUf = () => {
+      const opt = obraSel?.selectedOptions?.[0];
+      if (opt?.dataset.uf) ufSel.value = opt.dataset.uf;
+    };
+    syncUf();
+    obraSel?.addEventListener('change', syncUf);
+    parentDoc.getElementById('pavBudgetCancel')?.addEventListener('click', () => Modal.close());
+    parentDoc.getElementById('pavBudgetGenerate')?.addEventListener('click', gerarOrcamentoDetalhado);
+  }, 80);
+}
+
+async function gerarOrcamentoDetalhado() {
+  const bridge = getOrcaSmartBridge();
+  const { API, Modal, Toast, parentDoc, parentWindow } = bridge;
+  const payloadBase = currentPavimentoPayload();
+  const btn = parentDoc.getElementById('pavBudgetGenerate');
+  const original = btn?.innerHTML;
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Gerando...'; }
+  try {
+    const payload = {
+      id_obra: Number(parentDoc.getElementById('pavBudgetObra')?.value || 0),
+      fonte: parentDoc.getElementById('pavBudgetFonte')?.value || 'SICRO',
+      uf_referencia: parentDoc.getElementById('pavBudgetUf')?.value || payloadBase.ctx.uf || '',
+      id_data_base: Number(parentDoc.getElementById('pavBudgetData')?.value || 0) || null,
+      bdi_percentual: Number(parentDoc.getElementById('pavBudgetBdi')?.value || 0),
+      regime_previdenciario: parentDoc.getElementById('pavBudgetRegime')?.value || 'Onerado',
+      ctx: payloadBase.ctx,
+      camadas: payloadBase.camadas,
+    };
+    const res = await API.pavimentos.gerarOrcamento(payload);
+    Modal.close();
+    const aviso = res.avisos?.length ? ` ${res.avisos.length} aviso(s) de composição.` : '';
+    Toast.success(`Orçamento detalhado gerado com ${res.total_itens} item(ns).${aviso}`);
+    parentWindow.sessionStorage.setItem('osSintId', res.id_orcamento);
+    parentWindow.location.hash = 'orcamento-sintetico';
+  } catch (e) {
+    Toast.error(e.message || String(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
+  }
+}
+
+function mostrarAvisoResponsabilidade() {
+  const modal = document.getElementById('licenseModal');
+  const accept = document.getElementById('licenseAccept');
+  const button = document.getElementById('licenseContinue');
+  const error = document.getElementById('licenseError');
+  if (!modal || !accept || !button) return;
+
+  document.body.classList.add('license-locked');
+  modal.classList.add('show');
+  accept.checked = false;
+  button.disabled = true;
+  if (error) error.textContent = '';
+  setTimeout(() => modal.querySelector('.license-text')?.focus(), 80);
+}
+
+function liberarSistemaAposAviso() {
+  const modal = document.getElementById('licenseModal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  document.body.classList.remove('license-locked');
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+recalcN();
+onSoloChange();
+['vdm','pesados','crescimento','fec','fc','vida','distribFaixa'].forEach(id => {
+  const el = $(id);
+  if(el) el.addEventListener('input', recalcN);
+});
+
+(function initStartupScreen() {
+  const screen = document.getElementById('startupScreen');
+  const percent = document.getElementById('startupPercent');
+  if (!screen || !percent) return;
+  const duration = 2800;
+  const delay = 900;
+  const start = performance.now() + delay;
+  let finished = false;
+  function finishStartup() {
+    if (finished) return;
+    finished = true;
+    screen.classList.add('hide');
+    setTimeout(mostrarAvisoResponsabilidade, 420);
+  }
+  function tick(now) {
+    const progress = Math.max(0, Math.min(1, (now - start) / duration));
+    percent.textContent = `${Math.round(progress * 100)}%`;
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+      return;
+    }
+    setTimeout(finishStartup, 350);
+  }
+  requestAnimationFrame(tick);
+  screen.addEventListener('click', finishStartup);
+})();
+
+(function initAvisoResponsabilidade() {
+  const accept = document.getElementById('licenseAccept');
+  const button = document.getElementById('licenseContinue');
+  const error = document.getElementById('licenseError');
+  if (!accept || !button) return;
+  accept.addEventListener('change', () => {
+    button.disabled = !accept.checked;
+    if (error) error.textContent = '';
+  });
+  button.addEventListener('click', () => {
+    if (!accept.checked) {
+      if (error) error.textContent = 'Marque a confirmação para prosseguir.';
+      return;
+    }
+    liberarSistemaAposAviso();
+  });
+})();
+</script>
+</body>
+</html>
