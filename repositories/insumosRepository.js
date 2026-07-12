@@ -130,6 +130,7 @@ const selectPreco = `
   LEFT JOIN unidades_medida um ON i.id_unidade = um.id_unidade`;
 
 async function ensureSchema(db) {
+  const mysqlRuntime = String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
   const hasMainInsumos = await tableExists(db, 'insumos');
   if (hasMainInsumos) {
     const insCols = new Set((await all(db, 'PRAGMA table_info(insumos)')).map(c => c.name));
@@ -152,7 +153,7 @@ async function ensureSchema(db) {
     for (const sql of indexes) await run(db, sql);
   }
 
-  if (hasMainInsumos) {
+  if (hasMainInsumos && !mysqlRuntime) {
     const indexes = [
       'CREATE INDEX IF NOT EXISTS idx_insumos_tipo_desc ON insumos(tipo_insumo, descricao)',
       'CREATE INDEX IF NOT EXISTS idx_insumos_origem_desc ON insumos(origem, descricao)',
