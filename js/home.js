@@ -1,4 +1,4 @@
-/* js/home.js — Tela inicial OrçaSmart */
+/* js/home.js - Tela inicial OrçaPro */
 
 Router.register('home', () => {
   document.getElementById('pageContent').innerHTML = `
@@ -7,16 +7,16 @@ Router.register('home', () => {
       align-items:center;
       justify-content:center;
       min-height:calc(100vh - 60px);
-      background:#f0f5fc;
+      background:#061f41;
       padding:0;
       margin:0">
       <img
-        src="/img/orcasmart-logo.png"
-        alt="OrçaSmart — Inteligência em Orçamentação de Obras Públicas"
+        src="/img/orcapro-splash.png"
+        alt="OrçaPro - Calculadora de Obras"
         style="
           width:100%;
           height:calc(100vh - 60px);
-          object-fit:contain;
+          object-fit:cover;
           object-position:center;
           display:block">
     </div>

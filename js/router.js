@@ -18,7 +18,7 @@ const Router = {
     // Breadcrumb
     const labels = {
       'reforma-tributaria':     'Reforma Tributária — IVAeq, BDI e Reequilíbrio',
-      'home':                  'OrçaSmart',
+      'home':                  'OrçaPro',
       'dashboard':            'Dashboard',
       'obras':                'Obras',
       'orcamentos':           'Orçamentos',
@@ -65,8 +65,8 @@ const Router = {
       });
     });
 
-    // Initial route — 'home' is the splash screen; 'dashboard' is the KPI page
-    const page = location.hash.replace('#','') || 'home';
+    // Initial route: the opening splash is an overlay; the app starts on dashboard.
+    const page = location.hash.replace('#','') || 'dashboard';
     this.navigate(page);
   },
 };

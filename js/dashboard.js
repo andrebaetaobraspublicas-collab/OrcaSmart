@@ -112,38 +112,23 @@ Router.register('dashboard', async () => {
         <div class="section-card-header"><h2>Sobre o Sistema</h2></div>
         <div class="section-card-body">
 
-          <!-- Branding simples no Sobre (logo completo está na tela inicial) -->
+          <!-- Branding simples no Sobre (logo completo esta na tela inicial) -->
           <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;
-                      background:linear-gradient(135deg,#f0f6ff,#e4f0fd);
-                      border-radius:var(--radius);border:1px solid #bdd6f5;margin-bottom:16px">
-            <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#0d2d6e,#1a5fb4);
-                        flex-shrink:0;display:flex;align-items:center;justify-content:center">
-              <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-                <rect x="12" y="16" width="12" height="18" rx="1" fill="rgba(255,255,255,.9)"/>
-                <rect x="14" y="19" width="3" height="3" fill="#1a5fb4"/><rect x="19" y="19" width="3" height="3" fill="#1a5fb4"/>
-                <rect x="14" y="24" width="3" height="3" fill="#1a5fb4"/><rect x="19" y="24" width="3" height="4" fill="#1a5fb4"/>
-                <rect x="26" y="20" width="5" height="14" rx=".5" fill="rgba(255,255,255,.7)"/>
-                <rect x="32" y="23" width="3" height="5" rx=".3" fill="#5badff" opacity=".9"/>
-                <rect x="36" y="20" width="3" height="8" rx=".3" fill="#5badff"/>
-                <path d="M34 16 L37 12" stroke="#5badff" stroke-width="1.8" stroke-linecap="round"/>
-                <path d="M37 10 L38 13 L35 13" stroke="#5badff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                <path d="M8 34 Q22 28 36 34" stroke="rgba(255,255,255,.4)" stroke-width="1.5" fill="none"/>
-              </svg>
-            </div>
+                      background:linear-gradient(135deg,#f7fbff,#e8f1fb);
+                      border-radius:var(--radius);border:1px solid #c8d9ed;margin-bottom:16px">
+            <img src="/img/orcapro-mark.svg" alt="OrçaPro" style="width:48px;height:48px;border-radius:12px;flex-shrink:0">
             <div>
               <div style="font-size:1.3rem;font-weight:900;letter-spacing:-.5px;line-height:1.1">
-                <span style="color:#0d2d6e">Orça</span><span style="color:#1a5fb4">Smart</span><sup style="font-size:.5rem;color:#5badff">®</sup>
+                <span style="color:#061f41">Orça</span><span style="color:#2d78d6">PRO</span>
               </div>
               <div style="font-size:.65rem;letter-spacing:2.5px;color:#4b7db5;text-transform:uppercase;margin-top:1px">
-                Versão 1.0 · Inteligência em Orçamentação
+                Calculadora de Obras
               </div>
             </div>
-          </div>
-
           </div>
 
           <p style="font-size:.82rem;line-height:1.75;color:var(--c-text-2)">
-            Sistema de orçamentação de obras públicas e privadas, baseado nas tabelas referenciais
+            OrçaPro é um sistema de orçamentação de obras públicas e privadas, baseado nas tabelas referenciais
             <strong>SINAPI</strong> (Caixa Econômica Federal / IBGE) e <strong>SICRO</strong> (DNIT).<br><br>
             <strong style="color:var(--c-text)">Funcionalidades disponíveis:</strong><br>
             ✅ Obras e orçamentos<br>

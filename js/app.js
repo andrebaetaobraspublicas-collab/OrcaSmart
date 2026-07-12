@@ -1,6 +1,14 @@
 /* js/app.js — Inicialização da aplicação */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const splash = document.getElementById('appSplash');
+  if (splash) {
+    setTimeout(() => {
+      splash.classList.add('is-hidden');
+      setTimeout(() => splash.remove(), 500);
+    }, 4000);
+  }
+
   // ─── Inicializar componentes ────────────────────────────────
   Modal.init();
   Confirm.init();

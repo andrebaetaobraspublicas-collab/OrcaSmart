@@ -26,7 +26,7 @@
 }
 .form-control:focus {
   border-color: var(--c-primary);
-  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+  box-shadow: 0 0 0 3px rgba(45,120,214,.14);
 }
 .form-control:disabled {
   background: var(--c-bg); color: var(--c-text-3); cursor: not-allowed;

@@ -1,6 +1,9 @@
 name: Deploy Hostinger - OrcaSmart2 Teste
 
 on:
+  push:
+    branches:
+      - orcasmart2
   workflow_dispatch:
 
 jobs:
