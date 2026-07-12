@@ -108,6 +108,9 @@ const EXTRA_INDEXES = {
 };
 
 const MANUAL_COLUMN_TYPES = {
+  orcamento_sintetico: {
+    descricao: 'TEXT',
+  },
   tenants: {
     nome: 'VARCHAR(255)',
     slug: 'VARCHAR(191)',

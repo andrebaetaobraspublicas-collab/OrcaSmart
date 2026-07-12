@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS `orcamento_sintetico` (
   `id_insumo` BIGINT UNSIGNED NULL,
   `codigo` VARCHAR(255) NULL DEFAULT '',
   `fonte` VARCHAR(255) NULL DEFAULT '',
-  `descricao` VARCHAR(255) NOT NULL DEFAULT '',
+  `descricao` TEXT NOT NULL,
   `unidade` VARCHAR(255) NULL DEFAULT '',
   `quantidade` DECIMAL(20,8) NULL DEFAULT 0,
   `custo_unitario` DECIMAL(20,8) NULL DEFAULT 0,

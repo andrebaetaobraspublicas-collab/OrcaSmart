@@ -334,6 +334,7 @@ async function migrateToMysql(tenants, mysqlTables, options, config) {
   try {
     await connection.query(schemaSql());
     result.schemaApplied = true;
+    await connection.query('ALTER TABLE `orcamento_sintetico` MODIFY `descricao` TEXT NOT NULL');
 
     if (!options.reset) {
       throw new Error('Migracao de tenant exige --reset para remover previamente os registros do(s) tenant(s) selecionado(s) e evitar duplicidades.');
