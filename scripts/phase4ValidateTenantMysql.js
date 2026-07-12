@@ -187,6 +187,34 @@ function fingerprint(rows, columns, meta) {
   return hash.digest('hex');
 }
 
+function valueSignature(value) {
+  if (value === null) return { type: 'null', length: 0, hash: null };
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return {
+    type: Array.isArray(value) ? 'array' : typeof value,
+    length: text.length,
+    hash: crypto.createHash('sha256').update(text).digest('hex'),
+  };
+}
+
+function debugRows(rows, columns, meta, keyColumns) {
+  return rows.map((row, index) => {
+    const normalized = {};
+    const signatures = {};
+    for (const column of columns) {
+      const value = normalizeValue(row[column], column, meta);
+      normalized[column] = value;
+      signatures[column] = valueSignature(value);
+    }
+    return {
+      index,
+      key: Object.fromEntries(keyColumns.map(column => [column, normalized[column]])),
+      normalized,
+      signatures,
+    };
+  });
+}
+
 async function sqliteSnapshotForTable(db, table, meta) {
   const exists = await sqliteTableExists(db, table);
   if (!exists) return { exists: false, count: 0, hash: null, columns: [], migratedColumns: [] };
@@ -194,7 +222,8 @@ async function sqliteSnapshotForTable(db, table, meta) {
   const sqlitePk = await sqlitePrimaryKey(db, table);
   const migratedColumns = comparableColumns(sqliteColumnList, meta);
   const projection = migratedColumns.map(quoteSqlite).join(', ');
-  const order = orderColumns(meta, sqlitePk, migratedColumns).map(quoteSqlite).join(', ');
+  const keyColumns = orderColumns(meta, sqlitePk, migratedColumns);
+  const order = keyColumns.map(quoteSqlite).join(', ');
   const rows = projection
     ? await sqliteAll(db, `SELECT ${projection} FROM ${quoteSqlite(table)}${order ? ` ORDER BY ${order}` : ''}`)
     : [];
@@ -202,6 +231,7 @@ async function sqliteSnapshotForTable(db, table, meta) {
     exists: true,
     count: rows.length,
     hash: fingerprint(rows, migratedColumns, meta),
+    debugRows: debugRows(rows, migratedColumns, meta, keyColumns),
     columns: sqliteColumnList,
     migratedColumns,
   };
@@ -252,7 +282,8 @@ async function mysqlSnapshotForTable(connection, config, tenantId, table, meta, 
     return { exists: true, count: null, hash: null, columns: existingColumns, missingColumns };
   }
   const projection = sqliteTable.migratedColumns.map(quoteMysql).join(', ');
-  const order = orderColumns(meta, [], sqliteTable.migratedColumns).map(quoteMysql).join(', ');
+  const keyColumns = orderColumns(meta, [], sqliteTable.migratedColumns);
+  const order = keyColumns.map(quoteMysql).join(', ');
   const [rows] = projection
     ? await connection.query(
       `SELECT ${projection} FROM ${quoteMysql(table)} WHERE tenant_id = ?${order ? ` ORDER BY ${order}` : ''}`,
@@ -263,9 +294,30 @@ async function mysqlSnapshotForTable(connection, config, tenantId, table, meta, 
     exists: true,
     count: rows.length,
     hash: fingerprint(rows, sqliteTable.migratedColumns, meta),
+    debugRows: debugRows(rows, sqliteTable.migratedColumns, meta, keyColumns),
     columns: existingColumns,
     missingColumns: [],
   };
+}
+
+function firstMismatch(left, right, columns) {
+  const leftRows = left.debugRows || [];
+  const rightRows = right.debugRows || [];
+  const total = Math.min(leftRows.length, rightRows.length);
+  for (let i = 0; i < total; i += 1) {
+    for (const column of columns || []) {
+      if (JSON.stringify(leftRows[i].normalized[column]) !== JSON.stringify(rightRows[i].normalized[column])) {
+        return {
+          row_index: i,
+          key: leftRows[i].key,
+          column,
+          sqlite: leftRows[i].signatures[column],
+          mysql: rightRows[i].signatures[column],
+        };
+      }
+    }
+  }
+  return null;
 }
 
 async function mysqlSnapshot(config, mysqlTables, sqliteTenants) {
@@ -296,6 +348,7 @@ async function mysqlSnapshot(config, mysqlTables, sqliteTenants) {
 function compare(sqliteTenants, mysqlTenants) {
   const issues = [];
   const rows = [];
+  const diagnostics = [];
   for (const tenant of sqliteTenants) {
     if (!tenant.exists) issues.push(`Tenant ${tenant.id_tenant} sem banco SQLite: ${tenant.db_path}.`);
     const mysqlTenant = mysqlTenants[tenant.id_tenant] || { tables: {} };
@@ -314,6 +367,11 @@ function compare(sqliteTenants, mysqlTenants) {
       }
       if (left.exists && right.exists && !missingColumns.length && countMatch && !hashMatch) {
         issues.push(`Tenant ${tenant.id_tenant}, tabela ${item.table} com hash divergente apesar de contagem igual.`);
+        diagnostics.push({
+          tenant_id: tenant.id_tenant,
+          table: item.table,
+          first_mismatch: firstMismatch(left, right, left.migratedColumns),
+        });
       }
       rows.push({
         tenant_id: tenant.id_tenant,
@@ -331,7 +389,7 @@ function compare(sqliteTenants, mysqlTenants) {
       });
     }
   }
-  return { ok: issues.length === 0, issues, rows };
+  return { ok: issues.length === 0, issues, diagnostics, rows };
 }
 
 function skippedRows(sqliteTenants) {
