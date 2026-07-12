@@ -48,6 +48,12 @@ function normalizeSqlDialect(sql) {
   for (const table of USER_OVERRIDE_TABLES) {
     const idColumn = `id_${table}`;
     const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const aliasRegex = new RegExp(`\\b\\\`?${escaped}\\\`?\\s+(?:AS\\s+)?\\\`?([A-Za-z_][A-Za-z0-9_]*)\\\`?\\b`, 'gi');
+    for (const aliasMatch of text.matchAll(aliasRegex)) {
+      const alias = aliasMatch[1];
+      if (/^(WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|GROUP|ORDER|LIMIT|ON)$/i.test(alias)) continue;
+      text = text.replace(new RegExp(`\\b${alias}\\.rowid\\b`, 'gi'), `${alias}.${idColumn}`);
+    }
     text = text.replace(new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)\\.rowid\\b(?=[\\s,)=+*/-])`, 'g'), (match, alias, offset, full) => {
       const before = full.slice(Math.max(0, offset - 120), offset);
       const tablePattern = new RegExp(`\\b${escaped}\\s+${alias}\\b`, 'i');
