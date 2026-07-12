@@ -1,6 +1,7 @@
 const express = require('express');
 const repo = require('../repositories/composicoesRepository');
 const service = require('../services/composicoesService');
+const { ensureAdmin, ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 
 module.exports = function(db, options = {}) {
   const router = express.Router();
@@ -39,6 +40,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem excluir composicoes referenciais em lote.');
     res.json(await withWriteConnection(writeDb => repo.excluirEmLote(writeDb, req.body || {})));
   }));
 
@@ -49,6 +51,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.delete('/itens/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'item de composicao referencial');
     const result = await withWriteConnection(writeDb => repo.deleteItem(writeDb, req.params.id));
     if (!result.changes) return res.status(404).json({ erro: 'Item nao encontrado.' });
     return res.json({ mensagem: 'Item excluido.' });
@@ -63,6 +66,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'composicao referencial');
     res.json(await withWriteConnection(writeDb => service.deleteComposicao(writeDb, req.params.id, { readDb })));
   }));
 
@@ -84,6 +88,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/:id/excluir-com-vinculo', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'composicao referencial vinculada');
     res.json(await withWriteConnection(writeDb => service.excluirComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
   }));
 

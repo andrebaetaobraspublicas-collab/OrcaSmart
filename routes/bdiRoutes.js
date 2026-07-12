@@ -1,5 +1,6 @@
 const express = require('express');
 const service = require('../services/bdiService');
+const { ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 
 module.exports = function bdiRoutes(db, options = {}) {
   const router = express.Router();
@@ -26,6 +27,7 @@ module.exports = function bdiRoutes(db, options = {}) {
   }));
 
   router.delete('/perfis/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'perfil BDI referencial');
     res.json(await service.deletePerfil(db, req.params.id));
   }));
 
@@ -50,6 +52,7 @@ module.exports = function bdiRoutes(db, options = {}) {
   }));
 
   router.delete('/componentes/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'componente BDI referencial');
     res.json(await service.deleteComponente(db, req.params.id, { readDb }));
   }));
 

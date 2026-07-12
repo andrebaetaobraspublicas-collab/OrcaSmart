@@ -2,6 +2,7 @@ const express = require('express');
 const service = require('../services/encargosService');
 const repository = require('../repositories/encargosRepository');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
+const { ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 
 module.exports = function(db, options = {}) {
   const router = express.Router();
@@ -97,6 +98,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.delete('/perfis/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'perfil referencial de encargos sociais');
     res.json(await service.deletePerfil(db, req.params.id));
   }));
 
@@ -142,14 +144,17 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/itens', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.body && req.body.id_grupo_enc, 'incluir item em', 'grupo referencial de encargos sociais');
     res.status(201).json(await service.createItem(db, req.body || {}));
   }));
 
   router.put('/itens/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'alterar', 'item referencial de encargos sociais');
     res.json(await service.updateItem(db, req.params.id, req.body || {}));
   }));
 
   router.delete('/itens/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'item referencial de encargos sociais');
     res.json(await service.deleteItem(db, req.params.id));
   }));
 

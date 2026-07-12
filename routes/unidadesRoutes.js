@@ -1,5 +1,6 @@
 const express = require('express');
 const service = require('../services/unidadesService');
+const { ensureAdmin } = require('../utils/accessPolicy');
 
 module.exports = function unidadesRoutes(db) {
   const router = express.Router();
@@ -17,14 +18,17 @@ module.exports = function unidadesRoutes(db) {
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem criar unidades referenciais.');
     res.status(201).json(await service.createUnidade(db, req.body || {}));
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar unidades referenciais.');
     res.json(await service.updateUnidade(db, req.params.id, req.body || {}));
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem excluir unidades referenciais.');
     res.json(await service.deleteUnidade(db, req.params.id));
   }));
 

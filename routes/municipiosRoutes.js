@@ -2,6 +2,7 @@ const express = require('express');
 const municipiosRepository = require('../repositories/municipiosRepository');
 const municipiosService = require('../services/municipiosService');
 const { parseMultipart, parseXlsxBuffer } = require('../utils/spreadsheetUpload');
+const { ensureAdmin } = require('../utils/accessPolicy');
 
 module.exports = function(db, options = {}) {
   const router = express.Router();
@@ -30,10 +31,12 @@ module.exports = function(db, options = {}) {
   }));
 
   router.put('/municipios/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar aliquotas referenciais de municipios.');
     res.json(await municipiosService.updateAliquotas(db, req.params.id, req.body || {}));
   }));
 
   router.post('/municipios/importar-aliquotas', express.raw({ type: () => true, limit: '30mb' }), asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem importar aliquotas referenciais de municipios.');
     let upload;
     try {
       upload = parseMultipart(req.body, req.headers['content-type']);

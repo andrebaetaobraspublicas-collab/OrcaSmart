@@ -1,5 +1,6 @@
 const express = require('express');
 const service = require('../services/datasBaseService');
+const { ensureAdmin } = require('../utils/accessPolicy');
 
 module.exports = function datasBaseRoutes(db, options = {}) {
   const router = express.Router();
@@ -17,14 +18,17 @@ module.exports = function datasBaseRoutes(db, options = {}) {
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem criar datas-base referenciais.');
     res.status(201).json(await service.createDataBase(db, req.body || {}));
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar datas-base referenciais.');
     res.json(await service.updateDataBase(db, req.params.id, req.body || {}));
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem excluir datas-base referenciais.');
     res.json(await service.deleteDataBase(db, req.params.id));
   }));
 

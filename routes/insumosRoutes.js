@@ -1,5 +1,6 @@
 const express = require('express');
 const service = require('../services/insumosService');
+const { ensureAdmin, ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 
 module.exports = function insumosRoutes(db, options = {}) {
   const router = express.Router();
@@ -14,14 +15,17 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.post('/grupos', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem criar grupos referenciais de insumos.');
     res.status(201).json(await service.createGrupo(db, req.body || {}));
   }));
 
   router.put('/grupos/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar grupos referenciais de insumos.');
     res.json(await service.updateGrupo(db, req.params.id, req.body || {}));
   }));
 
   router.delete('/grupos/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem excluir grupos referenciais de insumos.');
     res.json(await service.deleteGrupo(db, req.params.id));
   }));
 
@@ -30,6 +34,7 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem excluir insumos referenciais em lote.');
     res.json(await service.deleteBatch(db, req.body || {}));
   }));
 
@@ -55,6 +60,7 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'insumo referencial');
     res.json(await service.deleteInsumo(db, req.params.id, String(req.query.modo || 'preservar'), { readDb }));
   }));
 
@@ -67,10 +73,12 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.put('/precos/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'alterar', 'preco referencial de insumo');
     res.json(await service.updatePreco(db, req.params.id, req.body || {}));
   }));
 
   router.delete('/precos/:id', asyncHandler(async (req, res) => {
+    ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'preco referencial de insumo');
     res.json(await service.deletePreco(db, req.params.id));
   }));
 

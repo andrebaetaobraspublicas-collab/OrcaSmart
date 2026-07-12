@@ -1,5 +1,6 @@
 const express = require('express');
 const service = require('../services/pemService');
+const { ensureAdmin } = require('../utils/accessPolicy');
 
 module.exports = function pemRoutes(db, options = {}) {
   const router = express.Router();
@@ -22,10 +23,12 @@ module.exports = function pemRoutes(db, options = {}) {
   }));
 
   router.put('/equipamentos/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar diretamente equipamentos referenciais de producao horaria.');
     res.json(await service.updateEquipamento(db, req.params.id, req.body || {}));
   }));
 
   router.put('/equipamentos/:id/variaveis', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'Usuarios comuns nao podem alterar diretamente variaveis referenciais de producao horaria.');
     res.json(await service.updateVariaveis(db, req.params.id, req.body || []));
   }));
 
