@@ -9,6 +9,8 @@ on:
 jobs:
   deploy-orcasmart2:
     runs-on: ubuntu-latest
+    env:
+      ORCASMART2_TARGET_DIR: ${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR || '/domains/forestgreen-turkey-374923.hostingersite.com/nodejs/' }}
     steps:
       - name: Validar branch
         run: |
@@ -20,14 +22,15 @@ jobs:
 
       - name: Validar diretorio de homologacao
         run: |
-          if [ -z "${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}" ]; then
-            echo "Configure a secret HOSTINGER_ORCASMART2_TARGET_DIR antes de executar o deploy de homologacao."
+          if [ -z "${ORCASMART2_TARGET_DIR}" ]; then
+            echo "Diretorio de deploy do OrcaSmart2 nao definido."
             exit 1
           fi
-          if [ "${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}" = "${{ secrets.HOSTINGER_TARGET_DIR }}" ]; then
-            echo "HOSTINGER_ORCASMART2_TARGET_DIR nao pode ser igual ao diretorio de producao HOSTINGER_TARGET_DIR."
+          if [ "${ORCASMART2_TARGET_DIR}" = "${{ secrets.HOSTINGER_TARGET_DIR }}" ]; then
+            echo "Diretorio do OrcaSmart2 nao pode ser igual ao diretorio de producao HOSTINGER_TARGET_DIR."
             exit 1
           fi
+          echo "Deploy OrcaSmart2 target: ${ORCASMART2_TARGET_DIR}"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,7 +49,7 @@ jobs:
           username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           local-dir: ./
-          server-dir: ${{ secrets.HOSTINGER_ORCASMART2_TARGET_DIR }}
+          server-dir: ${{ env.ORCASMART2_TARGET_DIR }}
           exclude: |
             **/.git*
             **/.git*/**
