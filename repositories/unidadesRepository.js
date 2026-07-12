@@ -103,7 +103,7 @@ async function listUnidades(db) {
                t.rowid AS tenant_rowid, 'tenant' AS _tenant_scope
         FROM tenant_unidades_medida t
         WHERE COALESCE(t.tenant_override_status,'active')='active'
-      )
+      ) AS unidades_unificadas
       ORDER BY sigla`);
   }
   return all(db, 'SELECT * FROM unidades_medida ORDER BY sigla');

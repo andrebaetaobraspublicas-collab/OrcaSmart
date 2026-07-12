@@ -55,6 +55,15 @@ function normalizeSqlDialect(sql) {
     });
   }
 
+  const unqualifiedRowidTables = USER_OVERRIDE_TABLES.filter((table) => {
+    const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b(FROM|JOIN|UPDATE|INTO)\\s+\\\`?${escaped}\\\`?\\b`, 'i').test(text);
+  });
+  if (unqualifiedRowidTables.length === 1) {
+    const idColumn = `id_${unqualifiedRowidTables[0]}`;
+    text = text.replace(/(?<![.`])\browid\b/gi, idColumn);
+  }
+
   text = text.replace(/'([^']*)'\s*\|\|\s*([A-Za-z_][A-Za-z0-9_.]*)/g, "CONCAT('$1', $2)");
   text = text.replace(/([A-Za-z_][A-Za-z0-9_.]*)\s*\|\|\s*'([^']*)'/g, "CONCAT($1, '$2')");
   return text;

@@ -259,14 +259,14 @@ async function stats(db) {
         SELECT c.fonte FROM catalog.composicoes c WHERE ${visible}
         UNION ALL
         SELECT fonte FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
-      )
+      ) AS fonte_unificada
       GROUP BY fonte ORDER BY fonte`);
     const porFormato = await all(db, `
       SELECT formato, COUNT(*) AS total FROM (
         SELECT c.formato FROM catalog.composicoes c WHERE ${visible}
         UNION ALL
         SELECT formato FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
-      )
+      ) AS formato_unificado
       GROUP BY formato ORDER BY formato`);
     return {
       total: porFonte.reduce((sum, row) => sum + Number(row.total || 0), 0),
@@ -336,9 +336,9 @@ async function listComposicoes(db, query = {}) {
         ${catalog.sql}
         UNION ALL
         ${tenant.sql}
-      )`;
+      ) AS composicoes_unificadas`;
     const params = [...catalog.params, ...tenant.params];
-    const total = await one(db, `SELECT COUNT(*) AS total FROM (${baseSql})`, params);
+    const total = await one(db, `SELECT COUNT(*) AS total FROM (${baseSql}) AS total_composicoes`, params);
     const items = await all(db, `
       ${baseSql}
       ORDER BY fonte, codigo
@@ -1664,11 +1664,11 @@ async function excluirEmLote(db, data = {}) {
       const catalog = buildTenantCatalogListSelect(data, 'catalog');
       const tenant = buildTenantCatalogListSelect(data, 'tenant');
       const rows = await all(db, `
-        SELECT id_composicao FROM (
+      SELECT id_composicao FROM (
           ${catalog.sql}
           UNION ALL
           ${tenant.sql}
-        )`, [...catalog.params, ...tenant.params]);
+        ) AS composicoes_existentes`, [...catalog.params, ...tenant.params]);
       if (data.dry_run) return { total: rows.length, dry_run: true };
       let excluidos = 0;
       await run(db, 'BEGIN');
