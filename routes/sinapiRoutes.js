@@ -267,34 +267,101 @@ module.exports = function sinapiRoutes(db) {
   function parseAnaliticoRows(rows) {
     const composicoes = [];
     let current = null;
-    for (let i = 10; i < rows.length; i++) {
+    const itemKind = (value) => {
+      const n = normalizeText(value).replace(/\s+/g, ' ');
+      if (!n) return '';
+      if (n === 'insumo') return 'INSUMO';
+      if (n === 'composicao' || n === 'composicao auxiliar') return 'COMPOSICAO';
+      if (n === 'equipamento') return 'COMPOSICAO';
+      return '';
+    };
+    const codeAt = (row, idx) => normCode(cell(row, idx));
+    const isCode = value => /^\d{3,}$/.test(normCode(value));
+    const findCode = (row, start = 0) => {
+      for (let j = start; j < row.length; j++) {
+        if (isCode(row[j])) return j;
+      }
+      return -1;
+    };
+    const findText = (row, start = 0) => {
+      for (let j = start; j < row.length; j++) {
+        const value = cell(row, j);
+        if (value && !isCode(value) && normalizeText(value).length >= 6 && parseDecimal(value) === null) return j;
+      }
+      return -1;
+    };
+    const findUnit = (row, start = 0) => {
+      for (let j = start; j < row.length; j++) {
+        const value = cell(row, j).toUpperCase();
+        if (value && value.length <= 12 && parseDecimal(value) === null && !isCode(value)) return j;
+      }
+      return -1;
+    };
+    const findDecimal = (row, start = 0) => {
+      for (let j = start; j < row.length; j++) {
+        const n = parseDecimal(row[j]);
+        if (n !== null) return n;
+      }
+      return null;
+    };
+
+    for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || [];
-      const grupo = cell(row, 0);
-      const codigoComp = normCode(cell(row, 1));
-      const tipoItem = cell(row, 2).toUpperCase();
-      if (!/^\d+/.test(codigoComp)) continue;
-      if (!tipoItem) {
+      if (!row.length) continue;
+
+      const tipoIdx = row.findIndex(value => itemKind(value));
+      if (tipoIdx >= 0 && current) {
+        const codigoIdx = findCode(row, tipoIdx + 1);
+        const descricaoIdx = codigoIdx >= 0 ? findText(row, codigoIdx + 1) : -1;
+        const unidadeIdx = descricaoIdx >= 0 ? findUnit(row, descricaoIdx + 1) : -1;
+        if (codigoIdx < 0 || descricaoIdx < 0) continue;
+        current.itens.push({
+          tipo_item: itemKind(row[tipoIdx]),
+          codigo_item: codeAt(row, codigoIdx),
+          descricao: cell(row, descricaoIdx),
+          unidade: unidadeIdx >= 0 ? cell(row, unidadeIdx).toUpperCase() : '',
+          coeficiente: findDecimal(row, Math.max(unidadeIdx + 1, descricaoIdx + 1)) || 0,
+          situacao: cell(row, Math.max(unidadeIdx + 2, descricaoIdx + 2)),
+        });
+        continue;
+      }
+
+      const codigoIdx = findCode(row, 0);
+      if (codigoIdx < 0) continue;
+      const codigoComp = codeAt(row, codigoIdx);
+      const descricaoIdx = findText(row, codigoIdx + 1);
+      const unidadeIdx = descricaoIdx >= 0 ? findUnit(row, descricaoIdx + 1) : -1;
+      if (!/^\d+/.test(codigoComp) || descricaoIdx < 0) continue;
+
+      const beforeCode = row.slice(0, codigoIdx).map(v => cell([v], 0)).filter(Boolean);
+      const grupo = beforeCode[beforeCode.length - 1] || cell(row, 0) || 'SINAPI';
+      const unidade = unidadeIdx >= 0 ? cell(row, unidadeIdx).toUpperCase() : '';
+      const looksLikeHeader = unidade || normalizeText(cell(row, descricaoIdx)).length >= 12;
+      if (looksLikeHeader) {
         current = {
           codigo: codigoComp,
-          descricao: cell(row, 4) || cell(row, 3),
-          unidade: cell(row, 5).toUpperCase(),
+          descricao: cell(row, descricaoIdx),
+          unidade,
           grupo: grupo || 'SINAPI',
-          situacao: cell(row, 7),
+          situacao: cell(row, Math.max(unidadeIdx + 2, descricaoIdx + 2)),
           itens: [],
         };
         composicoes.push(current);
-      } else if (current && ['INSUMO', 'COMPOSICAO', 'COMPOSIÃ‡ÃƒO', 'EQUIPAMENTO'].includes(tipoItem)) {
-        current.itens.push({
-          tipo_item: tipoItem === 'INSUMO' ? 'INSUMO' : 'COMPOSICAO',
-          codigo_item: normCode(cell(row, 3)),
-          descricao: cell(row, 4),
-          unidade: cell(row, 5).toUpperCase(),
-          coeficiente: parseDecimal(row[6]) || 0,
-          situacao: cell(row, 7),
-        });
       }
     }
     return composicoes;
+  }
+
+  function findAnaliticoSheet(files, sheets) {
+    const named = findSheet(sheets, 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas');
+    if (named) return named;
+    for (const sheet of sheets) {
+      const name = normalizeText(sheet.name);
+      if (name.includes('isd') || name.includes('icd')) continue;
+      const count = parseAnaliticoRows(parseSheetRows(files, sheet.path)).length;
+      if (count > 0) return sheet;
+    }
+    return null;
   }
 
   function countSheetRows(xml) {
@@ -348,7 +415,7 @@ module.exports = function sinapiRoutes(db) {
 
     const isd = getSheet('ISD');
     const icd = getSheet('ICD');
-    const analitico = getSheet('AnalÃ­tico', 'Analitico');
+    const analitico = findAnaliticoSheet(files, sheets);
     const { mes, ano } = detectSinapiDate(file.originalname, files);
 
     const qtdIsd = isd ? Math.max(0, countSheetRows(files[isd.path]) - 10) : 0;
@@ -407,7 +474,7 @@ module.exports = function sinapiRoutes(db) {
     const sheets = getWorkbookSheets(files);
     const isdSheet = findSheet(sheets, 'ISD');
     const icdSheet = findSheet(sheets, 'ICD');
-    const analSheet = findSheet(sheets, 'Analitico', 'AnalÃ­tico');
+    const analSheet = findAnaliticoSheet(files, sheets);
     let parsedDate = { mes: Number(fields.mes || 0), ano: Number(fields.ano || 0) };
     if (!parsedDate.mes || !parsedDate.ano) {
       const sampleRows = [isdSheet, icdSheet, analSheet].filter(Boolean).map(s => parseSheetRows(files, s.path).slice(0, 8));
