@@ -29,6 +29,15 @@
   font-size: .95rem; font-weight: 600; color: var(--c-text);
 }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.topbar-user {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
 .topbar-badge {
   background: var(--c-primary-l); color: var(--c-primary);
   font-size: .75rem; font-weight: 600;

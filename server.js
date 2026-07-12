@@ -854,6 +854,25 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    const user = await getMaster('SELECT * FROM users WHERE id_user = ? AND status = ?', [req.session.userId, 'ativo']);
+    if (!user) return res.status(401).json({ erro: 'Não autenticado.' });
+    const currentPassword = String(req.body.senha_atual || req.body.current_password || '');
+    const newPassword = String(req.body.nova_senha || req.body.new_password || '');
+    if (!verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(400).json({ erro: 'Senha atual inválida.' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ erro: 'A nova senha deve ter pelo menos 8 caracteres.' });
+    }
+    await runMaster('UPDATE users SET password_hash = ? WHERE id_user = ?', [hashPassword(newPassword), user.id_user]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ erro: err.message });
+  }
+});
+
 app.get('/api/auth/me', async (req, res) => {
   const user = await loadUserById(req.session.userId).catch(() => null);
   if (!user) return res.status(401).json({ erro: 'Não autenticado.' });
@@ -948,6 +967,7 @@ app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
     build: BUILD_ID,
     phase4Status: buildPhase4Status,
     appDir: APP_DIR,
+    createTenantDatabase,
     generatedReportsDir: path.join(APP_DIR, 'docs', 'generated'),
     phase2Manifest,
     backupDir: path.join(DATA_DIR, 'backups', 'phase2_1'),

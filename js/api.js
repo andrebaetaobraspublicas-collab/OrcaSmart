@@ -41,6 +41,8 @@ const API = {
   status:    () => API.get('/status'),
   auth: {
     me: () => API.get('/auth/me'),
+    logout: () => API.post('/auth/logout', {}),
+    changePassword: (data) => API.post('/auth/change-password', data),
   },
   admin: {
     overview: () => API.get('/admin/overview'),
@@ -50,6 +52,9 @@ const API = {
       return API.get(`/admin/users${q ? '?' + q : ''}`);
     },
     updateUser: (id, data) => API._req('PATCH', `/admin/users/${id}`, data),
+    createUser: (data) => API.post('/admin/users', data),
+    updateUserPassword: (id, data) => API._req('PATCH', `/admin/users/${id}/password`, data),
+    startUserPasswordReset: (id) => API.post(`/admin/users/${id}/password-reset`, {}),
     subscriptions: (params = {}) => {
       const q = new URLSearchParams(params).toString();
       return API.get(`/admin/subscriptions${q ? '?' + q : ''}`);

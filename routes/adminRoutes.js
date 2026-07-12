@@ -25,8 +25,20 @@ module.exports = function adminRoutes(master, options = {}) {
     }));
   }));
 
+  router.post('/users', asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createUser(master, req.user, req.body || {}, options));
+  }));
+
   router.patch('/users/:id', asyncHandler(async (req, res) => {
     res.json(await service.updateUser(master, req.user, req.params.id, req.body || {}));
+  }));
+
+  router.patch('/users/:id/password', asyncHandler(async (req, res) => {
+    res.json(await service.updateUserPassword(master, req.user, req.params.id, req.body || {}));
+  }));
+
+  router.post('/users/:id/password-reset', asyncHandler(async (req, res) => {
+    res.json(await service.startUserPasswordReset(master, req.user, req.params.id));
   }));
 
   router.get('/subscriptions', asyncHandler(async (req, res) => {

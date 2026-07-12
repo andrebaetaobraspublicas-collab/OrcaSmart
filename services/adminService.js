@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
@@ -15,6 +16,24 @@ const SUBSCRIPTION_STATUSES = [
   'incomplete_expired',
   'unpaid',
 ];
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function slugFromEmail(email) {
+  return normalizeEmail(email).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || `tenant-${Date.now()}`;
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(password), salt, 150000, 32, 'sha256').toString('hex');
+  return `pbkdf2$150000$${salt}$${hash}`;
+}
+
+function generateTemporaryPassword() {
+  return `OrcaPro-${crypto.randomBytes(5).toString('hex')}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
 
 function readJsonFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
@@ -851,6 +870,67 @@ async function listUsers(master, filters = {}) {
   return repo.listUsers(master, filters);
 }
 
+async function createUser(master, actor, data = {}, options = {}) {
+  const nome = String(data.nome || data.name || '').trim();
+  const email = normalizeEmail(data.email);
+  const password = String(data.senha || data.password || '');
+  const tenantName = String(data.tenant_nome || data.tenant || nome || '').trim();
+  const role = data.role || 'owner';
+  const status = data.status || 'ativo';
+
+  if (!nome || !email || password.length < 8) {
+    const err = new Error('Informe nome, e-mail e senha com pelo menos 8 caracteres.');
+    err.status = 400;
+    throw err;
+  }
+  if (!['admin', 'owner'].includes(role)) {
+    const err = new Error('Papel invalido. Use admin ou owner.');
+    err.status = 400;
+    throw err;
+  }
+  if (!['ativo', 'inativo', 'suspenso'].includes(status)) {
+    const err = new Error('Status invalido. Use ativo, inativo ou suspenso.');
+    err.status = 400;
+    throw err;
+  }
+  if (await repo.getUserByEmail(master, email)) {
+    const err = new Error('E-mail ja cadastrado.');
+    err.status = 409;
+    throw err;
+  }
+
+  const tenant = await repo.createTenant(master, {
+    nome: tenantName || nome,
+    slug: `${slugFromEmail(email)}-${Date.now()}`,
+    db_path: 'pending',
+    status: 'ativo',
+  });
+  let dbPath = 'pending';
+  if (typeof options.createTenantDatabase === 'function') {
+    dbPath = options.createTenantDatabase(tenant.lastID);
+    await repo.updateTenantDbPath(master, tenant.lastID, dbPath);
+  }
+
+  const created = await repo.createUser(master, {
+    id_tenant: tenant.lastID,
+    nome,
+    email,
+    password_hash: hashPassword(password),
+    role,
+    status,
+  });
+  await repo.upsertUserSubscription(master, created.lastID, { status: 'trial', current_period_end: null });
+  const user = await repo.getUser(master, created.lastID);
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.user.create',
+    entidade_tipo: 'user',
+    entidade_id: created.lastID,
+    antes: null,
+    depois: { ...user, tenant_db_path: dbPath ? '[provisioned]' : null },
+  });
+  return { ok: true, user };
+}
+
 async function listSubscriptions(master, filters = {}) {
   return repo.listSubscriptions(master, filters);
 }
@@ -1003,6 +1083,49 @@ async function updateUser(master, actor, idUser, data = {}) {
   return { ok: true, user: after };
 }
 
+async function updateUserPassword(master, actor, idUser, data = {}) {
+  const id = Number(idUser);
+  const password = String(data.senha || data.password || '');
+  if (!id) {
+    const err = new Error('Usuario invalido.');
+    err.status = 400;
+    throw err;
+  }
+  if (password.length < 8) {
+    const err = new Error('A senha deve ter pelo menos 8 caracteres.');
+    err.status = 400;
+    throw err;
+  }
+  const before = await repo.getUser(master, id);
+  if (!before) {
+    const err = new Error('Usuario nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  await repo.updateUserPassword(master, id, hashPassword(password));
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.user.password_update',
+    entidade_tipo: 'user',
+    entidade_id: id,
+    antes: { id_user: before.id_user, email: before.email },
+    depois: { id_user: before.id_user, email: before.email, password_changed: true },
+  });
+  return { ok: true };
+}
+
+async function startUserPasswordReset(master, actor, idUser) {
+  const temporaryPassword = generateTemporaryPassword();
+  await updateUserPassword(master, actor, idUser, { password: temporaryPassword });
+  await repo.logAdminAction(master, actor, {
+    acao: 'admin.user.password_reset_start',
+    entidade_tipo: 'user',
+    entidade_id: Number(idUser),
+    antes: null,
+    depois: { temporary_password_generated: true },
+  });
+  return { ok: true, temporary_password: temporaryPassword };
+}
+
 async function updateTenant(master, actor, idTenant, data = {}) {
   const id = Number(idTenant);
   if (!id) {
@@ -1090,9 +1213,12 @@ module.exports = {
   getBackupManifest,
   getBackupArchivePath,
   listUsers,
+  createUser,
   listSubscriptions,
   listTenants,
   updateUser,
+  updateUserPassword,
+  startUserPasswordReset,
   updateUserSubscription,
   updateTenant,
   listAuditLogs,

@@ -191,13 +191,18 @@ const AdminPage = {
         <td class="text-3 text-sm">${Utils.esc(user.created_at || '-')}</td>
         <td>
           <button class="btn btn-primary btn-sm" data-admin-user-save="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled' : ''}>Salvar</button>
+          <button class="btn btn-ghost btn-sm" data-admin-user-password="${user.id_user}">Senha</button>
+          <button class="btn btn-ghost btn-sm" data-admin-user-reset="${user.id_user}">Gerar temporaria</button>
         </td>
       </tr>`).join('');
     return `
       <div class="section-card">
         <div class="section-card-header">
           <h2>Usuarios cadastrados</h2>
-          <span class="text-3 text-sm">${this.fmtInt(this.state.users.length)} registro(s)</span>
+          <div class="d-flex align-c gap-1">
+            <span class="text-3 text-sm">${this.fmtInt(this.state.users.length)} registro(s)</span>
+            <button class="btn btn-primary btn-sm" id="adminCreateUser">${Utils.icons.plus} Novo usuario</button>
+          </div>
         </div>
         <div class="table-wrapper">
           <table>
@@ -209,6 +214,116 @@ const AdminPage = {
           </table>
         </div>
       </div>`;
+  },
+
+  openCreateUserModal() {
+    Modal.open({
+      title: 'Novo usuario',
+      body: `
+        <div class="form-grid form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Nome ou empresa</label>
+            <input class="form-control" id="adminNewUserName">
+          </div>
+          <div class="form-group">
+            <label class="form-label">E-mail</label>
+            <input class="form-control" id="adminNewUserEmail" type="email">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Senha inicial</label>
+            <input class="form-control" id="adminNewUserPassword" type="password">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tenant</label>
+            <input class="form-control" id="adminNewUserTenant" placeholder="Opcional; usa o nome se ficar vazio">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Papel</label>
+            <select class="form-control" id="adminNewUserRole">${this.roleOptions('owner')}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-control" id="adminNewUserStatus">${this.statusOptions('ativo')}</select>
+          </div>
+        </div>`,
+      footer: `
+        <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="adminCreateUserConfirm">Criar usuario</button>`,
+      size: 'modal-lg',
+    });
+    setTimeout(() => {
+      const btn = document.getElementById('adminCreateUserConfirm');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        try {
+          await API.admin.createUser({
+            nome: document.getElementById('adminNewUserName').value,
+            email: document.getElementById('adminNewUserEmail').value,
+            password: document.getElementById('adminNewUserPassword').value,
+            tenant_nome: document.getElementById('adminNewUserTenant').value,
+            role: document.getElementById('adminNewUserRole').value,
+            status: document.getElementById('adminNewUserStatus').value,
+          });
+          Modal.close();
+          Toast.success('Usuario criado.');
+          await this.loadAll();
+          document.getElementById('adminPanelBody').innerHTML = this.renderUsers();
+          this.bind();
+        } catch (err) {
+          Toast.error(err.message);
+        }
+      });
+    }, 0);
+  },
+
+  openSetPasswordModal(idUser) {
+    const user = this.state.users.find(item => String(item.id_user) === String(idUser));
+    Modal.open({
+      title: 'Definir senha',
+      body: `
+        <p class="text-2" style="margin-bottom:14px">${Utils.esc(user ? user.email : '#' + idUser)}</p>
+        <div class="form-group">
+          <label class="form-label">Nova senha</label>
+          <input class="form-control" id="adminManualPassword" type="password" autocomplete="new-password">
+        </div>`,
+      footer: `
+        <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="adminSetPasswordConfirm">Salvar senha</button>`,
+    });
+    setTimeout(() => {
+      const btn = document.getElementById('adminSetPasswordConfirm');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        try {
+          await API.admin.updateUserPassword(idUser, { password: document.getElementById('adminManualPassword').value });
+          Modal.close();
+          Toast.success('Senha alterada.');
+        } catch (err) {
+          Toast.error(err.message);
+        }
+      });
+    }, 0);
+  },
+
+  async startPasswordReset(idUser) {
+    const user = this.state.users.find(item => String(item.id_user) === String(idUser));
+    const ok = await Confirm.ask(
+      `Gerar uma senha temporaria para ${user ? user.email : '#' + idUser}? A senha atual sera substituida.`,
+      { title: 'Gerar senha temporaria', okText: 'Gerar', okClass: 'btn btn-warning' }
+    );
+    if (!ok) return;
+    try {
+      const result = await API.admin.startUserPasswordReset(idUser);
+      Modal.open({
+        title: 'Senha temporaria gerada',
+        body: `
+          <p class="text-2" style="margin-bottom:12px">Entregue esta senha ao usuario por um canal seguro.</p>
+          <input class="form-control" value="${Utils.esc(result.temporary_password || '')}" readonly onclick="this.select()">`,
+        footer: `<button class="btn btn-primary" onclick="Modal.close()">Fechar</button>`,
+      });
+    } catch (err) {
+      Toast.error(err.message);
+    }
   },
 
   renderSubscriptions() {
@@ -1012,6 +1127,8 @@ const AdminPage = {
     });
     const refresh = document.getElementById('adminRefresh');
     if (refresh) refresh.addEventListener('click', () => this.render());
+    const createUser = document.getElementById('adminCreateUser');
+    if (createUser) createUser.addEventListener('click', () => this.openCreateUserModal());
     const applyTenantFilters = document.getElementById('adminApplyTenantFilters');
     if (applyTenantFilters) {
       applyTenantFilters.addEventListener('click', async () => {
@@ -1062,6 +1179,12 @@ const AdminPage = {
           btn.disabled = false;
         }
       });
+    });
+    document.querySelectorAll('[data-admin-user-password]').forEach(btn => {
+      btn.addEventListener('click', () => this.openSetPasswordModal(btn.dataset.adminUserPassword));
+    });
+    document.querySelectorAll('[data-admin-user-reset]').forEach(btn => {
+      btn.addEventListener('click', () => this.startPasswordReset(btn.dataset.adminUserReset));
     });
     document.querySelectorAll('[data-admin-subscription-save]').forEach(btn => {
       btn.addEventListener('click', async () => {

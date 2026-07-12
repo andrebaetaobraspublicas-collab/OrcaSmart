@@ -172,6 +172,28 @@ async function getUser(master, idUser) {
     WHERE u.id_user = ?`, [idUser]);
 }
 
+async function getUserByEmail(master, email) {
+  return master.get('SELECT id_user, email FROM users WHERE lower(email) = lower(?)', [email]);
+}
+
+async function createTenant(master, data = {}) {
+  return master.run(
+    'INSERT INTO tenants (nome, slug, db_path, status) VALUES (?, ?, ?, ?)',
+    [data.nome, data.slug, data.db_path || 'pending', data.status || 'ativo']
+  );
+}
+
+async function updateTenantDbPath(master, idTenant, dbPath) {
+  return master.run('UPDATE tenants SET db_path = ? WHERE id_tenant = ?', [dbPath, idTenant]);
+}
+
+async function createUser(master, data = {}) {
+  return master.run(
+    'INSERT INTO users (id_tenant, nome, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [data.id_tenant, data.nome, data.email, data.password_hash, data.role || 'owner', data.status || 'ativo']
+  );
+}
+
 async function updateUser(master, idUser, data = {}) {
   const fields = [];
   const params = [];
@@ -186,6 +208,10 @@ async function updateUser(master, idUser, data = {}) {
   if (!fields.length) return { changes: 0 };
   params.push(idUser);
   return master.run(`UPDATE users SET ${fields.join(', ')} WHERE id_user = ?`, params);
+}
+
+async function updateUserPassword(master, idUser, passwordHash) {
+  return master.run('UPDATE users SET password_hash = ? WHERE id_user = ?', [passwordHash, idUser]);
 }
 
 async function getTenant(master, idTenant) {
@@ -260,7 +286,12 @@ module.exports = {
   listTenants,
   listTenantUsers,
   getUser,
+  getUserByEmail,
+  createTenant,
+  updateTenantDbPath,
+  createUser,
   updateUser,
+  updateUserPassword,
   getTenant,
   updateTenant,
   countAdmins,
