@@ -35,8 +35,12 @@ module.exports = function(db, options = {}) {
     res.status(201).json(result);
   }));
 
-  router.post('/recalcular-custos', asyncHandler(async (_req, res) => {
-    res.json({ atualizadas: 0, atualizados: 0, mensagem: 'Recalculo em lote sera migrado em etapa propria do modulo Composicoes.' });
+  router.post('/recalcular-custos', asyncHandler(async (req, res) => {
+    const payload = {
+      ...(req.body || {}),
+      scope: req.user && req.user.role === 'admin' ? 'all' : 'tenant',
+    };
+    res.json(await withWriteConnection(writeDb => repo.recalcularCustosReferenciais(writeDb, payload)));
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {

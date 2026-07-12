@@ -518,38 +518,79 @@ module.exports = function sinapiRoutes(db) {
         if (importarIcd) await processarInsumos(icdSheet, true);
 
         if (importarAnalitico && analSheet) {
-          const grupos = new Map((await allC('SELECT nome_grupo,id_grupo_comp FROM grupos_composicoes')).map(r => [String(r.nome_grupo || ''), r.id_grupo_comp]));
+          const tableC = async (schema, table) => {
+            const prefix = schema ? `${schema}.` : '';
+            return !!await getC(`SELECT name FROM ${prefix}sqlite_master WHERE type='table' AND name=?`, [table]).catch(() => null);
+          };
+          const adminImport = req.user && req.user.role === 'admin';
+          const hasTenantComps = await tableC('', 'tenant_composicoes');
+          const hasCatalogComps = await tableC('catalog', 'composicoes');
+          const useTenantComps = !adminImport && hasTenantComps;
+          const compTable = useTenantComps ? 'tenant_composicoes' : (hasCatalogComps ? 'catalog.composicoes' : 'composicoes');
+          const itemTable = useTenantComps ? 'tenant_itens_composicao' : (hasCatalogComps ? 'catalog.itens_composicao' : 'itens_composicao');
+          const groupTable = hasCatalogComps ? 'catalog.grupos_composicoes' : 'grupos_composicoes';
+          const compIdSelect = useTenantComps ? 'rowid AS id_composicao' : 'id_composicao';
+          const compIdWhere = useTenantComps ? 'rowid' : 'id_composicao';
+          const grupos = new Map((await allC(`SELECT nome_grupo,id_grupo_comp FROM ${groupTable}`)).map(r => [String(r.nome_grupo || ''), r.id_grupo_comp]));
           async function getGrupo(nome) {
             const key = String(nome || 'SINAPI').trim() || 'SINAPI';
             if (grupos.has(key)) return grupos.get(key);
-            const r = await runC("INSERT INTO grupos_composicoes (nome_grupo,fonte) VALUES (?,'SINAPI')", [key]);
+            if (useTenantComps) return null;
+            const r = await runC(`INSERT INTO ${groupTable} (nome_grupo,fonte) VALUES (?,'SINAPI')`, [key]);
             grupos.set(key, r.lastID);
             return r.lastID;
           }
 
-          const compMap = new Map((await allC("SELECT codigo,id_composicao FROM composicoes WHERE UPPER(COALESCE(fonte,''))='SINAPI'"))
-            .map(r => [String(r.codigo), r.id_composicao]));
+          const compUf = ufParam === 'TODAS' ? null : ufParam;
+          const compKey = (codigo, uf, ref) => [
+            String(codigo || '').trim(),
+            String(uf || '').trim().toUpperCase(),
+            String(ref || '').trim(),
+          ].join('|');
+          const compMap = new Map((await allC(`
+            SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia
+            FROM ${compTable}
+            WHERE UPPER(COALESCE(fonte,''))='SINAPI'`))
+            .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), r.id_composicao]));
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
           for (const comp of comps) {
             const idGrupo = await getGrupo(comp.grupo);
-            let idComp = compMap.get(comp.codigo);
+            const keyComp = compKey(comp.codigo, compUf, mesRef);
+            let idComp = compMap.get(keyComp);
             if (idComp) {
               if (!sobrepor) continue;
-              await runC('UPDATE composicoes SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE id_composicao=?',
-                [comp.descricao, comp.unidade, idGrupo, mesRef, ufParam === 'TODAS' ? null : ufParam, comp.situacao, idComp]);
-              await runC('DELETE FROM itens_composicao WHERE id_composicao=?', [idComp]);
+              await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE ${compIdWhere}=?`,
+                [comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao, idComp]);
+              await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
               out.composicoes_atualizadas += 1;
             } else {
-              const r = await runC("INSERT INTO composicoes (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')",
-                [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, ufParam === 'TODAS' ? null : ufParam, comp.situacao]);
+              const r = useTenantComps
+                ? await runC(`
+                  INSERT INTO tenant_composicoes
+                    (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,
+                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                  VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo','create','active',datetime('now'),datetime('now'))`,
+                  [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao])
+                : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
+                  [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
               idComp = r.lastID;
-              compMap.set(comp.codigo, idComp);
+              if (useTenantComps) await runC('UPDATE tenant_composicoes SET id_composicao=? WHERE rowid=?', [idComp, idComp]);
+              compMap.set(keyComp, idComp);
               out.composicoes_inseridas += 1;
             }
             let ordem = 0;
             for (const item of comp.itens) {
-              await runC('INSERT INTO itens_composicao (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem) VALUES (?,?,?,?,?,?,?,?)',
-                [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+              if (useTenantComps) {
+                await runC(`
+                  INSERT INTO tenant_itens_composicao
+                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
+                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                  VALUES (?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`,
+                  [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+              } else {
+                await runC(`INSERT INTO ${itemTable} (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem) VALUES (?,?,?,?,?,?,?,?)`,
+                  [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
+              }
               out.itens_inseridos += 1;
             }
           }

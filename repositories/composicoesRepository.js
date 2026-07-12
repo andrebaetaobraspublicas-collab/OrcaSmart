@@ -358,6 +358,152 @@ async function listComposicoes(db, query = {}) {
   return { items, total: Number(total?.total || 0), limit, offset };
 }
 
+function parseMesRef(ref) {
+  const match = String(ref || '').match(/^(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  return { mes: Number(match[1]), ano: Number(match[2]) };
+}
+
+function codigoBusca(codigo) {
+  const raw = String(codigo || '').trim();
+  if (!raw) return [];
+  const bare = raw.includes('.') ? raw.split('.').pop() : raw;
+  return [...new Set([raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`])];
+}
+
+function precoPorRegime(row, regime) {
+  if (!row) return null;
+  if (regime === 'desonerado') {
+    return toNum(row.preco_desonerado || row.preco_referencia, null);
+  }
+  if (regime === 'ambos') {
+    return toNum(row.preco_desonerado || row.preco_nao_desonerado || row.preco_referencia, null);
+  }
+  return toNum(row.preco_nao_desonerado || row.preco_referencia, null);
+}
+
+async function precoInsumoReferencia(db, codigo, uf, mesRef, regime, scope = 'catalog') {
+  const ref = parseMesRef(mesRef);
+  const variantes = codigoBusca(codigo);
+  if (!ref || !variantes.length) return null;
+  const q = variantes.map(() => '?').join(',');
+  const params = [...variantes, String(uf || '').toUpperCase(), ref.mes, ref.ano];
+
+  if (scope === 'tenant' && await tableExists(db, 'tenant_precos_insumos')) {
+    const tenant = await one(db, `
+      SELECT p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
+      FROM tenant_insumos i
+      JOIN tenant_precos_insumos p ON p.id_insumo = i.rowid
+      JOIN catalog.datas_base d ON d.id_data_base = p.id_data_base
+      WHERE i.codigo_insumo IN (${q})
+        AND UPPER(COALESCE(p.uf_referencia,'')) = ?
+        AND d.mes = ? AND d.ano = ?
+        AND COALESCE(i.tenant_override_status,'active')='active'
+        AND COALESCE(p.tenant_override_status,'active')='active'
+      ORDER BY p.rowid DESC LIMIT 1`, params).catch(() => null);
+    const precoTenant = precoPorRegime(tenant, regime);
+    if (precoTenant !== null && precoTenant > 0) return precoTenant;
+  }
+
+  const catalog = await one(db, `
+    SELECT p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
+    FROM catalog.insumos i
+    JOIN catalog.precos_insumos p ON p.id_insumo = i.id_insumo
+    JOIN catalog.datas_base d ON d.id_data_base = p.id_data_base
+    WHERE i.codigo_insumo IN (${q})
+      AND UPPER(COALESCE(p.uf_referencia,'')) = ?
+      AND d.mes = ? AND d.ano = ?
+    ORDER BY p.id_preco DESC LIMIT 1`, params).catch(() => null);
+  const precoCatalog = precoPorRegime(catalog, regime);
+  return precoCatalog !== null && precoCatalog > 0 ? precoCatalog : null;
+}
+
+async function recalcularFonte(db, source, filters = {}) {
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
+  const itemTable = isTenant ? 'tenant_itens_composicao' : 'catalog.itens_composicao';
+  const idCol = isTenant ? 'rowid' : 'id_composicao';
+  if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) {
+    return { analisadas: 0, atualizadas: 0, semPreco: 0 };
+  }
+
+  const where = ["UPPER(COALESCE(fonte,'')) IN ('SINAPI','SICRO')"];
+  const params = [];
+  if (isTenant) where.push("COALESCE(tenant_override_status,'active')='active'");
+  if (filters.uf) {
+    where.push("UPPER(COALESCE(uf_referencia,'')) = ?");
+    params.push(String(filters.uf).toUpperCase());
+  }
+  if (filters.mes_ref) {
+    where.push('mes_referencia = ?');
+    params.push(filters.mes_ref);
+  }
+  if (filters.modo !== 'todos') {
+    where.push('COALESCE(custo_unitario,0) = 0');
+  }
+
+  const comps = await all(db, `
+    SELECT ${idCol} AS id, codigo, uf_referencia, mes_referencia
+    FROM ${table}
+    WHERE ${where.join(' AND ')}`, params);
+
+  let atualizadas = 0;
+  let semPreco = 0;
+  const regime = filters.regime || 'nao_desonerado';
+  for (const comp of comps) {
+    const itens = await all(db, `
+      SELECT codigo_item, coeficiente, tipo_item
+      FROM ${itemTable}
+      WHERE id_composicao = ?
+      ORDER BY ordem`, [comp.id]);
+    let total = 0;
+    let calculou = false;
+    let faltouPreco = false;
+    for (const item of itens) {
+      const preco = await precoInsumoReferencia(db, item.codigo_item, comp.uf_referencia, comp.mes_referencia, regime, source);
+      const coef = toNum(item.coeficiente, 0);
+      if (preco === null) {
+        faltouPreco = true;
+        continue;
+      }
+      total += coef * preco;
+      calculou = true;
+    }
+    if (!calculou || total <= 0) {
+      if (faltouPreco) semPreco += 1;
+      continue;
+    }
+    await run(db, `UPDATE ${table} SET custo_unitario = ? WHERE ${idCol} = ?`, [Number(total.toFixed(4)), comp.id]);
+    atualizadas += 1;
+  }
+
+  return { analisadas: comps.length, atualizadas, semPreco };
+}
+
+async function recalcularCustosReferenciais(db, filters = {}) {
+  const scopes = filters.scope === 'tenant'
+    ? ['tenant']
+    : filters.scope === 'catalog'
+      ? ['catalog']
+      : ['catalog', 'tenant'];
+  const catalog = scopes.includes('catalog')
+    ? await recalcularFonte(db, 'catalog', filters)
+    : { analisadas: 0, atualizadas: 0, semPreco: 0 };
+  const tenant = scopes.includes('tenant')
+    ? await recalcularFonte(db, 'tenant', filters)
+    : { analisadas: 0, atualizadas: 0, semPreco: 0 };
+  const analisadas = catalog.analisadas + tenant.analisadas;
+  const atualizados = catalog.atualizadas + tenant.atualizadas;
+  const semPreco = catalog.semPreco + tenant.semPreco;
+  return {
+    analisadas,
+    atualizados,
+    atualizadas: atualizados,
+    sem_preco: semPreco,
+    mensagem: `Recalculo concluido: ${atualizados} composicao(oes) atualizada(s) de ${analisadas} analisada(s).`,
+  };
+}
+
 function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
@@ -1442,6 +1588,7 @@ module.exports = {
   listGrupos,
   stats,
   listComposicoes,
+  recalcularCustosReferenciais,
   getComposicao,
   createComposicao,
   updateComposicaoDirect,
