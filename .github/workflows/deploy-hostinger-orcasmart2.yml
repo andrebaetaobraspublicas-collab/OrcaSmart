@@ -50,6 +50,7 @@ jobs:
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           local-dir: ./
           server-dir: ${{ env.ORCASMART2_TARGET_DIR }}
+          state-name: .ftp-deploy-sync-state-orcasmart2.json
           exclude: |
             **/.git*
             **/.git*/**
