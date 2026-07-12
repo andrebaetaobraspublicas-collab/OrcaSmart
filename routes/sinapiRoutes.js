@@ -32,7 +32,7 @@ module.exports = function sinapiRoutes(db) {
   };
 
   function asyncHandler(fn) {
-    return (req, res) => fn(req, res).catch(err => res.status(500).json({ erro: err.message }));
+    return (req, res) => fn(req, res).catch(err => res.status(err.status || 500).json({ erro: err.message }));
   }
 
   function decodeXml(value) {
@@ -463,6 +463,10 @@ module.exports = function sinapiRoutes(db) {
       const getC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
       const allC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
       const runC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+      const tableC = async (schema, table) => {
+        const prefix = schema ? `${schema}.` : '';
+        return !!await getC(`SELECT name FROM ${prefix}sqlite_master WHERE type='table' AND name=?`, [table]).catch(() => null);
+      };
 
       const out = {
         data_base: mesRef,
@@ -479,33 +483,44 @@ module.exports = function sinapiRoutes(db) {
 
       await runC('BEGIN IMMEDIATE');
       try {
-        let dataBase = await getC('SELECT id_data_base FROM datas_base WHERE mes=? AND ano=?', [mes, ano]);
-        if (!dataBase) dataBase = await runC('INSERT INTO datas_base (mes,ano,descricao) VALUES (?,?,?)', [mes, ano, `SINAPI ${mesRef}`]).then(r => ({ id_data_base: r.lastID }));
+        const adminImport = req.user && req.user.role === 'admin';
+        const hasCatalogComps = await tableC('catalog', 'composicoes');
+        const useCatalogReferencial = adminImport && hasCatalogComps;
+        const refPrefix = useCatalogReferencial ? 'catalog.' : '';
+        const dataBaseTable = `${refPrefix}datas_base`;
+        const fonteTable = `${refPrefix}fontes_referencia`;
+        const unidadeTable = `${refPrefix}unidades_medida`;
+        const insumoTable = `${refPrefix}insumos`;
+        const precoTable = `${refPrefix}precos_insumos`;
+        const forceReferentialUpdate = useCatalogReferencial || sobrepor;
+
+        let dataBase = await getC(`SELECT id_data_base FROM ${dataBaseTable} WHERE mes=? AND ano=?`, [mes, ano]);
+        if (!dataBase) dataBase = await runC(`INSERT INTO ${dataBaseTable} (mes,ano,descricao) VALUES (?,?,?)`, [mes, ano, `SINAPI ${mesRef}`]).then(r => ({ id_data_base: r.lastID }));
         const idDataBase = dataBase.id_data_base;
 
-        let fonte = await getC("SELECT id_fonte FROM fontes_referencia WHERE nome_fonte='SINAPI' ORDER BY id_fonte LIMIT 1");
+        let fonte = await getC(`SELECT id_fonte FROM ${fonteTable} WHERE nome_fonte='SINAPI' ORDER BY id_fonte LIMIT 1`);
         if (!fonte) fonte = await runC(
-          "INSERT INTO fontes_referencia (nome_fonte,tipo_fonte,orgao_responsavel,abrangencia) VALUES ('SINAPI','Oficial','Caixa Economica Federal / IBGE','Nacional')"
+          `INSERT INTO ${fonteTable} (nome_fonte,tipo_fonte,orgao_responsavel,abrangencia) VALUES ('SINAPI','Oficial','Caixa Economica Federal / IBGE','Nacional')`
         ).then(r => ({ id_fonte: r.lastID }));
         const idFonte = fonte.id_fonte;
 
-        const unidades = new Map((await allC('SELECT sigla,id_unidade FROM unidades_medida')).map(r => [String(r.sigla || '').toUpperCase(), r.id_unidade]));
+        const unidades = new Map((await allC(`SELECT sigla,id_unidade FROM ${unidadeTable}`)).map(r => [String(r.sigla || '').toUpperCase(), r.id_unidade]));
         async function getUnidade(sigla) {
           const key = String(sigla || '').trim().toUpperCase().slice(0, 20);
           if (!key) return null;
           if (unidades.has(key)) return unidades.get(key);
-          const r = await runC('INSERT OR IGNORE INTO unidades_medida (sigla,descricao,tipo_unidade) VALUES (?,?,?)', [key, key, 'Outro']);
-          const row = r.lastID ? { id_unidade: r.lastID } : await getC('SELECT id_unidade FROM unidades_medida WHERE sigla=?', [key]);
+          const r = await runC(`INSERT OR IGNORE INTO ${unidadeTable} (sigla,descricao,tipo_unidade) VALUES (?,?,?)`, [key, key, 'Outro']);
+          const row = r.lastID ? { id_unidade: r.lastID } : await getC(`SELECT id_unidade FROM ${unidadeTable} WHERE sigla=?`, [key]);
           unidades.set(key, row.id_unidade);
           return row.id_unidade;
         }
 
-        const insumoMap = new Map((await allC("SELECT codigo_insumo,id_insumo FROM insumos WHERE UPPER(COALESCE(origem,''))='SINAPI'"))
+        const insumoMap = new Map((await allC(`SELECT codigo_insumo,id_insumo FROM ${insumoTable} WHERE UPPER(COALESCE(origem,''))='SINAPI'`))
           .map(r => [String(r.codigo_insumo), r.id_insumo]));
         const precoMap = new Map((await allC(`
           SELECT p.id_preco, i.codigo_insumo, p.uf_referencia
-          FROM precos_insumos p
-          JOIN insumos i ON i.id_insumo=p.id_insumo
+          FROM ${precoTable} p
+          JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
           WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]))
           .map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
 
@@ -517,12 +532,12 @@ module.exports = function sinapiRoutes(db) {
             let idInsumo = insumoMap.get(ins.codigo);
             const idUnidade = await getUnidade(ins.unidade);
             if (idInsumo) {
-              if (sobrepor) {
-                await runC('UPDATE insumos SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?', [ins.descricao, ins.tipo, idUnidade, idInsumo]);
+              if (forceReferentialUpdate) {
+                await runC(`UPDATE ${insumoTable} SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?`, [ins.descricao, ins.tipo, idUnidade, idInsumo]);
                 out.insumos_atualizados += 1;
               }
             } else {
-              const r = await runC("INSERT INTO insumos (codigo_insumo,descricao,tipo_insumo,id_unidade,origem,situacao) VALUES (?,?,?,?, 'SINAPI','Ativo')", [ins.codigo, ins.descricao, ins.tipo, idUnidade]);
+              const r = await runC(`INSERT INTO ${insumoTable} (codigo_insumo,descricao,tipo_insumo,id_unidade,origem,situacao) VALUES (?,?,?,?, 'SINAPI','Ativo')`, [ins.codigo, ins.descricao, ins.tipo, idUnidade]);
               idInsumo = r.lastID;
               insumoMap.set(ins.codigo, idInsumo);
               out.insumos_inseridos += 1;
@@ -533,12 +548,12 @@ module.exports = function sinapiRoutes(db) {
               const key = `${ins.codigo}|${uf}`;
               const idPreco = precoMap.get(key);
               if (idPreco) {
-                if (sobrepor) {
-                  await runC(`UPDATE precos_insumos SET ${colPreco}=?,preco_referencia=? WHERE id_preco=?`, [preco, preco, idPreco]);
+                if (forceReferentialUpdate) {
+                  await runC(`UPDATE ${precoTable} SET ${colPreco}=?,preco_referencia=? WHERE id_preco=?`, [preco, preco, idPreco]);
                   out.precos_atualizados += 1;
                 }
               } else {
-                const r = await runC(`INSERT INTO precos_insumos (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia) VALUES (?,?,?,?,?,?)`, [idInsumo, idDataBase, idFonte, uf, preco, preco]);
+                const r = await runC(`INSERT INTO ${precoTable} (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia) VALUES (?,?,?,?,?,?)`, [idInsumo, idDataBase, idFonte, uf, preco, preco]);
                 precoMap.set(key, r.lastID);
                 out.precos_inseridos += 1;
               }
@@ -549,20 +564,19 @@ module.exports = function sinapiRoutes(db) {
         if (importarIsd) await processarInsumos(isdSheet, false);
         if (importarIcd) await processarInsumos(icdSheet, true);
 
+        if (importarAnalitico && !analSheet) {
+          throw httpError(400, 'Aba Analitico/Analitico com Custo nao encontrada no arquivo SINAPI enviado.');
+        }
+
         if (importarAnalitico && analSheet) {
-          const tableC = async (schema, table) => {
-            const prefix = schema ? `${schema}.` : '';
-            return !!await getC(`SELECT name FROM ${prefix}sqlite_master WHERE type='table' AND name=?`, [table]).catch(() => null);
-          };
-          const adminImport = req.user && req.user.role === 'admin';
           const hasTenantComps = await tableC('', 'tenant_composicoes');
-          const hasCatalogComps = await tableC('catalog', 'composicoes');
-          const useTenantComps = !adminImport && hasTenantComps;
-          const compTable = useTenantComps ? 'tenant_composicoes' : (hasCatalogComps ? 'catalog.composicoes' : 'composicoes');
-          const itemTable = useTenantComps ? 'tenant_itens_composicao' : (hasCatalogComps ? 'catalog.itens_composicao' : 'itens_composicao');
-          const groupTable = hasCatalogComps ? 'catalog.grupos_composicoes' : 'grupos_composicoes';
+          const useTenantComps = !useCatalogReferencial && hasTenantComps;
+          const compTable = useTenantComps ? 'tenant_composicoes' : (useCatalogReferencial ? 'catalog.composicoes' : 'composicoes');
+          const itemTable = useTenantComps ? 'tenant_itens_composicao' : (useCatalogReferencial ? 'catalog.itens_composicao' : 'itens_composicao');
+          const groupTable = useCatalogReferencial ? 'catalog.grupos_composicoes' : 'grupos_composicoes';
           const compIdSelect = useTenantComps ? 'rowid AS id_composicao' : 'id_composicao';
           const compIdWhere = useTenantComps ? 'rowid' : 'id_composicao';
+          const itemIdWhere = useTenantComps ? 'rowid' : 'id_item';
           const grupos = new Map((await allC(`SELECT nome_grupo,id_grupo_comp FROM ${groupTable}`)).map(r => [String(r.nome_grupo || ''), r.id_grupo_comp]));
           async function getGrupo(nome) {
             const key = String(nome || 'SINAPI').trim() || 'SINAPI';
@@ -584,6 +598,9 @@ module.exports = function sinapiRoutes(db) {
             WHERE UPPER(COALESCE(fonte,''))='SINAPI'`))
             .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), r.id_composicao]));
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
+          if (!comps.length) {
+            throw httpError(400, `Nenhuma composicao foi detectada na aba ${analSheet.name}. Verifique se o arquivo e a planilha SINAPI Referencia oficial.`);
+          }
           for (const comp of comps) {
             const idGrupo = await getGrupo(comp.grupo);
             for (const compUf of ufs) {
@@ -626,10 +643,85 @@ module.exports = function sinapiRoutes(db) {
               }
             }
           }
+
+          const recalcUfs = ufs.map(uf => String(uf || '').toUpperCase()).filter(Boolean);
+          const ufPlaceholders = recalcUfs.map(() => '?').join(',');
+          if (ufPlaceholders) {
+            const precos = await allC(`
+              SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia,
+                     COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0) AS preco
+              FROM ${precoTable} p
+              JOIN ${insumoTable} i ON i.id_insumo = p.id_insumo
+              WHERE p.id_data_base=?
+                AND UPPER(COALESCE(i.origem,''))='SINAPI'
+                AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufPlaceholders})`, [idDataBase, ...recalcUfs]);
+            const precoPorInsumo = new Map(precos.map(p => [`${String(p.codigo_insumo || '').trim()}|${p.uf_referencia}`, Number(p.preco || 0)]));
+            const compRows = await allC(`
+              SELECT ${compIdSelect}, codigo, UPPER(COALESCE(uf_referencia,'')) AS uf_referencia, mes_referencia, custo_unitario
+              FROM ${compTable}
+              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+                AND mes_referencia=?
+                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufPlaceholders})`, [mesRef, ...recalcUfs]);
+            const custoPorComposicao = new Map(compRows.map(c => [
+              `${String(c.codigo || '').trim()}|${c.uf_referencia}|${c.mes_referencia}`,
+              Number(c.custo_unitario || 0),
+            ]));
+            const itensCalc = await allC(`
+              SELECT i.${itemIdWhere} AS item_pk, i.id_composicao, i.tipo_item, i.codigo_item, i.coeficiente,
+                     c.${compIdWhere} AS comp_pk, c.codigo AS comp_codigo, UPPER(COALESCE(c.uf_referencia,'')) AS uf_referencia, c.mes_referencia
+              FROM ${itemTable} i
+              JOIN ${compTable} c ON i.id_composicao = c.${compIdWhere}
+              WHERE UPPER(COALESCE(c.fonte,''))='SINAPI'
+                AND c.mes_referencia=?
+                AND UPPER(COALESCE(c.uf_referencia,'')) IN (${ufPlaceholders})
+              ORDER BY c.${compIdWhere}, i.ordem`, [mesRef, ...recalcUfs]);
+            const itensPorComposicao = new Map();
+            for (const item of itensCalc) {
+              const key = String(item.comp_pk);
+              if (!itensPorComposicao.has(key)) itensPorComposicao.set(key, []);
+              itensPorComposicao.get(key).push(item);
+            }
+            const compPorId = new Map(compRows.map(c => [String(c.id_composicao), c]));
+            const atualizadas = new Set();
+            const isCompItem = value => normalizeText(value).includes('composicao');
+            for (let pass = 0; pass < Math.min(10, Math.max(3, compRows.length)); pass += 1) {
+              let mudou = false;
+              for (const comp of compRows) {
+                const itens = itensPorComposicao.get(String(comp.id_composicao)) || [];
+                let total = 0;
+                let calculou = false;
+                for (const item of itens) {
+                  const codigoItem = String(item.codigo_item || '').trim();
+                  const coef = toNum(item.coeficiente, 0);
+                  const preco = isCompItem(item.tipo_item)
+                    ? (custoPorComposicao.get(`${codigoItem}|${item.uf_referencia}|${item.mes_referencia}`) || 0)
+                    : (precoPorInsumo.get(`${codigoItem}|${item.uf_referencia}`) || 0);
+                  if (!preco || !coef) continue;
+                  const parcial = Number((coef * preco).toFixed(4));
+                  total += parcial;
+                  calculou = true;
+                  await runC(`UPDATE ${itemTable} SET preco_unitario=?, custo_parcial=? WHERE ${itemIdWhere}=?`, [preco, parcial, item.item_pk]).catch(() => {});
+                }
+                if (!calculou || total <= 0) continue;
+                const custo = Number(total.toFixed(4));
+                const key = `${String(comp.codigo || '').trim()}|${comp.uf_referencia}|${comp.mes_referencia}`;
+                if (Math.abs((custoPorComposicao.get(key) || 0) - custo) > 0.0001) {
+                  custoPorComposicao.set(key, custo);
+                  const ref = compPorId.get(String(comp.id_composicao));
+                  if (ref) ref.custo_unitario = custo;
+                  await runC(`UPDATE ${compTable} SET custo_unitario=? WHERE ${compIdWhere}=?`, [custo, comp.id_composicao]);
+                  atualizadas.add(String(comp.id_composicao));
+                  mudou = true;
+                }
+              }
+              if (!mudou) break;
+            }
+            out.composicoes_recalculadas = atualizadas.size;
+          }
         }
 
         await runC('COMMIT');
-        out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas.`;
+        out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
       } catch (err) {
         await runC('ROLLBACK').catch(() => {});

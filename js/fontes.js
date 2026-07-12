@@ -974,15 +974,16 @@ Router.register('fontes', async () => {
           ${kpi('Composições novas',  res.composicoes_inseridas,'#6366f1')}
           ${kpi('Composições atualizadas',res.composicoes_atualizadas,'#f59e0b')}
         </div>
-        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
           ${kpi('Itens de composição inseridos', res.itens_inseridos, '#0ea5e9')}
+          ${kpi('Composições recalculadas', res.composicoes_recalculadas || 0, '#10b981')}
           ${kpi('Composições novas + atualizadas',
                 (res.composicoes_inseridas||0)+(res.composicoes_atualizadas||0), '#10b981')}
         </div>
 
         <div style="margin-top:12px;background:#fefce8;border:1px solid #fde047;border-radius:var(--radius);padding:10px 12px;font-size:.8rem;color:#713f12">
-          💡 <strong>Próximo passo:</strong> acesse <strong>Composições → Recalcular Custos SINAPI</strong>
-          para calcular os custos das composições com base nos preços importados.
+          💡 <strong>Recálculo automático:</strong> as composições da UF/data-base importada foram recalculadas com os preços disponíveis.
+          O botão <strong>Recalcular Custos SINAPI</strong> permanece disponível para conferências ou atualizações posteriores.
         </div>
 
         ${res.alertas && res.alertas.length ? `

@@ -418,6 +418,56 @@ async function precoInsumoReferencia(db, codigo, uf, mesRef, regime, scope = 'ca
   return precoCatalog !== null && precoCatalog > 0 ? precoCatalog : null;
 }
 
+async function carregarCachePrecosInsumos(db, source, filters = {}, regime = 'nao_desonerado') {
+  const uf = String(filters.uf || '').trim().toUpperCase();
+  const mesRef = String(filters.mes_ref || '').trim();
+  if (!uf || !mesRef) return null;
+  const [mes, ano] = mesRef.split('/').map(v => Number(v));
+  if (!mes || !ano) return null;
+
+  const rows = [];
+  const selectPreco = regime === 'desonerado'
+    ? 'COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_referencia,0), NULLIF(p.preco_nao_desonerado,0), 0)'
+    : (regime === 'ambos'
+      ? 'COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0)'
+      : 'COALESCE(NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), NULLIF(p.preco_desonerado,0), 0)');
+
+  if (source === 'tenant' && await tableExists(db, 'tenant_precos_insumos')) {
+    const tenantRows = await all(db, `
+      SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia, ? AS mes_referencia,
+             ${selectPreco} AS preco
+      FROM tenant_precos_insumos p
+      JOIN tenant_insumos i ON i.rowid = p.id_insumo
+      JOIN datas_base d ON d.id_data_base = p.id_data_base
+      WHERE d.mes=? AND d.ano=? AND UPPER(COALESCE(p.uf_referencia,''))=?`, [mesRef, mes, ano, uf]).catch(() => []);
+    rows.push(...tenantRows);
+  }
+
+  const schema = source === 'catalog' ? 'catalog.' : '';
+  const schemaName = source === 'catalog' ? 'catalog' : 'main';
+  if (await tableExists(db, 'precos_insumos', schemaName)) {
+    const catalogRows = await all(db, `
+      SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia, ? AS mes_referencia,
+             ${selectPreco} AS preco
+      FROM ${schema}precos_insumos p
+      JOIN ${schema}insumos i ON i.id_insumo = p.id_insumo
+      JOIN ${schema}datas_base d ON d.id_data_base = p.id_data_base
+      WHERE d.mes=? AND d.ano=? AND UPPER(COALESCE(p.uf_referencia,''))=?`, [mesRef, mes, ano, uf]).catch(() => []);
+    rows.push(...catalogRows);
+  }
+
+  const cache = new Map();
+  for (const row of rows) {
+    const preco = toNum(row.preco, 0);
+    if (preco > 0) cache.set([
+      String(row.codigo_insumo || '').trim(),
+      row.uf_referencia,
+      row.mes_referencia,
+    ].join('|'), preco);
+  }
+  return cache;
+}
+
 function chaveComposicaoReferencia(codigo, uf, mesRef) {
   return [
     String(codigo || '').trim(),
@@ -577,6 +627,7 @@ async function recalcularFonte(db, source, filters = {}) {
   const atualizadasIds = new Set();
   let semPreco = 0;
   const regime = filters.regime || 'nao_desonerado';
+  const precoCache = await carregarCachePrecosInsumos(db, source, filters, regime);
 
   for (let pass = 0; pass < Math.max(3, Math.min(12, comps.length)); pass += 1) {
     let mudouNaPassada = false;
@@ -603,7 +654,13 @@ async function recalcularFonte(db, source, filters = {}) {
             preco = fallback ? fallback[1] : null;
           }
         } else {
-          preco = await precoInsumoReferencia(db, item.codigo_item, comp.uf_referencia, comp.mes_referencia, regime, source);
+          const cacheKey = [
+            String(item.codigo_item || '').trim(),
+            String(comp.uf_referencia || '').trim().toUpperCase(),
+            String(comp.mes_referencia || '').trim(),
+          ].join('|');
+          preco = precoCache?.get(cacheKey);
+          if (!preco) preco = await precoInsumoReferencia(db, item.codigo_item, comp.uf_referencia, comp.mes_referencia, regime, source);
         }
         if (preco === null || !Number.isFinite(Number(preco))) {
           faltouPreco = true;
