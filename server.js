@@ -733,7 +733,7 @@ app.use(express.static(APP_DIR, {
 }));
 
 app.get('/', (req, res) => {
-  if (!req.session.userId) return res.redirect('/login.html');
+  if (!req.session.userId) return res.sendFile(path.join(APP_DIR, 'login.html'));
   return res.sendFile(path.join(APP_DIR, 'index.html'));
 });
 
@@ -959,7 +959,7 @@ app.use('/api', apiNotFound);
 app.use(apiErrorHandler);
 
 app.get('*', (req, res) => {
-  if (!req.session.userId) return res.redirect('/login.html');
+  if (!req.session.userId) return res.sendFile(path.join(APP_DIR, 'login.html'));
   return res.sendFile(path.join(APP_DIR, 'index.html'));
 });
 
