@@ -46,6 +46,7 @@ function buildEstruturaItens(payload = {}, obra = {}) {
       unidade: item.unidade || item.unid || 'UN',
       quantidade: round(toNum(item.quantidade, 1), 3),
       custo_unitario: round(toNum(item.custo_unitario ?? item.preco_unitario, 0), 2),
+      id_composicao: item.id_composicao || null,
     })).filter(item => item.quantidade > 0);
   }
 
@@ -103,6 +104,20 @@ function buildEstruturaItens(payload = {}, obra = {}) {
   ];
 }
 
+async function vincularComposicoesEstruturais(db, idOrcamento) {
+  try {
+    const resultado = await orcamentosService.vincularComposicoesAutomaticamente(db, idOrcamento);
+    await orcamentosService.updateTotais(db, idOrcamento).catch(() => {});
+    return resultado || { vinculados: 0, verificados: 0, mensagem: '' };
+  } catch (err) {
+    return {
+      vinculados: 0,
+      verificados: 0,
+      erro: err.message || 'Nao foi possivel vincular composicoes automaticamente.',
+    };
+  }
+}
+
 async function gerarOrcamentoEstrutural(db, payload = {}) {
   const idObra = payload.id_obra || payload.idObra;
   if (!idObra) throw httpError(400, 'Selecione a obra de destino.');
@@ -154,6 +169,7 @@ async function gerarOrcamentoEstrutural(db, payload = {}) {
       profundidade: 1,
       codigo: item.codigo,
       fonte: item.fonte || 'USUARIO',
+      id_composicao: item.id_composicao || null,
       descricao: item.descricao,
       unidade: item.unidade,
       quantidade: item.quantidade,
@@ -162,11 +178,14 @@ async function gerarOrcamentoEstrutural(db, payload = {}) {
     });
   }
 
-  await orcamentosService.updateTotais(db, orcamento.id_orcamento).catch(() => {});
+  const vinculo = await vincularComposicoesEstruturais(db, orcamento.id_orcamento);
   return {
     id_orcamento: orcamento.id_orcamento,
     nome_orcamento: nome,
     itens_criados: itens.length,
+    vinculos: vinculo.vinculados || 0,
+    vinculos_verificados: vinculo.verificados || 0,
+    vinculo_mensagem: vinculo.mensagem || vinculo.erro || null,
     mensagem: 'Orcamento estrutural gerado com sucesso.',
   };
 }
@@ -219,6 +238,7 @@ async function incluirOrcamentoEstrutural(db, idOrcamento, payload = {}) {
       profundidade: 1,
       codigo: item.codigo,
       fonte: item.fonte || 'USUARIO',
+      id_composicao: item.id_composicao || null,
       descricao: item.descricao,
       unidade: item.unidade,
       quantidade: item.quantidade,
@@ -228,11 +248,14 @@ async function incluirOrcamentoEstrutural(db, idOrcamento, payload = {}) {
     });
   }
 
-  await orcamentosService.updateTotais(db, idOrcamento).catch(() => {});
+  const vinculo = await vincularComposicoesEstruturais(db, idOrcamento);
 
   return {
     id_orcamento: idOrcamento,
     itens_incluidos: itens.length,
+    vinculos: vinculo.vinculados || 0,
+    vinculos_verificados: vinculo.verificados || 0,
+    vinculo_mensagem: vinculo.mensagem || vinculo.erro || null,
     mensagem: 'Servicos estruturais incluidos no orcamento.',
   };
 }

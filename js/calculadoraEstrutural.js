@@ -1,7 +1,7 @@
 /* js/calculadoraEstrutural.js */
 
 (function () {
-  const VERSION = '20260711-original';
+  const VERSION = '20260712-estrutural-analitico';
 
   function ensureEmbeddedCalculatorStyles() {
     if (document.getElementById('embedded-calculator-styles')) return;
