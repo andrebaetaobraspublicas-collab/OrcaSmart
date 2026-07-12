@@ -253,17 +253,17 @@ async function stats(db) {
           WHERE ${visibleCatalog}
           UNION ALL
           SELECT rowid FROM tenant_insumos WHERE tenant_override_status='active'
-        )`,
-      material: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Material' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Material')`,
-      mao_de_obra: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra'))`,
-      equipamento: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Equipamento' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Equipamento')`,
-      servico_auxiliar: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar'))`,
+        ) AS insumos_unificados`,
+      material: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Material' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Material') AS insumos_material`,
+      mao_de_obra: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra')) AS insumos_mao_de_obra`,
+      equipamento: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Equipamento' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Equipamento') AS insumos_equipamento`,
+      servico_auxiliar: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Servico Auxiliar' OR tipo_insumo='ServiÃ§o Auxiliar')) AS insumos_servico_auxiliar`,
       com_preco: `
         SELECT COUNT(DISTINCT id_insumo) AS total FROM (
           SELECT id_insumo FROM catalog.precos_insumos
           UNION ALL
           SELECT 'tenant:' || id_insumo FROM tenant_precos_insumos WHERE tenant_override_status='active'
-        )`,
+        ) AS insumos_com_preco`,
     };
     const result = {};
     for (const [key, sql] of Object.entries(queries)) {
@@ -374,7 +374,7 @@ async function listInsumos(db, query = {}) {
         ${catalog.sql}
         UNION ALL
         ${tenant.sql}
-      )
+      ) AS insumos_unificados
       ORDER BY CASE tipo_insumo
         WHEN 'Material' THEN 0
         WHEN 'Mao de Obra' THEN 1

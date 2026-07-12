@@ -286,7 +286,7 @@ async function listPerfis(db, query = {}) {
         ${catalog.sql}
         UNION ALL
         ${tenant.sql}
-      )
+      ) AS perfis_encargos_unificados
       ORDER BY fonte_referencia, uf_referencia, categoria, regime, vigencia_inicio`, [...catalog.params, ...tenant.params]);
   }
   if (!(await hasTenantEncargosOverrides(db))) await ensureSchema(db);

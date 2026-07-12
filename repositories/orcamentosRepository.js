@@ -231,7 +231,7 @@ async function buscarComposicaoParaItem(db, item, contexto) {
 
   const sql = `
     SELECT *
-    FROM (${selects.join('\nUNION ALL\n')})
+    FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
     ${where}
     LIMIT 100`;
   const candidatos = await all(db, sql, params).catch(() => []);

@@ -99,7 +99,7 @@ async function listDatasBase(db) {
                t.rowid AS tenant_rowid, 'tenant' AS _tenant_scope
         FROM tenant_datas_base t
         WHERE COALESCE(t.tenant_override_status,'active')='active'
-      )
+      ) AS datas_base_unificadas
       ORDER BY ano DESC, mes DESC`);
   }
   return all(db, 'SELECT * FROM datas_base ORDER BY ano DESC, mes DESC');

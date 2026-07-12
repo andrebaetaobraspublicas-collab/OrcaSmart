@@ -269,7 +269,7 @@ async function listPerfis(db, query = {}) {
         ${catalog.sql}
         UNION ALL
         ${tenant.sql}
-      )
+      ) AS perfis_bdi_unificados
       ORDER BY tipo_obra, nome_perfil`, [...catalog.params, ...tenant.params]);
   }
 
