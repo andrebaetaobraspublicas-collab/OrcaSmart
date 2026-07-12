@@ -1,7 +1,7 @@
 /* js/administracaoCanteiro.js */
 
 (function () {
-  const VERSION = '20260711-original';
+  const VERSION = '20260712-parametrico';
 
   function ensureEmbeddedCalculatorStyles() {
     if (document.getElementById('embedded-calculator-styles')) return;

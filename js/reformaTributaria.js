@@ -1,7 +1,7 @@
 /* js/reformaTributaria.js - Calculadora BDIPro incorporada */
 
 Router.register('reforma-tributaria', async () => {
-  const src = 'embedded/bdipro.html?v=20260712-bdipro';
+  const src = 'embedded/bdipro.html?v=20260712-bdipro-sem-manual';
   document.getElementById('pageContent').innerHTML = `
     <div class="rt-bdipro-shell">
       <div class="rt-bdipro-framebar">
