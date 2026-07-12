@@ -341,7 +341,8 @@ Router.register('composicoes', async () => {
 
     // Conteúdo específico por formato
     let corpo = '';
-    if (comp.formato === 'UNITARIO') {
+    const formato = String(comp.formato || '').toUpperCase();
+    if (formato === 'UNITARIO' || formato === 'UNITÁRIO') {
       corpo = renderItensUnitario(comp.itens || []);
     } else {
       corpo = renderDemostrativoProducao(comp.secoes || [], comp);
@@ -583,7 +584,8 @@ Router.register('composicoes', async () => {
     if (id) { try { c = await API.composicoes.get(id); } catch(e){ Toast.error(e.message); return; } }
 
     // ── Inicializar itens: SINAPI usa itens[], SICRO usa secoes[].itens[] ──
-    const isSICRO = c.formato === 'PRODUCAO_HORARIA' || c.fonte === 'SICRO';
+    const formato = String(c.formato || '').toUpperCase();
+    const isSICRO = formato === 'PRODUCAO_HORARIA' || c.fonte === 'SICRO';
     const SEC_LETRA_TIPO = { A:'EQUIPAMENTO', B:'MO', C:'INSUMO', D:'INSUMO', E:'INSUMO', F:'INSUMO' };
 
     if (isSICRO && (c.secoes||[]).length > 0) {

@@ -73,7 +73,7 @@ async function criarComposicoes(db, payload = {}) {
     const row = await composicoesService.createComposicao(db, {
       codigo: comp.codigo || `ADM-${Date.now()}-${idx + 1}`,
       fonte: 'USUARIO',
-      formato: 'Unitario',
+      formato: 'UNITARIO',
       descricao: comp.descricao,
       unidade: comp.unidade || 'UN',
       mes_referencia: payload.mes_referencia || payload.referencia || null,
