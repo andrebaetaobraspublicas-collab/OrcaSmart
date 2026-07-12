@@ -72,7 +72,10 @@ module.exports = function(db) {
   }));
 
   router.post('/:id/sintetico/reordenar', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.reordenarSintetico(db, req.params.id, req.body));
+    const result = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.reordenarSintetico(writeDb, req.params.id, req.body))
+      : await orcamentosService.reordenarSintetico(db, req.params.id, req.body);
+    res.json(result);
   }));
 
   router.put('/:id/sintetico/restaurar', asyncHandler(async (req, res) => {
