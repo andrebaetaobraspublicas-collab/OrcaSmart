@@ -205,6 +205,44 @@ Router.register('fontes', async () => {
     return data;
   }
 
+  async function aguardarSinapiSegundoPlano(cfg) {
+    const box = document.getElementById('sinapiResultado');
+    const btn = document.getElementById('btnFecharSINAPI');
+    const inicio = Date.now();
+    let ultimoTotal = -1;
+    let leiturasEstaveis = 0;
+    for (let tentativa = 1; tentativa <= 60; tentativa += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      let status = null;
+      try {
+        const q = new URLSearchParams({ mes: String(cfg.mes), ano: String(cfg.ano), uf: cfg.uf || 'DF' });
+        status = await fetch(`/api/sinapi/status-importacao?${q.toString()}`).then(r => r.json());
+      } catch (_) {
+        status = null;
+      }
+      const total = Number(status?.composicoes || 0);
+      if (total > 0 && total === ultimoTotal) leiturasEstaveis += 1;
+      else leiturasEstaveis = 0;
+      ultimoTotal = total;
+      if (box) {
+        box.innerHTML = `
+          <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:16px 18px;color:#1e3a8a;line-height:1.55">
+            <div style="font-size:1rem;font-weight:800;margin-bottom:8px">${leiturasEstaveis >= 2 ? 'Importacao concluida' : 'Importacao em processamento'}</div>
+            <div style="font-size:.86rem">
+              ${total.toLocaleString('pt-BR')} composicao(oes) SINAPI localizadas para ${String(cfg.mes).padStart(2,'0')}/${cfg.ano} - ${Utils.esc(cfg.uf || 'DF')}.
+            </div>
+            <div style="margin-top:10px;font-size:.8rem;color:#1d4ed8">
+              Tempo acompanhado: ${Math.round((Date.now() - inicio) / 1000)}s
+            </div>
+          </div>`;
+      }
+      if (leiturasEstaveis >= 2) {
+        if (btn) btn.textContent = 'Fechar';
+        return;
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // IMPORTAÇÃO SINAPI — Wizard 3 etapas
   // ═══════════════════════════════════════════════════════════════════════════
@@ -967,6 +1005,7 @@ Router.register('fontes', async () => {
               Data-base: <strong>${String(cfg.mes).padStart(2,'0')}/${cfg.ano}</strong> · UF: <strong>${Utils.esc(cfg.uf || 'DF')}</strong>
             </div>
           </div>`;
+        aguardarSinapiSegundoPlano(cfg);
         return;
       }
 

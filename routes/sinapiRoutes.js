@@ -430,6 +430,33 @@ module.exports = function sinapiRoutes(db) {
     });
   }));
 
+  router.get('/status-importacao', asyncHandler(async (req, res) => {
+    const mes = Number(req.query.mes || 0);
+    const ano = Number(req.query.ano || 0);
+    const uf = String(req.query.uf || '').trim().toUpperCase();
+    if (!mes || !ano || !uf) return res.status(400).json({ erro: 'Informe mes, ano e UF.' });
+    const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
+    const compTenant = await one(`
+      SELECT COUNT(*) AS total
+      FROM tenant_composicoes
+      WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+        AND mes_referencia=?
+        AND UPPER(COALESCE(uf_referencia,''))=?`, [mesRef, uf]).catch(() => ({ total: 0 }));
+    const compCatalog = await one(`
+      SELECT COUNT(*) AS total
+      FROM composicoes
+      WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+        AND mes_referencia=?
+        AND UPPER(COALESCE(uf_referencia,''))=?`, [mesRef, uf]).catch(() => ({ total: 0 }));
+    res.json({
+      data_base: mesRef,
+      uf,
+      composicoes: Number(compTenant?.total || 0) + Number(compCatalog?.total || 0),
+      processando: true,
+      atualizado_em: new Date().toISOString(),
+    });
+  }));
+
   router.post('/importar', express.raw({ type: () => true, limit: '160mb' }), asyncHandler(async (req, res) => {
     const upload = parseMultipart(req.body, req.headers['content-type']);
     const file = upload.file;
