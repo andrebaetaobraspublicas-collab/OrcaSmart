@@ -14,14 +14,14 @@ const tenantScalarQueries = {
   totalObras: 'SELECT COUNT(*) AS total FROM obras',
   totalOrcamentos: 'SELECT COUNT(*) AS total FROM orcamentos',
   totalEventogramas: 'SELECT COUNT(*) AS total FROM eventogramas',
+  totalCompUsuario: "SELECT COUNT(*) AS total FROM tenant_composicoes WHERE UPPER(COALESCE(fonte, '')) = 'USUARIO' AND COALESCE(tenant_override_status,'active')='active'",
 };
 
 const catalogScalarQueries = {
   totalInsumos: 'SELECT COUNT(*) AS total FROM insumos',
-  totalComposicoes: 'SELECT COUNT(*) AS total FROM composicoes',
+  totalComposicoes: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) <> 'USUARIO'",
   totalCompSINAPI: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SINAPI'",
   totalCompSICRO: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'SICRO'",
-  totalCompUsuario: "SELECT COUNT(*) AS total FROM composicoes WHERE UPPER(COALESCE(fonte, '')) = 'USUARIO'",
   totalUnidades: 'SELECT COUNT(*) AS total FROM unidades_medida',
   totalFontes: 'SELECT COUNT(*) AS total FROM fontes_referencia',
 };
@@ -45,6 +45,7 @@ async function stats(db, options = {}) {
   for (const [key, sql] of Object.entries(catalogScalarQueries)) {
     result[key] = await safeScalar(readDb, sql);
   }
+  result.totalComposicoes = Number(result.totalComposicoes || 0) + Number(result.totalCompUsuario || 0);
   try {
     result.ultimosOrcamentos = await all(db, `
       SELECT o.id_orcamento, o.nome_orcamento, o.status, o.data_criacao,
