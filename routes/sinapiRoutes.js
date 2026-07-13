@@ -633,31 +633,45 @@ module.exports = function sinapiRoutes(db) {
       return res.status(500).json({ erro: 'Backend SaaS sem suporte a importacao transacional.' });
     }
 
-    const files = unzipXlsx(file.buffer);
-    const sheets = getWorkbookSheets(files);
-    const isdSheet = findSheet(sheets, 'ISD');
-    const icdSheet = findSheet(sheets, 'ICD');
-    const analSheet = findAnaliticoSheet(files, sheets);
-    let parsedDate = { mes: Number(fields.mes || 0), ano: Number(fields.ano || 0) };
-    if (!parsedDate.mes || !parsedDate.ano) {
-      const sampleRows = [isdSheet, icdSheet, analSheet].filter(Boolean).map(s => parseSheetRows(files, s.path).slice(0, 8));
-      parsedDate = sampleRows.map(parseMesRefFromRows).find(Boolean) || detectSinapiDate(file.originalname, files);
-    }
-    const mes = Number(parsedDate.mes || 0);
-    const ano = Number(parsedDate.ano || 0);
-    if (!mes || !ano || mes < 1 || mes > 12) {
-      return res.status(400).json({ erro: 'Mes/ano de referencia nao identificado. Informe manualmente no passo anterior.' });
-    }
+    const asyncMode = ['true', '1', 'sim', 'yes'].includes(String(fields.async || '').toLowerCase());
+    const requestedMes = Number(fields.mes || 0);
+    const requestedAno = Number(fields.ano || 0);
+    const requestedUf = String(fields.uf || 'TODAS').trim().toUpperCase();
+    const requestedImportarIsd = String(fields.importar_isd || 'true').toLowerCase() === 'true';
+    const requestedImportarIcd = String(fields.importar_icd || 'true').toLowerCase() === 'true';
+    const requestedImportarAnalitico = String(fields.importar_analitico || 'true').toLowerCase() === 'true';
 
-    const ufParam = String(fields.uf || 'TODAS').trim().toUpperCase();
-    const ufs = ufParam && ufParam !== 'TODAS' && UFS_SINAPI.includes(ufParam) ? [ufParam] : UFS_SINAPI;
-    const importarIsd = String(fields.importar_isd || 'true').toLowerCase() === 'true';
-    const importarIcd = String(fields.importar_icd || 'true').toLowerCase() === 'true';
-    const importarAnalitico = String(fields.importar_analitico || 'true').toLowerCase() === 'true';
-    const sobrepor = String(fields.sobrepor || 'false').toLowerCase() === 'true';
-    const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
+    const executarImportacao = async (progress = () => {}) => {
+      progress({
+        percent: 2,
+        fase: 'Lendo arquivo SINAPI',
+        mensagem: 'Arquivo recebido; preparando leitura da planilha.',
+      });
+      const files = unzipXlsx(file.buffer);
+      const sheets = getWorkbookSheets(files);
+      const isdSheet = findSheet(sheets, 'ISD');
+      const icdSheet = findSheet(sheets, 'ICD');
+      const analSheet = findAnaliticoSheet(files, sheets);
+      let parsedDate = { mes: requestedMes, ano: requestedAno };
+      if (!parsedDate.mes || !parsedDate.ano) {
+        const sampleRows = [isdSheet, icdSheet, analSheet].filter(Boolean).map(s => parseSheetRows(files, s.path).slice(0, 8));
+        parsedDate = sampleRows.map(parseMesRefFromRows).find(Boolean) || detectSinapiDate(file.originalname, files);
+      }
+      const mes = Number(parsedDate.mes || 0);
+      const ano = Number(parsedDate.ano || 0);
+      if (!mes || !ano || mes < 1 || mes > 12) {
+        throw httpError(400, 'Mes/ano de referencia nao identificado. Informe manualmente no passo anterior.');
+      }
 
-    const executarImportacao = async (progress = () => {}) => db.withConnection(async (conn) => {
+      const ufParam = requestedUf;
+      const ufs = ufParam && ufParam !== 'TODAS' && UFS_SINAPI.includes(ufParam) ? [ufParam] : UFS_SINAPI;
+      const importarIsd = requestedImportarIsd;
+      const importarIcd = requestedImportarIcd;
+      const importarAnalitico = requestedImportarAnalitico;
+      const sobrepor = String(fields.sobrepor || 'false').toLowerCase() === 'true';
+      const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
+
+      return db.withConnection(async (conn) => {
       const getC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
       const allC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
       const runC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
@@ -1336,18 +1350,18 @@ module.exports = function sinapiRoutes(db) {
         if (useLongTransaction) await runC('ROLLBACK').catch(() => {});
         throw err;
       }
-    });
+      });
+    };
 
-    const asyncMode = ['true', '1', 'sim', 'yes'].includes(String(fields.async || '').toLowerCase());
     if (asyncMode) {
       const job = createSinapiJob(req.user, {
-        mes,
-        ano,
-        uf: ufParam,
+        mes: requestedMes || null,
+        ano: requestedAno || null,
+        uf: requestedUf,
         abas: {
-          isd: importarIsd,
-          icd: importarIcd,
-          analitico: importarAnalitico,
+          isd: requestedImportarIsd,
+          icd: requestedImportarIcd,
+          analitico: requestedImportarAnalitico,
         },
         arquivo: file.originalname || '',
       });
