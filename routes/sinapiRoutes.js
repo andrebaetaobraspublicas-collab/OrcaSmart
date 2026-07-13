@@ -628,7 +628,6 @@ module.exports = function sinapiRoutes(db) {
                   : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
                     [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
                 idComp = r.lastID;
-                if (useTenantComps) await runC('UPDATE tenant_composicoes SET id_composicao=? WHERE rowid=?', [idComp, idComp]);
                 compMap.set(keyComp, idComp);
                 out.composicoes_inseridas += 1;
               }

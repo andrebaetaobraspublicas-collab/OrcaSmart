@@ -17,6 +17,7 @@ const TENANT_PK = {
 
 const TENANT_SCOPED_TABLES = new Set([...TENANT_TABLES, ...USER_OVERRIDE_TABLES]);
 const CATALOG_TABLE_SET = new Set(CATALOG_TABLES);
+const TENANT_ID_SEQUENCE_CACHE = new WeakMap();
 
 function normalizeParams(params, cb) {
   if (typeof params === 'function') return { params: [], cb: params };
@@ -147,11 +148,24 @@ function splitCsv(text) {
 }
 
 async function nextTenantId(conn, table, pkColumn, tenantId) {
+  let connCache = TENANT_ID_SEQUENCE_CACHE.get(conn);
+  if (!connCache) {
+    connCache = new Map();
+    TENANT_ID_SEQUENCE_CACHE.set(conn, connCache);
+  }
+  const cacheKey = `${tenantId}:${table}:${pkColumn}`;
+  if (connCache.has(cacheKey)) {
+    const next = connCache.get(cacheKey);
+    connCache.set(cacheKey, next + 1);
+    return next;
+  }
   const [rows] = await conn.execute(
     `SELECT COALESCE(MAX(\`${pkColumn}\`), 0) + 1 AS next_id FROM \`${table}\` WHERE tenant_id = ?`,
     [tenantId],
   );
-  return rows[0] ? Number(rows[0].next_id) : 1;
+  const next = rows[0] ? Number(rows[0].next_id) : 1;
+  connCache.set(cacheKey, next + 1);
+  return next;
 }
 
 async function qualifyTenantInsert(conn, sql, params, tenantId) {
