@@ -163,14 +163,18 @@ async function listEventogramas(db, filters = {}) {
 
   return all(db, `
     SELECT eg.*, o.nome_orcamento, o.valor_total, ob.nome_obra,
-           COUNT(DISTINCT ev.id_evento) AS qtd_eventos
+           (
+             SELECT COUNT(*)
+             FROM ev_eventos ev
+             WHERE ev.id_eventograma=eg.id_eventograma
+               AND ev.id_evento_pai IS NULL
+           ) AS qtd_eventos
     FROM eventogramas eg
     JOIN orcamentos o ON o.id_orcamento=eg.id_orcamento
     JOIN obras ob ON ob.id_obra=o.id_obra
-    LEFT JOIN ev_eventos ev ON ev.id_eventograma=eg.id_eventograma AND ev.id_evento_pai IS NULL
     WHERE 1=1 ${where}
-    GROUP BY eg.id_eventograma
-    ORDER BY eg.data_criacao DESC`, params);
+    ORDER BY eg.data_criacao DESC, eg.id_eventograma DESC
+    LIMIT 100`, params);
 }
 
 async function createEventograma(db, data = {}) {

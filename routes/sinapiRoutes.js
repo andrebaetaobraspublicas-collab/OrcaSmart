@@ -1,6 +1,85 @@
 ﻿const express = require('express');
+const crypto = require('crypto');
 const zlib = require('zlib');
 const { databaseEngine } = require('../utils/mysqlRuntime');
+
+const SINAPI_IMPORT_JOBS = new Map();
+const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
+
+function cleanupSinapiJobs() {
+  const cutoff = Date.now() - SINAPI_IMPORT_JOB_TTL_MS;
+  for (const [id, job] of SINAPI_IMPORT_JOBS.entries()) {
+    if (job.updated_at_ms < cutoff) SINAPI_IMPORT_JOBS.delete(id);
+  }
+}
+
+function createSinapiJob(user, meta = {}) {
+  cleanupSinapiJobs();
+  const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  const now = Date.now();
+  const job = {
+    id,
+    id_user: user?.id_user || null,
+    tenant_id: user?.tenant_id || null,
+    status: 'running',
+    percent: 1,
+    fase: 'Iniciando',
+    mensagem: 'Preparando importacao SINAPI...',
+    counts: {},
+    result: null,
+    erro: null,
+    meta,
+    started_at: new Date(now).toISOString(),
+    updated_at: new Date(now).toISOString(),
+    updated_at_ms: now,
+  };
+  SINAPI_IMPORT_JOBS.set(id, job);
+  return job;
+}
+
+function updateSinapiJob(id, patch = {}) {
+  const job = SINAPI_IMPORT_JOBS.get(id);
+  if (!job) return null;
+  if (patch.percent != null) job.percent = Math.max(1, Math.min(99, Number(patch.percent) || job.percent));
+  if (patch.fase) job.fase = patch.fase;
+  if (patch.mensagem) job.mensagem = patch.mensagem;
+  if (patch.counts) job.counts = patch.counts;
+  const now = Date.now();
+  job.updated_at = new Date(now).toISOString();
+  job.updated_at_ms = now;
+  return job;
+}
+
+function finishSinapiJob(id, result) {
+  const job = SINAPI_IMPORT_JOBS.get(id);
+  if (!job) return null;
+  Object.assign(job, {
+    status: 'done',
+    percent: 100,
+    fase: 'Concluido',
+    mensagem: result?.mensagem || 'Importacao concluida.',
+    result,
+    counts: result || {},
+    updated_at: new Date().toISOString(),
+    updated_at_ms: Date.now(),
+  });
+  return job;
+}
+
+function failSinapiJob(id, err) {
+  const job = SINAPI_IMPORT_JOBS.get(id);
+  if (!job) return null;
+  Object.assign(job, {
+    status: 'error',
+    percent: Math.max(job.percent || 1, 1),
+    fase: 'Erro',
+    mensagem: err?.message || 'Falha na importacao SINAPI.',
+    erro: err?.message || String(err),
+    updated_at: new Date().toISOString(),
+    updated_at_ms: Date.now(),
+  });
+  return job;
+}
 
 module.exports = function sinapiRoutes(db) {
   const router = express.Router();
@@ -520,6 +599,28 @@ module.exports = function sinapiRoutes(db) {
     });
   }));
 
+  router.get('/importar/:jobId', asyncHandler(async (req, res) => {
+    cleanupSinapiJobs();
+    const job = SINAPI_IMPORT_JOBS.get(req.params.jobId);
+    if (!job) return res.status(404).json({ erro: 'Importacao SINAPI nao encontrada ou expirada.' });
+    if (job.id_user && req.user?.id_user && job.id_user !== req.user.id_user && req.user.role !== 'admin') {
+      return res.status(403).json({ erro: 'Importacao SINAPI pertence a outro usuario.' });
+    }
+    res.json({
+      job_id: job.id,
+      status: job.status,
+      percent: job.percent,
+      fase: job.fase,
+      mensagem: job.mensagem,
+      counts: job.counts || {},
+      result: job.result,
+      erro: job.erro,
+      meta: job.meta,
+      started_at: job.started_at,
+      updated_at: job.updated_at,
+    });
+  }));
+
   router.post('/importar', express.raw({ type: () => true, limit: '160mb' }), asyncHandler(async (req, res) => {
     const upload = parseMultipart(req.body, req.headers['content-type']);
     const file = upload.file;
@@ -556,7 +657,7 @@ module.exports = function sinapiRoutes(db) {
     const sobrepor = String(fields.sobrepor || 'false').toLowerCase() === 'true';
     const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
 
-    const resultado = await db.withConnection(async (conn) => {
+    const executarImportacao = async (progress = () => {}) => db.withConnection(async (conn) => {
       const getC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
       const allC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
       const runC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
@@ -577,10 +678,26 @@ module.exports = function sinapiRoutes(db) {
         composicoes_recalculadas: 0,
         alertas: [],
       };
+      const reportProgress = (percent, fase, mensagem) => progress({
+        percent,
+        fase,
+        mensagem,
+        counts: {
+          insumos_inseridos: out.insumos_inseridos,
+          insumos_atualizados: out.insumos_atualizados,
+          precos_inseridos: out.precos_inseridos,
+          precos_atualizados: out.precos_atualizados,
+          composicoes_inseridas: out.composicoes_inseridas,
+          composicoes_atualizadas: out.composicoes_atualizadas,
+          itens_inseridos: out.itens_inseridos,
+          composicoes_recalculadas: out.composicoes_recalculadas,
+        },
+      });
 
       const useLongTransaction = databaseEngine() !== 'mysql';
       if (useLongTransaction) await runC('BEGIN IMMEDIATE');
       try {
+        reportProgress(5, 'Preparando', `Preparando importacao SINAPI ${mesRef}.`);
         const adminImport = req.user && req.user.role === 'admin';
         const hasCatalogComps = await tableC('catalog', 'composicoes');
         const useCatalogReferencial = adminImport && hasCatalogComps;
@@ -622,10 +739,12 @@ module.exports = function sinapiRoutes(db) {
           WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]))
           .map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
 
-        async function processarInsumos(sheet, desonerado) {
+        async function processarInsumos(sheet, desonerado, progressStart, progressEnd, label) {
           if (!sheet) return;
           const insumos = parseInsumosRows(parseSheetRows(files, sheet.path), desonerado);
           const colPreco = desonerado ? 'preco_desonerado' : 'preco_nao_desonerado';
+          reportProgress(progressStart, label, `${label}: 0/${insumos.length} insumos.`);
+          let done = 0;
           for (const ins of insumos) {
             let idInsumo = insumoMap.get(ins.codigo);
             const idUnidade = await getUnidade(ins.unidade);
@@ -656,11 +775,16 @@ module.exports = function sinapiRoutes(db) {
                 out.precos_inseridos += 1;
               }
             }
+            done += 1;
+            if (done % 150 === 0 || done === insumos.length) {
+              const pct = progressStart + Math.round(((progressEnd - progressStart) * done) / Math.max(1, insumos.length));
+              reportProgress(pct, label, `${label}: ${done}/${insumos.length} insumos.`);
+            }
           }
         }
 
-        if (importarIsd) await processarInsumos(isdSheet, false);
-        if (importarIcd) await processarInsumos(icdSheet, true);
+        if (importarIsd) await processarInsumos(isdSheet, false, 8, importarIcd ? 24 : 42, 'Importando insumos sem desoneracao');
+        if (importarIcd) await processarInsumos(icdSheet, true, importarIsd ? 25 : 8, 42, 'Importando insumos desonerados');
 
         if (importarAnalitico && !analSheet) {
           throw httpError(400, 'Aba Analitico/Analitico com Custo nao encontrada no arquivo SINAPI enviado.');
@@ -684,6 +808,44 @@ module.exports = function sinapiRoutes(db) {
             grupos.set(key, r.lastID);
             return r.lastID;
           }
+          async function inserirItensComposicao(idComp, itens) {
+            if (!itens.length) return 0;
+            let inseridos = 0;
+            const batchSize = 250;
+            for (let offset = 0; offset < itens.length; offset += batchSize) {
+              const batch = itens.slice(offset, offset + batchSize);
+              const params = [];
+              const values = batch.map((item, idx) => {
+                params.push(
+                  idComp,
+                  item.tipo_item,
+                  item.codigo_item,
+                  item.descricao,
+                  item.unidade,
+                  item.coeficiente,
+                  item.situacao,
+                  offset + idx,
+                );
+                return useTenantComps
+                  ? "(?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))"
+                  : '(?,?,?,?,?,?,?,?)';
+              }).join(',');
+              if (useTenantComps) {
+                await runC(`
+                  INSERT INTO tenant_itens_composicao
+                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
+                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                  VALUES ${values}`, params);
+              } else {
+                await runC(`
+                  INSERT INTO ${itemTable}
+                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
+                  VALUES ${values}`, params);
+              }
+              inseridos += batch.length;
+            }
+            return inseridos;
+          }
 
           const compKey = (codigo, uf, ref) => [
             String(codigo || '').trim(),
@@ -699,6 +861,9 @@ module.exports = function sinapiRoutes(db) {
           if (!comps.length) {
             throw httpError(400, `Nenhuma composicao foi detectada na aba ${analSheet.name}. Verifique se o arquivo e a planilha SINAPI Referencia oficial.`);
           }
+          reportProgress(45, 'Importando composicoes', `Importando ${comps.length} composicoes para ${ufs.length} UF(s).`);
+          const totalCompWork = Math.max(1, comps.length * ufs.length);
+          let compWork = 0;
           for (const comp of comps) {
             const idGrupo = await getGrupo(comp.grupo);
             for (const compUf of ufs) {
@@ -723,20 +888,11 @@ module.exports = function sinapiRoutes(db) {
                 compMap.set(keyComp, idComp);
                 out.composicoes_inseridas += 1;
               }
-              let ordem = 0;
-              for (const item of comp.itens) {
-                if (useTenantComps) {
-                  await runC(`
-                    INSERT INTO tenant_itens_composicao
-                      (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
-                       tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))`,
-                    [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
-                } else {
-                  await runC(`INSERT INTO ${itemTable} (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem) VALUES (?,?,?,?,?,?,?,?)`,
-                    [idComp, item.tipo_item, item.codigo_item, item.descricao, item.unidade, item.coeficiente, item.situacao, ordem++]);
-                }
-                out.itens_inseridos += 1;
+              out.itens_inseridos += await inserirItensComposicao(idComp, comp.itens);
+              compWork += 1;
+              if (compWork % 50 === 0 || compWork === totalCompWork) {
+                const pct = 45 + Math.round((35 * compWork) / totalCompWork);
+                reportProgress(pct, 'Importando composicoes', `${compWork}/${totalCompWork} composicoes por UF gravadas.`);
               }
             }
           }
@@ -744,6 +900,7 @@ module.exports = function sinapiRoutes(db) {
           const recalcUfs = ufs.map(uf => String(uf || '').toUpperCase()).filter(Boolean);
           const ufPlaceholders = recalcUfs.map(() => '?').join(',');
           if (ufPlaceholders) {
+            reportProgress(82, 'Recalculando custos', 'Lendo precos e itens para recalculo das composicoes.');
             const precos = await allC(`
               SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia,
                      COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0) AS preco
@@ -782,6 +939,7 @@ module.exports = function sinapiRoutes(db) {
             const atualizadas = new Set();
             const isCompItem = value => normalizeText(value).includes('composicao');
             for (let pass = 0; pass < Math.min(10, Math.max(3, compRows.length)); pass += 1) {
+              reportProgress(84 + Math.min(12, pass + 1), 'Recalculando custos', `Passe de recalculo ${pass + 1}.`);
               let mudou = false;
               for (const comp of compRows) {
                 const itens = itensPorComposicao.get(String(comp.id_composicao)) || [];
@@ -817,6 +975,7 @@ module.exports = function sinapiRoutes(db) {
           }
         }
 
+        reportProgress(99, 'Finalizando', 'Consolidando resultado da importacao.');
         if (useLongTransaction) await runC('COMMIT');
         out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
@@ -826,6 +985,34 @@ module.exports = function sinapiRoutes(db) {
       }
     });
 
+    const asyncMode = ['true', '1', 'sim', 'yes'].includes(String(fields.async || '').toLowerCase());
+    if (asyncMode) {
+      const job = createSinapiJob(req.user, {
+        mes,
+        ano,
+        uf: ufParam,
+        abas: {
+          isd: importarIsd,
+          icd: importarIcd,
+          analitico: importarAnalitico,
+        },
+        arquivo: file.originalname || '',
+      });
+      setImmediate(() => {
+        executarImportacao(patch => updateSinapiJob(job.id, patch))
+          .then(resultado => finishSinapiJob(job.id, resultado))
+          .catch(err => failSinapiJob(job.id, err));
+      });
+      return res.status(202).json({
+        job_id: job.id,
+        status: job.status,
+        percent: job.percent,
+        fase: job.fase,
+        mensagem: job.mensagem,
+      });
+    }
+
+    const resultado = await executarImportacao();
     res.json(resultado);
   }));
 

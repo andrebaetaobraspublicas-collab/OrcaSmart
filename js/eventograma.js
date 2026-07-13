@@ -157,15 +157,31 @@ Router.register('eventograma', async () => {
     state.view = 'edit'; state.evgId = id;
     document.getElementById('pageContent').innerHTML =
       `<div class="loading-screen"><div class="spinner"></div></div>`;
-    await recarregarDados();
-    renderEditor();
-    await revalidar();
+    try {
+      await recarregarDados();
+      if (!state.evgData) throw new Error('Eventograma nao encontrado.');
+      renderEditor();
+      await revalidar();
+    } catch(e) {
+      document.getElementById('pageContent').innerHTML = `
+        <div class="page-header">
+          <div class="page-header-left">
+            <h1>Eventograma</h1>
+            <p>Falha ao carregar a apresentacao do eventograma</p>
+          </div>
+          <button class="btn btn-secondary" id="btnVoltarListaErro">Voltar</button>
+        </div>
+        <div class="section-card" style="padding:24px">
+          <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:14px 16px">
+            ${Utils.esc(e.message || 'Erro ao carregar eventograma.')}
+          </div>
+        </div>`;
+      document.getElementById('btnVoltarListaErro')?.addEventListener('click', renderList);
+    }
   }
 
   async function recarregarDados() {
-    try {
-      state.evgData = await API.eventogramas.get(state.evgId);
-    } catch(e) { Toast.error('Erro ao carregar: ' + e.message); }
+    state.evgData = await API.eventogramas.get(state.evgId);
   }
 
   async function revalidar() {
@@ -311,26 +327,33 @@ Router.register('eventograma', async () => {
     const badge   = document.getElementById('badgeNaoAloc');
     if (badge) badge.textContent = `${naoAloc.length} pendente(s)`;
 
-    const visivel = naoAloc.filter(i =>
+    const filtrado = naoAloc.filter(i =>
       !busca ||
       (i.descricao||'').toLowerCase().includes(busca) ||
       (i.codigo||'').toLowerCase().includes(busca)
     );
+    const limite = busca ? 600 : 300;
+    const visivel = filtrado.slice(0, limite);
 
-    if (!visivel.length) {
+    if (!filtrado.length) {
       el.innerHTML = `<div style="text-align:center;padding:20px;font-size:.8rem;color:var(--c-text-2)">
         ${naoAloc.length === 0 ? '✅ Todos os itens alocados!' : '🔍 Nenhum resultado.'}
       </div>`; return;
     }
 
-    el.innerHTML = visivel.map(it => `
+    el.innerHTML = `
+      ${filtrado.length > visivel.length ? `
+        <div style="font-size:.75rem;color:var(--c-text-2);padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px">
+          Mostrando ${visivel.length.toLocaleString('pt-BR')} de ${filtrado.length.toLocaleString('pt-BR')} itens pendentes. Use a busca para refinar.
+        </div>` : ''}
+      ${visivel.map(it => `
       <div class="item-unaloc" draggable="true"
            data-id="${it.id_item}" data-origem="unaloc"
            title="${Utils.esc(it.descricao||'')}">
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.esc(it.descricao||'—')}</span>
         <span style="color:var(--c-text-3);flex-shrink:0">${it.unidade||''}</span>
         <span style="font-weight:600;color:var(--c-primary);flex-shrink:0">${Utils.moeda(it.valor||0)}</span>
-      </div>`).join('');
+      </div>`).join('')}`;
 
     el.querySelectorAll('[draggable]').forEach(el => setupDragItem(el, null));
   }

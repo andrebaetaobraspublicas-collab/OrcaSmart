@@ -178,9 +178,59 @@ Router.register('fontes', async () => {
         'O processo pode demorar alguns minutos. Não feche esta janela.' +
       '</div></div>';
   }
+  function _setProgress(containerId, percent, fase, mensagem) {
+    const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+    const bar = document.getElementById(containerId + '_bar');
+    if (bar) {
+      bar.style.animation = 'none';
+      bar.style.left = '0';
+      bar.style.width = pct + '%';
+    }
+    const pctEl = document.getElementById(containerId + '_pct');
+    if (pctEl) pctEl.textContent = pct >= 100 ? '100%' : pct + '%';
+    const faseEl = document.getElementById(containerId + '_fase');
+    if (faseEl && fase) faseEl.textContent = fase;
+    const msgEl = document.getElementById(containerId + '_msg');
+    if (msgEl && mensagem) msgEl.textContent = mensagem;
+  }
+
+  async function acompanharSinapiJob(jobId, containerId) {
+    let lastStatus = null;
+    for (let tentativa = 0; tentativa < 360; tentativa += 1) {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      const response = await fetch(`/api/sinapi/importar/${encodeURIComponent(jobId)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.erro) throw new Error(data.erro || `Erro HTTP ${response.status}`);
+      lastStatus = data;
+      const counts = data.counts || {};
+      const resumo = [
+        counts.insumos_inseridos != null ? `${Number(counts.insumos_inseridos || 0).toLocaleString('pt-BR')} insumos novos` : null,
+        counts.precos_inseridos != null ? `${Number(counts.precos_inseridos || 0).toLocaleString('pt-BR')} precos novos` : null,
+        counts.composicoes_inseridas != null ? `${Number(counts.composicoes_inseridas || 0).toLocaleString('pt-BR')} composicoes novas` : null,
+        counts.itens_inseridos != null ? `${Number(counts.itens_inseridos || 0).toLocaleString('pt-BR')} itens` : null,
+      ].filter(Boolean).join(' | ');
+      _setProgress(containerId, data.percent, data.fase, resumo ? `${data.mensagem || ''} ${resumo}`.trim() : data.mensagem);
+      if (data.status === 'done') return data.result || data.counts || {};
+      if (data.status === 'error') throw new Error(data.erro || data.mensagem || 'Falha na importacao SINAPI.');
+    }
+    throw new Error(lastStatus?.mensagem || 'Tempo limite acompanhando a importacao SINAPI.');
+  }
+
   async function _importFetch(url, formData, containerId, faseLabel) {
     const faseEl = document.getElementById(containerId + '_fase');
     if (faseEl && faseLabel) faseEl.textContent = faseLabel;
+    if (url === '/api/sinapi/importar' && String(formData.get('async') || '').toLowerCase() === 'true') {
+      _setProgress(containerId, 1, 'Enviando arquivo SINAPI', 'Enviando planilha para iniciar a importacao.');
+      const startResponse = await fetch(url, { method: 'POST', body: formData });
+      const startText = await startResponse.text();
+      let startData;
+      try { startData = startText ? JSON.parse(startText) : {}; }
+      catch (_) { throw new Error('Resposta invalida do servidor: ' + startText.slice(0, 200)); }
+      if (!startResponse.ok || startData.erro) {
+        throw new Error(startData.erro || `Erro HTTP ${startResponse.status}`);
+      }
+      return startData.job_id ? acompanharSinapiJob(startData.job_id, containerId) : startData;
+    }
     const response = await fetch(url, { method: 'POST', body: formData });
     const txt = await response.text();
     let data;
@@ -988,6 +1038,7 @@ Router.register('fontes', async () => {
       fd.append('importar_icd',       cfg.icd ? 'true' : 'false');
       fd.append('importar_analitico', cfg.anal ? 'true' : 'false');
       fd.append('sobrepor',           cfg.sob ? 'true' : 'false');
+      fd.append('async',              'true');
 
       const res = await _importFetch('/api/sinapi/importar', fd, 'sinProg', 'Importando dados SINAPI…');
 

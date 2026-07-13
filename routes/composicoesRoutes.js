@@ -45,6 +45,9 @@ module.exports = function(db, options = {}) {
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
     ensureAdmin(req, 'Usuarios comuns nao podem excluir composicoes referenciais em lote.');
+    if (!req.body?.dry_run && req.body?.confirmacao !== 'EXCLUIR_COMPOSICOES_EM_LOTE') {
+      return res.status(400).json({ erro: 'Confirmacao explicita obrigatoria para exclusao em lote.' });
+    }
     res.json(await withWriteConnection(writeDb => repo.excluirEmLote(writeDb, req.body || {})));
   }));
 

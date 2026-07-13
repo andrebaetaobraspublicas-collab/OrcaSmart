@@ -51,6 +51,7 @@ const TIPO_ITEM = {
 Router.register('composicoes', async () => {
 
   let stats = {}, grupos = [], _undList = [];
+  let _me = null;
   // Estado do formulário de composição do usuário
   let _formItens   = [];  // itens em edição no momento
   let _originalIds = [];  // ids dos itens pré-existentes ao abrir o form
@@ -92,10 +93,11 @@ Router.register('composicoes', async () => {
 
   async function carregar() {
     try {
-      [stats, grupos, _undList] = await Promise.all([
+      [stats, grupos, _undList, _me] = await Promise.all([
         API.composicoes.stats(),
         API.composicoes.grupos(),
         API.unidades.list(),
+        API.auth.me().catch(() => null),
       ]);
       await buscar();
       abrirEdicaoPendenteDoOrcamento();
@@ -140,6 +142,7 @@ Router.register('composicoes', async () => {
     const nCDHU    = (sf.find(r=>r.fonte==='CDHU')?.total    || 0);
     const nUSUARIO = (sf.find(r=>r.fonte==='USUARIO')?.total || 0);
     const nTOTAL = nSINAPI + nSICRO + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nUSUARIO;
+    const isAdmin = _me && _me.role === 'admin';
 
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
@@ -148,11 +151,11 @@ Router.register('composicoes', async () => {
           <p>${nTOTAL.toLocaleString('pt-BR')} composições carregadas</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" id="btnExcluirLote"
+          ${isAdmin ? `<button class="btn btn-sm" id="btnExcluirLote"
             title="Excluir composições em grupo por critérios selecionados"
             style="background:#fff5f5;color:#dc2626;border:1px solid #fca5a5">
             🗑️ Excluir em Lote
-          </button>
+          </button>` : ''}
           <button class="btn btn-sm" id="btnRecalcComp"
             title="Recalcula o custo unitário das composições SINAPI/SICRO"
             style="background:#faf5ff;color:#7c3aed;border:1px solid #c4b5fd">
@@ -1742,12 +1745,23 @@ Router.register('composicoes', async () => {
       if (!await Confirm.ask(
         `Confirma a exclusão permanente das composições selecionadas? Esta ação NÃO pode ser desfeita.`
       )) return;
+      const btn = document.getElementById('btnElExcluir');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Excluindo...';
+      }
       try {
-        const res = await API.composicoes.excluirEmLote(p);
+        const res = await API.composicoes.excluirEmLote({ ...p, confirmacao: 'EXCLUIR_COMPOSICOES_EM_LOTE' });
         Modal.close();
         Toast.success(res.mensagem || `${res.excluidos} composição(ões) excluída(s).`);
         await carregar();
-      } catch(e) { Toast.error(e.message); }
+      } catch(e) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Excluir';
+        }
+        Toast.error(e.message);
+      }
     });
   }
 
