@@ -308,10 +308,10 @@ module.exports = function sinapiRoutes(db) {
         continue;
       }
 
-      if (!tipoItem && isCode(codigoComp) && descricao && unidade) {
+      if (!tipoItem && isCode(codigoComp) && unidade) {
         current = {
           codigo: codigoComp,
-          descricao,
+          descricao: descricao || `${cell(row, 0) || 'SINAPI'} ${codigoComp}`,
           unidade,
           grupo: cell(row, 0) || 'SINAPI',
           situacao,
@@ -324,7 +324,7 @@ module.exports = function sinapiRoutes(db) {
   }
 
   function findAnaliticoSheet(files, sheets) {
-    const named = findSheet(sheets, 'Analitico com Custo', 'AnalÃ­tico com Custo', 'Analítico com Custo', 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas');
+    const named = findSheet(sheets, 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas', 'Analitico com Custo', 'AnalÃ­tico com Custo', 'Analítico com Custo');
     if (named) return named;
     for (const sheet of sheets) {
       const name = normalizeText(sheet.name);
