@@ -54,13 +54,11 @@
   function isBudgetScreen() {
     const text = textLeaves().map(({ text: value }) => norm(value)).join(' ');
     const bodyText = norm(document.body?.innerText || '');
-    const hasBudgetItems = buildItensFromState().length > 0;
-    return /codigo\s+descricao do servico/.test(text)
-      || /codigo\s+descricao do servico/.test(bodyText)
-      || /planilha orcamentaria/.test(text)
-      || /planilha orcamentaria/.test(bodyText)
-      || (/orcamento global/.test(text) && /total geral|total estimado|servicos sinapi/.test(text))
-      || (/orcamento global|orcamento|planilha/.test(bodyText) && hasBudgetItems);
+    const visibleBudget = /orcamento global/.test(text) || /planilha orcamentaria/.test(text);
+    const bodyBudget = /orcamento global/.test(bodyText) || /planilha orcamentaria/.test(bodyText);
+    const hasTableHeader = /codigo\s+descricao do servico/.test(text) || /codigo\s+descricao do servico/.test(bodyText);
+    const hasTotals = /total geral|total estimado|servicos sinapi/.test(text) || /total geral|total estimado|servicos sinapi/.test(bodyText);
+    return (visibleBudget || bodyBudget || hasTableHeader) && hasTotals;
   }
 
   function isVisible(el) {

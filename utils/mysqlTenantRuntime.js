@@ -88,6 +88,13 @@ function appendWhereCondition(sql, condition) {
   return `${head}${joiner}${condition}${tail ? ` ${tail.trimStart()}` : ''}`;
 }
 
+function isTopLevelMatch(sql, offset) {
+  const prefix = String(sql || '').slice(0, offset);
+  const opens = (prefix.match(/\(/g) || []).length;
+  const closes = (prefix.match(/\)/g) || []).length;
+  return opens === closes;
+}
+
 function qualifyTenantSelect(sql, params, tenantId) {
   const id = Number(tenantId);
   if (!Number.isInteger(id) || id <= 0) throw new Error('Tenant invalido para consulta MySQL.');
@@ -114,6 +121,19 @@ function qualifyTenantSelect(sql, params, tenantId) {
   text = text.replace(new RegExp(`\\bFROM\\s+\\\`?(${tableNames})\\\`?\\s+(?=(GROUP\\s+BY|ORDER\\s+BY|HAVING|LIMIT|OFFSET|\\)|$))`, 'gi'), (match, table) => (
     `FROM \`${table}\` WHERE \`${table}\`.tenant_id = ${id} `
   ));
+
+  const topLevelFrom = new RegExp(`\\bFROM\\s+\\\`?(${tableNames})\\\`?\\s+(?:AS\\s+)?\\\`?([A-Za-z_][A-Za-z0-9_]*)\\\`?`, 'i').exec(text);
+  if (topLevelFrom && isTopLevelMatch(text, topLevelFrom.index)) {
+    const table = topLevelFrom[1];
+    const alias = topLevelFrom[2];
+    if (!/^(WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|GROUP|ORDER|LIMIT|ON)$/i.test(alias)) {
+      const scopedAlias = alias || table;
+      const alreadyScoped = new RegExp(`\\b\\\`?${scopedAlias}\\\`?\\.\\\`?tenant_id\\\`?\\s*=`, 'i').test(text);
+      if (!alreadyScoped) {
+        text = appendWhereCondition(text, `\`${scopedAlias}\`.\`tenant_id\` = ${id}`);
+      }
+    }
+  }
 
   return { sql: text, params };
 }

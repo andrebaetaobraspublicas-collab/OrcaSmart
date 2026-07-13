@@ -1,7 +1,7 @@
 /* js/calculadoraEstrutural.js */
 
 (function () {
-  const VERSION = '20260712-estrutural-orcamento-v2';
+  const VERSION = '20260712-estrutural-orcamento-v3';
 
   function ensureEmbeddedCalculatorStyles() {
     if (document.getElementById('embedded-calculator-styles')) return;

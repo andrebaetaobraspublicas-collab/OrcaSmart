@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     const doc = new DOMParser().parseFromString(template, 'text/html');
     setTimeout(async function carregarPonteOrcaSmartEstrutural() {
       try {
-        const bridgeRes = await fetch('calculadora-estrutural-bridge.js?v=20260712-orcamento-v2');
+        const bridgeRes = await fetch('calculadora-estrutural-bridge.js?v=20260712-orcamento-v3');
         const bridgeCode = await bridgeRes.text();
         (0, eval)(bridgeCode);
       } catch (bridgeErr) {
