@@ -39,7 +39,11 @@ const CATALOG_TABLE_SET = new Set(CATALOG_TABLES);
 const TENANT_ID_SEQUENCE_CACHE = new WeakMap();
 
 function isMissingOptionalOverrideTable(err, sql) {
-  if (!err || err.code !== 'ER_NO_SUCH_TABLE') return false;
+  if (!err) return false;
+  const missingTableError = err.code === 'ER_NO_SUCH_TABLE'
+    || err.code === 'ER_UNKNOWN_TABLE'
+    || /Unknown table|doesn'?t exist|does not exist/i.test(err.message || '');
+  if (!missingTableError) return false;
   const text = `${err.message || ''} ${sql || ''}`;
   return USER_OVERRIDE_TABLES.some(table => new RegExp(`\\b${table}\\b`, 'i').test(text));
 }
