@@ -703,6 +703,7 @@ module.exports = function sinapiRoutes(db) {
         );
       });
       const runTimed = (sql, params = [], label = 'Comando SQL', ms = 20000) => withTimeout(runC(sql, params), ms, label);
+      const yieldToEventLoop = () => new Promise(resolve => setImmediate(resolve));
       const directMysqlTable = table => String(table || '').replace(/^catalog\./i, '');
       let directMysqlReusableConn = null;
       let directMysqlReusableUses = 0;
@@ -713,8 +714,8 @@ module.exports = function sinapiRoutes(db) {
         directMysqlReusableConn = null;
         directMysqlReusableUses = 0;
       };
-      const executeDirectMysqlReusable = async (sql, params, label, ms = 12000) => {
-        if (!directMysqlReusableConn || directMysqlReusableUses >= 200) {
+      const executeDirectMysqlReusable = async (sql, params, label, ms = 5000) => {
+        if (!directMysqlReusableConn || directMysqlReusableUses >= 25) {
           await closeDirectMysqlReusable();
           directMysqlReusableConn = await createMysqlConnection();
           directMysqlReusableUses = 0;
@@ -1032,6 +1033,7 @@ module.exports = function sinapiRoutes(db) {
               const done = offset + 1;
               const pct = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * done / Math.max(1, inserirPrecos.length))) );
               reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados.`);
+              await yieldToEventLoop();
             }
           }
 
@@ -1275,6 +1277,7 @@ module.exports = function sinapiRoutes(db) {
             if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
               const done = offset + 1;
               reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados.`);
+              await yieldToEventLoop();
             }
           }
 
