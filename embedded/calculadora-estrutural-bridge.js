@@ -53,9 +53,14 @@
 
   function isBudgetScreen() {
     const text = textLeaves().map(({ text: value }) => norm(value)).join(' ');
+    const bodyText = norm(document.body?.innerText || '');
+    const hasBudgetItems = buildItensFromState().length > 0;
     return /codigo\s+descricao do servico/.test(text)
+      || /codigo\s+descricao do servico/.test(bodyText)
       || /planilha orcamentaria/.test(text)
-      || (/orcamento global/.test(text) && /total geral|total estimado|servicos sinapi/.test(text));
+      || /planilha orcamentaria/.test(bodyText)
+      || (/orcamento global/.test(text) && /total geral|total estimado|servicos sinapi/.test(text))
+      || (/orcamento global|orcamento|planilha/.test(bodyText) && hasBudgetItems);
   }
 
   function isVisible(el) {

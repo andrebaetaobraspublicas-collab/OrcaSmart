@@ -496,7 +496,7 @@ async function materializarComposicoesReferencia(db, source, filters = {}) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
   const itemTable = isTenant ? 'tenant_itens_composicao' : 'catalog.itens_composicao';
-  const idCol = isTenant ? 'rowid' : 'id_composicao';
+  const idCol = isTenant ? tenantSyntheticPk('tenant_composicoes') : 'id_composicao';
   if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) return { criadas: 0 };
 
   const templates = await all(db, `
@@ -604,7 +604,8 @@ async function recalcularFonte(db, source, filters = {}) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
   const itemTable = isTenant ? 'tenant_itens_composicao' : 'catalog.itens_composicao';
-  const idCol = isTenant ? 'rowid' : 'id_composicao';
+  const idCol = isTenant ? tenantSyntheticPk('tenant_composicoes') : 'id_composicao';
+  const itemPk = isTenant ? tenantSyntheticPk('tenant_itens_composicao') : 'id_item';
   if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) {
     return { analisadas: 0, atualizadas: 0, semPreco: 0, criadas: 0 };
   }
@@ -646,10 +647,10 @@ async function recalcularFonte(db, source, filters = {}) {
     semPreco = 0;
     for (const comp of comps) {
       const itens = await all(db, `
-        SELECT ${isTenant ? 'rowid AS _rowid,' : ''} *
+        SELECT ${isTenant ? `${itemPk} AS _rowid, ${itemTable}.*` : '*'}
         FROM ${itemTable}
         WHERE id_composicao = ?
-        ORDER BY ordem`, [comp.id]);
+        ORDER BY ordem${isTenant ? `, ${itemPk}` : ''}`, [comp.id]);
       let total = 0;
       let calculou = false;
       let faltouPreco = false;
@@ -1386,11 +1387,12 @@ async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
   const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
     ? scopedComposicaoId(idComposicao).value
     : Number(idComposicao);
+  const tenantItemPk = tenantSyntheticPk('tenant_itens_composicao');
   const itens = await all(db, `
-    SELECT rowid AS _rowid, *
+    SELECT ${tenantItemPk} AS _rowid, tenant_itens_composicao.*
     FROM tenant_itens_composicao
     WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, rowid`, [rowid]);
+    ORDER BY ordem, ${tenantItemPk}`, [rowid]);
   let total = 0;
   for (const item of itens) {
     const preco = await precoResolvidoItemComposicao(db, item);

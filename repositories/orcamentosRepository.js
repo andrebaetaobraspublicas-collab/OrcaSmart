@@ -35,6 +35,17 @@ function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
+function isMysqlRuntime() {
+  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+}
+
+function tenantSyntheticPk(table) {
+  if (!isMysqlRuntime()) return 'rowid';
+  if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
+  if (table === 'tenant_itens_composicao') return 'id_tenant_itens_composicao';
+  return 'rowid';
+}
+
 async function tableExists(db, table, schema = 'main') {
   const row = await one(
     db,
@@ -612,11 +623,12 @@ async function tenantComposicaoPorCodigo(db, codigo, fonte = '') {
   const codigos = codigoVariantesComposicao(codigo, fonte);
   if (!codigos.length) return null;
   const marks = codigos.map(() => '?').join(',');
+  const tenantCompPk = tenantSyntheticPk('tenant_composicoes');
   return one(db, `
-    SELECT rowid, codigo, custo_unitario
+    SELECT ${tenantCompPk} AS rowid, codigo, custo_unitario
     FROM tenant_composicoes
     WHERE codigo IN (${marks}) AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY rowid DESC
+    ORDER BY ${tenantCompPk} DESC
     LIMIT 1`, codigos).catch(() => null);
 }
 
@@ -627,11 +639,12 @@ async function calcularTenantComposicaoSimples(db, tenantRowid, visitados = new 
   if (visitados.has(key)) return null;
   visitados.add(key);
 
+  const tenantItemPk = tenantSyntheticPk('tenant_itens_composicao');
   const itens = await all(db, `
-    SELECT rowid AS _rowid, *
+    SELECT ${tenantItemPk} AS _rowid, tenant_itens_composicao.*
     FROM tenant_itens_composicao
     WHERE id_composicao=? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY COALESCE(ordem,0), rowid`, [id]).catch(() => []);
+    ORDER BY COALESCE(ordem,0), ${tenantItemPk}`, [id]).catch(() => []);
   if (!itens.length) return null;
 
   let total = 0;
