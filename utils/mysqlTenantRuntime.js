@@ -13,6 +13,7 @@ const TENANT_PK = {
   obras: 'id_obra',
   orcamento_sintetico: 'id_item',
   orcamentos: 'id_orcamento',
+  tenant_referential_overrides: 'id_override',
 };
 
 const TENANT_SCOPED_TABLES = new Set([...TENANT_TABLES, ...USER_OVERRIDE_TABLES]);
