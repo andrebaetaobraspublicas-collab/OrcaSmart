@@ -45,6 +45,7 @@ module.exports = function(db, options = {}) {
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
     const payload = { ...(req.body || {}) };
+    payload.__allowReferentialDelete = req.user?.role === 'admin';
     if (req.user?.role !== 'admin') {
       if (payload.fonte && String(payload.fonte).toUpperCase() !== 'USUARIO') {
         return res.status(403).json({ erro: 'Usuarios comuns so podem excluir composicoes proprias em lote.' });

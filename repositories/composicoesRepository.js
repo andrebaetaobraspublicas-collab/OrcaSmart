@@ -1665,33 +1665,114 @@ async function excluirComVinculo(db, idComposicao, acao = 'desvincular', options
   }
 }
 
-function batchWhere(data = {}) {
+function batchWhere(data = {}, alias = '') {
+  const col = name => (alias ? `${alias}.${name}` : name);
   const where = ['1=1'];
   const params = [];
   if (data.fonte) {
-    where.push('fonte = ?');
+    where.push(`${col('fonte')} = ?`);
     params.push(data.fonte);
   }
   if (data.formato) {
-    where.push('formato = ?');
+    where.push(`${col('formato')} = ?`);
     params.push(data.formato);
   }
   if (data.uf) {
-    where.push('uf_referencia = ?');
+    where.push(`${col('uf_referencia')} = ?`);
     params.push(data.uf);
   }
   if (data.mes_ref) {
-    where.push('mes_referencia = ?');
+    where.push(`${col('mes_referencia')} = ?`);
     params.push(data.mes_ref);
   }
   if (data.id_grupo_comp) {
-    where.push('id_grupo_comp = ?');
+    where.push(`${col('id_grupo_comp')} = ?`);
     params.push(data.id_grupo_comp);
   }
   return { clause: where.join(' AND '), params };
 }
 
+async function deleteCatalogComposicaoDirect(db, idComposicao) {
+  await run(db, 'DELETE FROM catalog.composicoes_secao_itens WHERE id_composicao = ?', [idComposicao]);
+  await run(db, 'DELETE FROM catalog.composicoes_secoes WHERE id_composicao = ?', [idComposicao]);
+  await run(db, 'DELETE FROM catalog.itens_composicao WHERE id_composicao = ?', [idComposicao]);
+  await run(db, 'DELETE FROM tenant_composicoes_secao_itens WHERE id_composicao IN (SELECT rowid FROM tenant_composicoes WHERE tenant_catalog_id = ?)', [idComposicao]).catch(() => {});
+  await run(db, 'DELETE FROM tenant_composicoes_secoes WHERE id_composicao IN (SELECT rowid FROM tenant_composicoes WHERE tenant_catalog_id = ?)', [idComposicao]).catch(() => {});
+  await run(db, 'DELETE FROM tenant_itens_composicao WHERE id_composicao IN (SELECT rowid FROM tenant_composicoes WHERE tenant_catalog_id = ?)', [idComposicao]).catch(() => {});
+  await run(db, 'DELETE FROM tenant_composicoes WHERE tenant_catalog_id = ?', [idComposicao]).catch(() => {});
+  await run(db, `
+    DELETE FROM tenant_referential_overrides
+    WHERE domain='composicoes' AND catalog_table='composicoes' AND catalog_id=?`, [idComposicao]).catch(() => {});
+  return run(db, 'DELETE FROM catalog.composicoes WHERE id_composicao = ?', [idComposicao]);
+}
+
+async function deleteCatalogComposicoesBatch(db, data = {}) {
+  const { clause, params } = batchWhere(data, 'c');
+  const count = await one(db, `
+    SELECT COUNT(*) AS total
+    FROM catalog.composicoes c
+    WHERE ${clause}`, params);
+  const total = Number(count?.total || 0);
+  if (data.dry_run) return { total, dry_run: true };
+
+  await run(db, 'BEGIN');
+  try {
+    await run(db, `
+      DELETE si FROM catalog.composicoes_secao_itens si
+      JOIN catalog.composicoes c ON si.id_composicao = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE si FROM catalog.composicoes_secao_itens si
+      JOIN catalog.composicoes_secoes s ON si.id_secao = s.id_secao
+      JOIN catalog.composicoes c ON s.id_composicao = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE s FROM catalog.composicoes_secoes s
+      JOIN catalog.composicoes c ON s.id_composicao = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE i FROM catalog.itens_composicao i
+      JOIN catalog.composicoes c ON i.id_composicao = c.id_composicao
+      WHERE ${clause}`, params);
+    await run(db, `
+      DELETE tsi FROM tenant_composicoes_secao_itens tsi
+      JOIN tenant_composicoes tc ON tsi.id_composicao = tc.rowid
+      JOIN catalog.composicoes c ON tc.tenant_catalog_id = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE ts FROM tenant_composicoes_secoes ts
+      JOIN tenant_composicoes tc ON ts.id_composicao = tc.rowid
+      JOIN catalog.composicoes c ON tc.tenant_catalog_id = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE ti FROM tenant_itens_composicao ti
+      JOIN tenant_composicoes tc ON ti.id_composicao = tc.rowid
+      JOIN catalog.composicoes c ON tc.tenant_catalog_id = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE tc FROM tenant_composicoes tc
+      JOIN catalog.composicoes c ON tc.tenant_catalog_id = c.id_composicao
+      WHERE ${clause}`, params).catch(() => {});
+    await run(db, `
+      DELETE r FROM tenant_referential_overrides r
+      JOIN catalog.composicoes c ON r.catalog_id = c.id_composicao
+      WHERE r.domain='composicoes'
+        AND r.catalog_table='composicoes'
+        AND ${clause}`, params).catch(() => {});
+    const result = await run(db, `
+      DELETE c FROM catalog.composicoes c
+      WHERE ${clause}`, params);
+    await run(db, 'COMMIT');
+    return { total, excluidos: result.changes || 0, dry_run: false };
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+
 async function excluirEmLote(db, data = {}) {
+  const allowReferentialDelete = data.__allowReferentialDelete === true;
+  delete data.__allowReferentialDelete;
   if (!data.fonte && !data.formato && !data.uf && !data.mes_ref && !data.id_grupo_comp) {
     const err = new Error('Informe pelo menos um criterio de selecao para excluir.');
     err.status = 400;
@@ -1701,6 +1782,16 @@ async function excluirEmLote(db, data = {}) {
   if (await hasTenantComposicaoOverrides(db)) {
     const readMode = await hasCatalogComposicoes(db);
     if (readMode) {
+      const fonte = String(data.fonte || '').trim().toUpperCase();
+      if (allowReferentialDelete && fonte && fonte !== 'USUARIO') {
+        const result = await deleteCatalogComposicoesBatch(db, data);
+        if (data.dry_run) return result;
+        return {
+          ...result,
+          mensagem: `${result.excluidos} composicao(oes) referencial(is) excluida(s) do catalogo.`,
+        };
+      }
+
       const catalog = buildTenantCatalogListSelect(data, 'catalog');
       const tenant = buildTenantCatalogListSelect(data, 'tenant');
       const rows = await all(db, `
