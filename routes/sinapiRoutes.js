@@ -968,6 +968,11 @@ module.exports = function sinapiRoutes(db) {
         const precoTable = `${refPrefix}precos_insumos`;
         const forceReferentialUpdate = sobrepor;
         const ufWherePlaceholders = ufs.map(() => '?').join(',');
+        const useDirectCatalogLookups = databaseEngine() === 'mysql' && useCatalogReferencial;
+        const selectRowsTimed = async (sql, params, label, ms = 12000) => {
+          if (useDirectCatalogLookups) return executeDirectMysqlReusable(sql, params, label, ms);
+          return withTimeout(allC(sql, params), ms, label);
+        };
 
         let dataBase = await getC(`SELECT id_data_base FROM ${dataBaseTable} WHERE mes=? AND ano=?`, [mes, ano]);
         if (!dataBase) dataBase = await runC(`INSERT INTO ${dataBaseTable} (mes,ano,descricao) VALUES (?,?,?)`, [mes, ano, `SINAPI ${mesRef}`]).then(r => ({ id_data_base: r.lastID }));
@@ -1004,14 +1009,15 @@ module.exports = function sinapiRoutes(db) {
         reportProgress(6, 'Preparando', `Carregando ${insumoCodesImportacao.size} insumos SINAPI existentes relacionados a planilha.`);
         const insumoRows = [];
         const insumoCodes = [...insumoCodesImportacao];
-        for (let offset = 0; offset < insumoCodes.length; offset += 500) {
-          const batch = insumoCodes.slice(offset, offset + 500);
+        const lookupBatchSize = useDirectCatalogLookups ? 100 : 300;
+        for (let offset = 0; offset < insumoCodes.length; offset += lookupBatchSize) {
+          const batch = insumoCodes.slice(offset, offset + lookupBatchSize);
           const placeholders = batch.map(() => '?').join(',');
-          const rows = await allC(`
+          const rows = await selectRowsTimed(`
             SELECT codigo_insumo,id_insumo,descricao,tipo_insumo,id_unidade
-            FROM ${insumoTable}
+            FROM ${useDirectCatalogLookups ? directMysqlTable(insumoTable) : insumoTable}
             WHERE origem='SINAPI'
-              AND codigo_insumo IN (${placeholders})`, batch);
+              AND codigo_insumo IN (${placeholders})`, batch, `Leitura de insumos existentes ${offset + 1}-${offset + batch.length}/${insumoCodes.length}`);
           insumoRows.push(...rows);
           if (offset + batch.length < insumoCodes.length) {
             reportProgress(6, 'Preparando', `${offset + batch.length}/${insumoCodes.length} insumos existentes conferidos.`);
@@ -1025,18 +1031,18 @@ module.exports = function sinapiRoutes(db) {
         }]));
         reportProgress(7, 'Preparando', 'Carregando mapa de precos SINAPI existentes para importacao retomavel.');
         const precoRows = [];
-        for (let offset = 0; offset < insumoCodes.length; offset += 500) {
-          const batch = insumoCodes.slice(offset, offset + 500);
+        for (let offset = 0; offset < insumoCodes.length; offset += lookupBatchSize) {
+          const batch = insumoCodes.slice(offset, offset + lookupBatchSize);
           const placeholders = batch.map(() => '?').join(',');
-          const rows = await allC(`
+          const rows = await selectRowsTimed(`
             SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
                    p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
-            FROM ${precoTable} p
-            JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
+            FROM ${useDirectCatalogLookups ? directMysqlTable(precoTable) : precoTable} p
+            JOIN ${useDirectCatalogLookups ? directMysqlTable(insumoTable) : insumoTable} i ON i.id_insumo=p.id_insumo
             WHERE p.id_data_base=?
               AND i.origem='SINAPI'
               AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufWherePlaceholders})
-              AND i.codigo_insumo IN (${placeholders})`, [idDataBase, ...ufs, ...batch]);
+              AND i.codigo_insumo IN (${placeholders})`, [idDataBase, ...ufs, ...batch], `Leitura de precos existentes ${offset + 1}-${offset + batch.length}/${insumoCodes.length}`);
           precoRows.push(...rows);
           if (offset + batch.length < insumoCodes.length) {
             reportProgress(7, 'Preparando', `${offset + batch.length}/${insumoCodes.length} insumos com precos existentes conferidos.`);
