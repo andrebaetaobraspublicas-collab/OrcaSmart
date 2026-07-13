@@ -738,49 +738,148 @@ module.exports = function sinapiRoutes(db) {
           JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
           WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]))
           .map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
+        const precosCriadosNestaImportacao = new Set();
 
         async function processarInsumos(sheet, desonerado, progressStart, progressEnd, label) {
           if (!sheet) return;
           const insumos = parseInsumosRows(parseSheetRows(files, sheet.path), desonerado);
           const colPreco = desonerado ? 'preco_desonerado' : 'preco_nao_desonerado';
           reportProgress(progressStart, label, `${label}: 0/${insumos.length} insumos.`);
-          let done = 0;
+          const batchSize = 400;
+          const unidadePorCodigo = new Map();
+          const novos = [];
+
           for (const ins of insumos) {
-            let idInsumo = insumoMap.get(ins.codigo);
             const idUnidade = await getUnidade(ins.unidade);
-            if (idInsumo) {
-              if (forceReferentialUpdate) {
-                await runC(`UPDATE ${insumoTable} SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?`, [ins.descricao, ins.tipo, idUnidade, idInsumo]);
+            unidadePorCodigo.set(ins.codigo, idUnidade);
+            if (!insumoMap.has(ins.codigo)) novos.push({ ins, idUnidade });
+          }
+
+          for (let offset = 0; offset < novos.length; offset += batchSize) {
+            const batch = novos.slice(offset, offset + batchSize);
+            const params = [];
+            const values = batch.map(({ ins, idUnidade }) => {
+              params.push(ins.codigo, ins.descricao, ins.tipo, idUnidade);
+              return "(?,?,?,?, 'SINAPI','Ativo')";
+            }).join(',');
+            await runC(`
+              INSERT INTO ${insumoTable}
+                (codigo_insumo,descricao,tipo_insumo,id_unidade,origem,situacao)
+              VALUES ${values}`, params);
+            out.insumos_inseridos += batch.length;
+            const done = Math.min(offset + batch.length, novos.length);
+            reportProgress(
+              progressStart + Math.round(((progressEnd - progressStart) * 0.25 * done) / Math.max(1, novos.length || 1)),
+              label,
+              `${label}: ${done}/${novos.length} insumos novos gravados.`,
+            );
+          }
+
+          if (novos.length) {
+            for (let offset = 0; offset < novos.length; offset += batchSize) {
+              const batch = novos.slice(offset, offset + batchSize).map(row => row.ins.codigo);
+              const placeholders = batch.map(() => '?').join(',');
+              const rows = await allC(`
+                SELECT codigo_insumo,id_insumo
+                FROM ${insumoTable}
+                WHERE UPPER(COALESCE(origem,''))='SINAPI'
+                  AND codigo_insumo IN (${placeholders})`, batch);
+              rows.forEach(row => insumoMap.set(String(row.codigo_insumo), row.id_insumo));
+            }
+          }
+
+          if (forceReferentialUpdate) {
+            for (let offset = 0; offset < insumos.length; offset += batchSize) {
+              const batch = insumos.slice(offset, offset + batchSize);
+              for (const ins of batch) {
+                const idInsumo = insumoMap.get(ins.codigo);
+                if (!idInsumo) continue;
+                await runC(`UPDATE ${insumoTable} SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?`, [
+                  ins.descricao,
+                  ins.tipo,
+                  unidadePorCodigo.get(ins.codigo) || null,
+                  idInsumo,
+                ]);
                 out.insumos_atualizados += 1;
               }
-            } else {
-              const r = await runC(`INSERT INTO ${insumoTable} (codigo_insumo,descricao,tipo_insumo,id_unidade,origem,situacao) VALUES (?,?,?,?, 'SINAPI','Ativo')`, [ins.codigo, ins.descricao, ins.tipo, idUnidade]);
-              idInsumo = r.lastID;
-              insumoMap.set(ins.codigo, idInsumo);
-              out.insumos_inseridos += 1;
+              reportProgress(
+                progressStart + Math.round(((progressEnd - progressStart) * 0.35 * Math.min(offset + batch.length, insumos.length)) / Math.max(1, insumos.length)),
+                label,
+                `${label}: ${Math.min(offset + batch.length, insumos.length)}/${insumos.length} cadastros revisados.`,
+              );
             }
+          }
+
+          const inserirPrecos = [];
+          const atualizarPrecos = [];
+          let registrosPreparados = 0;
+          for (const ins of insumos) {
+            const idInsumo = insumoMap.get(ins.codigo);
+            if (!idInsumo) continue;
             for (const uf of ufs) {
               const preco = ins.precos[uf];
               if (preco == null) continue;
               const key = `${ins.codigo}|${uf}`;
               const idPreco = precoMap.get(key);
               if (idPreco) {
-                if (forceReferentialUpdate) {
-                  await runC(`UPDATE ${precoTable} SET ${colPreco}=?,preco_referencia=? WHERE id_preco=?`, [preco, preco, idPreco]);
-                  out.precos_atualizados += 1;
-                }
+                if (forceReferentialUpdate || precosCriadosNestaImportacao.has(key)) atualizarPrecos.push({ idPreco, preco });
               } else {
-                const r = await runC(`INSERT INTO ${precoTable} (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia) VALUES (?,?,?,?,?,?)`, [idInsumo, idDataBase, idFonte, uf, preco, preco]);
-                precoMap.set(key, r.lastID);
-                out.precos_inseridos += 1;
+                inserirPrecos.push({ idInsumo, uf, preco, key });
               }
             }
-            done += 1;
-            if (done % 150 === 0 || done === insumos.length) {
-              const pct = progressStart + Math.round(((progressEnd - progressStart) * done) / Math.max(1, insumos.length));
-              reportProgress(pct, label, `${label}: ${done}/${insumos.length} insumos.`);
+            registrosPreparados += 1;
+            if (registrosPreparados % 250 === 0 || registrosPreparados === insumos.length) {
+              const pct = progressStart + Math.round(((progressEnd - progressStart) * 0.45 * registrosPreparados) / Math.max(1, insumos.length));
+              reportProgress(pct, label, `${label}: ${registrosPreparados}/${insumos.length} insumos varridos; ${inserirPrecos.length} precos novos na fila.`);
             }
           }
+
+          for (let offset = 0; offset < inserirPrecos.length; offset += batchSize) {
+            const batch = inserirPrecos.slice(offset, offset + batchSize);
+            const params = [];
+            const values = batch.map(row => {
+              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.preco, row.preco);
+              return '(?,?,?,?,?,?)';
+            }).join(',');
+            await runC(`
+              INSERT INTO ${precoTable}
+                (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia)
+              VALUES ${values}`, params);
+            out.precos_inseridos += batch.length;
+            const idsInsumoBatch = [...new Set(batch.map(row => row.idInsumo))];
+            const ufsBatch = [...new Set(batch.map(row => row.uf))];
+            if (idsInsumoBatch.length && ufsBatch.length) {
+              const idPh = idsInsumoBatch.map(() => '?').join(',');
+              const ufPh = ufsBatch.map(() => '?').join(',');
+              const rows = await allC(`
+                SELECT p.id_preco, i.codigo_insumo, p.uf_referencia
+                FROM ${precoTable} p
+                JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
+                WHERE p.id_data_base=?
+                  AND p.id_insumo IN (${idPh})
+                  AND p.uf_referencia IN (${ufPh})`, [idDataBase, ...idsInsumoBatch, ...ufsBatch]);
+              rows.forEach((row) => {
+                const key = `${row.codigo_insumo}|${row.uf_referencia}`;
+                precoMap.set(key, row.id_preco);
+                precosCriadosNestaImportacao.add(key);
+              });
+            }
+            const done = Math.min(offset + batch.length, inserirPrecos.length);
+            const pct = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * done / Math.max(1, inserirPrecos.length))) );
+            reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados em lote.`);
+          }
+
+          if (atualizarPrecos.length) {
+            for (let offset = 0; offset < atualizarPrecos.length; offset += batchSize) {
+              const batch = atualizarPrecos.slice(offset, offset + batchSize);
+              for (const row of batch) {
+                await runC(`UPDATE ${precoTable} SET ${colPreco}=?,preco_referencia=? WHERE id_preco=?`, [row.preco, row.preco, row.idPreco]);
+                out.precos_atualizados += 1;
+              }
+              reportProgress(progressEnd, label, `${label}: ${Math.min(offset + batch.length, atualizarPrecos.length)}/${atualizarPrecos.length} precos atualizados.`);
+            }
+          }
+          reportProgress(progressEnd, label, `${label}: ${insumos.length}/${insumos.length} insumos processados.`);
         }
 
         if (importarIsd) await processarInsumos(isdSheet, false, 8, importarIcd ? 24 : 42, 'Importando insumos sem desoneracao');

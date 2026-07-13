@@ -197,7 +197,7 @@ Router.register('fontes', async () => {
   async function acompanharSinapiJob(jobId, containerId) {
     let lastStatus = null;
     for (let tentativa = 0; tentativa < 360; tentativa += 1) {
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      await new Promise(resolve => setTimeout(resolve, 700));
       const response = await fetch(`/api/sinapi/importar/${encodeURIComponent(jobId)}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.erro) throw new Error(data.erro || `Erro HTTP ${response.status}`);
