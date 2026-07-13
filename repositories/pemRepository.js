@@ -32,6 +32,11 @@ function run(db, sql, params = []) {
   });
 }
 
+async function nextLocalId(db, table, column) {
+  const row = await one(db, `SELECT COALESCE(MAX(${column}),0) + 1 AS next_id FROM ${table}`).catch(() => null);
+  return Number(row?.next_id || 1);
+}
+
 async function tableExists(db, table, schema = 'main') {
   const row = await one(
     db,
@@ -201,10 +206,10 @@ async function ensureTenantSectionTables(db) {
       custo_total_secao DECIMAL(20,8) NULL,
       ordem BIGINT NULL,
       tenant_catalog_id BIGINT UNSIGNED NULL,
-      tenant_override_action TEXT NOT NULL DEFAULT 'create',
-      tenant_override_status TEXT NOT NULL DEFAULT 'active',
-      tenant_created_at TEXT NULL,
-      tenant_updated_at TEXT NULL
+      tenant_override_action VARCHAR(255) NOT NULL DEFAULT 'create',
+      tenant_override_status VARCHAR(255) NOT NULL DEFAULT 'active',
+      tenant_created_at DATETIME NULL,
+      tenant_updated_at DATETIME NULL
     )`);
   await run(db, `
     CREATE TABLE IF NOT EXISTS tenant_composicoes_secao_itens (
@@ -231,10 +236,10 @@ async function ensureTenantSectionTables(db) {
       dmt DECIMAL(20,8) NULL,
       ordem BIGINT NULL,
       tenant_catalog_id BIGINT UNSIGNED NULL,
-      tenant_override_action TEXT NOT NULL DEFAULT 'create',
-      tenant_override_status TEXT NOT NULL DEFAULT 'active',
-      tenant_created_at TEXT NULL,
-      tenant_updated_at TEXT NULL
+      tenant_override_action VARCHAR(255) NOT NULL DEFAULT 'create',
+      tenant_override_status VARCHAR(255) NOT NULL DEFAULT 'active',
+      tenant_created_at DATETIME NULL,
+      tenant_updated_at DATETIME NULL
     )`);
 }
 
@@ -242,30 +247,31 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
   const targetTenant = !!options.targetTenant;
   const secoesTable = targetTenant ? 'tenant_composicoes_secoes' : 'composicoes_secoes';
   const itensTable = targetTenant ? 'tenant_composicoes_secao_itens' : 'composicoes_secao_itens';
-  const secaoPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secoes') : 'id_secao';
-  const itemPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secao_itens') : 'id_item_secao';
+  const secaoPk = 'id_secao';
   if (targetTenant && (!(await tableExists(db, secoesTable)) || !(await tableExists(db, itensTable)))) {
     await ensureTenantSectionTables(db);
   }
   const secoes = await all(db, 'SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY ordem, letra_secao', [sourceId]);
   for (const sec of secoes) {
+    const tenantSecaoId = targetTenant ? await nextLocalId(db, secoesTable, 'id_secao') : null;
     const secResult = targetTenant
       ? await run(db, `
         INSERT INTO ${secoesTable}
-          (id_composicao, letra_secao, nome_secao, custo_total_secao, ordem,
+          (id_secao, id_composicao, letra_secao, nome_secao, custo_total_secao, ordem,
            tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
-        VALUES (?,?,?,?,?, ?, 'create', 'active', ?, ?)`, [
-        targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem,
+        VALUES (?,?,?,?,?,?, ?, 'create', 'active', ?, ?)`, [
+        tenantSecaoId, targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem,
         sec.id_secao || null, new Date().toISOString(), new Date().toISOString(),
       ])
       : await run(db, `
         INSERT INTO ${secoesTable} (id_composicao, letra_secao, nome_secao, custo_total_secao, ordem)
         VALUES (?,?,?,?,?)`, [targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem]);
-    if (targetTenant) await run(db, `UPDATE ${secoesTable} SET id_secao=? WHERE ${secaoPk}=?`, [secResult.lastID, secResult.lastID]);
+    const secaoId = targetTenant ? tenantSecaoId : secResult.lastID;
 
     const itens = await all(db, 'SELECT * FROM composicoes_secao_itens WHERE id_secao=? ORDER BY ordem, id_item_secao', [sec.id_secao]);
     let totalSecao = 0;
     for (const item of itens) {
+      const tenantItemId = targetTenant ? await nextLocalId(db, itensTable, 'id_item_secao') : null;
       const edit = equipamentosEditados.get(String(item.codigo_item || '').toUpperCase());
       let utilOp = item.util_operativa;
       let utilImp = item.util_improdutiva;
@@ -282,9 +288,9 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
       const itemResult = targetTenant
         ? await run(db, `
           INSERT INTO ${itensTable}
-            (id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,util_operativa,util_improdutiva,custo_hp,custo_hi,preco_unitario,custo_total,cod_transporte,cod_transp_ln,cod_transp_rp,cod_transp_p,fit,dmt,ordem,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'create', 'active', ?, ?)`, [
-          targetId, secResult.lastID, item.letra_secao, item.codigo_item, item.descricao, item.quantidade, item.unidade,
+            (id_item_secao,id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,util_operativa,util_improdutiva,custo_hp,custo_hi,preco_unitario,custo_total,cod_transporte,cod_transp_ln,cod_transp_rp,cod_transp_p,fit,dmt,ordem,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'create', 'active', ?, ?)`, [
+          tenantItemId, targetId, secaoId, item.letra_secao, item.codigo_item, item.descricao, item.quantidade, item.unidade,
           utilOp, utilImp, item.custo_hp, item.custo_hi, item.preco_unitario, custoTotal,
           item.cod_transporte, item.cod_transp_ln, item.cod_transp_rp, item.cod_transp_p, item.fit, item.dmt, item.ordem,
           item.id_item_secao || null, new Date().toISOString(), new Date().toISOString(),
@@ -297,9 +303,9 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
           utilOp, utilImp, item.custo_hp, item.custo_hi, item.preco_unitario, custoTotal,
           item.cod_transporte, item.cod_transp_ln, item.cod_transp_rp, item.cod_transp_p, item.fit, item.dmt, item.ordem,
         ]);
-      if (targetTenant) await run(db, `UPDATE ${itensTable} SET id_item_secao=? WHERE ${itemPk}=?`, [itemResult.lastID, itemResult.lastID]);
+      void itemResult;
     }
-    await run(db, `UPDATE ${secoesTable} SET custo_total_secao=? WHERE ${secaoPk}=?`, [Number(totalSecao.toFixed(2)), secResult.lastID]);
+    await run(db, `UPDATE ${secoesTable} SET custo_total_secao=? WHERE ${secaoPk}=?`, [Number(totalSecao.toFixed(2)), secaoId]);
   }
 }
 
