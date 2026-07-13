@@ -5,6 +5,8 @@ const { databaseEngine } = require('../utils/mysqlRuntime');
 
 const SINAPI_IMPORT_JOBS = new Map();
 const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
+const SINAPI_ACTIVE_IMPORT_TTL_MS = 20 * 60 * 1000;
+let sinapiActiveImportId = null;
 
 function cleanupSinapiJobs() {
   const cutoff = Date.now() - SINAPI_IMPORT_JOB_TTL_MS;
@@ -50,6 +52,16 @@ function updateSinapiJob(id, patch = {}) {
   return job;
 }
 
+function getActiveSinapiImport() {
+  if (!sinapiActiveImportId) return null;
+  const job = SINAPI_IMPORT_JOBS.get(sinapiActiveImportId);
+  if (!job || job.status !== 'running' || Date.now() - job.updated_at_ms > SINAPI_ACTIVE_IMPORT_TTL_MS) {
+    sinapiActiveImportId = null;
+    return null;
+  }
+  return job;
+}
+
 function finishSinapiJob(id, result) {
   const job = SINAPI_IMPORT_JOBS.get(id);
   if (!job) return null;
@@ -63,6 +75,7 @@ function finishSinapiJob(id, result) {
     updated_at: new Date().toISOString(),
     updated_at_ms: Date.now(),
   });
+  if (sinapiActiveImportId === id) sinapiActiveImportId = null;
   return job;
 }
 
@@ -78,6 +91,7 @@ function failSinapiJob(id, err) {
     updated_at: new Date().toISOString(),
     updated_at_ms: Date.now(),
   });
+  if (sinapiActiveImportId === id) sinapiActiveImportId = null;
   return job;
 }
 
@@ -709,6 +723,10 @@ module.exports = function sinapiRoutes(db) {
       });
 
       const useLongTransaction = databaseEngine() !== 'mysql';
+      if (databaseEngine() === 'mysql') {
+        await runC('SET SESSION lock_wait_timeout=5').catch(() => {});
+        await runC('SET SESSION max_statement_time=15').catch(() => {});
+      }
       if (useLongTransaction) await runC('BEGIN IMMEDIATE');
       try {
         reportProgress(5, 'Preparando', `Preparando importacao SINAPI ${mesRef}.`);
@@ -890,7 +908,7 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          const precoInsertBatchSize = 50;
+          const precoInsertBatchSize = 10;
           for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
             const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
             const antes = Math.min(offset + 1, inserirPrecos.length);
@@ -1127,7 +1145,7 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          const precoInsertBatchSize = 50;
+          const precoInsertBatchSize = 10;
           for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
             const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
             const antes = Math.min(offset + 1, inserirPrecos.length);
@@ -1395,6 +1413,17 @@ module.exports = function sinapiRoutes(db) {
     };
 
     if (asyncMode) {
+      const activeJob = getActiveSinapiImport();
+      if (activeJob) {
+        return res.status(409).json({
+          erro: 'Ja existe uma importacao SINAPI em andamento. Aguarde a conclusao ou recarregue apos alguns minutos.',
+          job_id: activeJob.id,
+          status: activeJob.status,
+          percent: activeJob.percent,
+          fase: activeJob.fase,
+          mensagem: activeJob.mensagem,
+        });
+      }
       const job = createSinapiJob(req.user, {
         mes: requestedMes || null,
         ano: requestedAno || null,
@@ -1406,6 +1435,7 @@ module.exports = function sinapiRoutes(db) {
         },
         arquivo: file.originalname || '',
       });
+      sinapiActiveImportId = job.id;
       setImmediate(() => {
         executarImportacao(patch => updateSinapiJob(job.id, patch))
           .then(resultado => finishSinapiJob(job.id, resultado))
