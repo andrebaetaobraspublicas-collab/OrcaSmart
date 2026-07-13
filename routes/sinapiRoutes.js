@@ -627,6 +627,51 @@ module.exports = function sinapiRoutes(db) {
     return composicoes;
   }
 
+  function parseResumoComposicoesRows(rows) {
+    const resumo = [];
+    const headerLabel = value => normalizeText(value).replace(/\s+/g, ' ');
+    let cols = { grupo: 0, descricao: 2, unidade: 3, startRow: 0 };
+    for (let r = 0; r < Math.min(rows.length, 30); r++) {
+      const row = rows[r] || [];
+      const labels = Array.from({ length: row.length }, (_, idx) => headerLabel(row[idx]));
+      const findIdx = predicate => labels.findIndex(label => predicate(label || ''));
+      const descricao = findIdx(label => label === 'descricao' || label.includes('descricao'));
+      const unidade = findIdx(label => label === 'unidade' || label.includes('unidade'));
+      if (descricao >= 0 && unidade >= 0) {
+        cols = {
+          grupo: findIdx(label => label === 'grupo' || label.includes('grupo')),
+          descricao,
+          unidade,
+          startRow: r + 1,
+        };
+        break;
+      }
+    }
+
+    for (let i = cols.startRow || 0; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const descricao = cell(row, cols.descricao);
+      const unidade = cell(row, cols.unidade).toUpperCase();
+      const grupo = cols.grupo >= 0 ? cell(row, cols.grupo) : '';
+      if (!descricao || !unidade || normalizeText(descricao).includes('descricao')) continue;
+      resumo.push({ descricao, unidade, grupo });
+    }
+    return resumo;
+  }
+
+  function aplicarDescricoesResumo(composicoes, resumo) {
+    if (!Array.isArray(composicoes) || !Array.isArray(resumo) || !resumo.length) return composicoes;
+    const total = Math.min(composicoes.length, resumo.length);
+    for (let i = 0; i < total; i++) {
+      const info = resumo[i];
+      if (!info?.descricao) continue;
+      composicoes[i].descricao = info.descricao;
+      if (info.unidade) composicoes[i].unidade = info.unidade;
+      if (info.grupo) composicoes[i].grupo = info.grupo;
+    }
+    return composicoes;
+  }
+
   function findAnaliticoSheet(files, sheets) {
     const named = findSheet(sheets, 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas', 'Analitico com Custo', 'AnalÃ­tico com Custo', 'Analítico com Custo');
     if (named) return named;
@@ -827,6 +872,7 @@ module.exports = function sinapiRoutes(db) {
       const isdSheet = findSheet(sheets, 'ISD');
       const icdSheet = findSheet(sheets, 'ICD');
       const analSheet = findAnaliticoSheet(files, sheets);
+      const resumoComposicoesSheet = findSheet(sheets, 'CCD', 'CSD', 'CSE');
       let parsedDate = { mes: requestedMes, ano: requestedAno };
       if (!parsedDate.mes || !parsedDate.ano) {
         const sampleRows = [isdSheet, icdSheet, analSheet].filter(Boolean).map(s => parseSheetRows(files, s.path).slice(0, 8));
@@ -1606,7 +1652,10 @@ module.exports = function sinapiRoutes(db) {
           const isDescricaoComposicaoInvalida = (descricao, grupo) => {
             const descNorm = normalizeText(descricao);
             const grupoNorm = normalizeText(grupo);
-            return Boolean(!descNorm || (grupoNorm && descNorm === grupoNorm));
+            const codigoNoFim = /\s+\d{3,}$/.test(descNorm);
+            return Boolean(!descNorm
+              || (grupoNorm && descNorm === grupoNorm)
+              || (grupoNorm && codigoNoFim && descNorm.startsWith(`${grupoNorm} `)));
           };
           reportProgress(43, 'Importando composicoes', `Conferindo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
           const compMap = new Map((await allC(`
@@ -1621,6 +1670,11 @@ module.exports = function sinapiRoutes(db) {
             }]));
           reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
+          if (resumoComposicoesSheet) {
+            const resumo = parseResumoComposicoesRows(parseSheetRows(files, resumoComposicoesSheet.path));
+            aplicarDescricoesResumo(comps, resumo);
+            reportProgress(45, 'Importando composicoes', `Descricoes de ${Math.min(comps.length, resumo.length)} composicoes alinhadas pela aba ${resumoComposicoesSheet.name}.`);
+          }
           if (!comps.length) {
             throw httpError(400, `Nenhuma composicao foi detectada na aba ${analSheet.name}. Verifique se o arquivo e a planilha SINAPI Referencia oficial.`);
           }
