@@ -43,7 +43,7 @@ function isMysqlRuntime() {
 
 function tenantSyntheticPk(table) {
   if (!isMysqlRuntime()) return 'rowid';
-  return table === 'tenant_precos_insumos' ? 'id_tenant_precos_insumos' : 'id_tenant_insumos';
+  return table === 'tenant_precos_insumos' ? 'id_preco' : 'id_insumo';
 }
 
 async function tableExists(db, table, schema = 'main') {

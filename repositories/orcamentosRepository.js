@@ -41,8 +41,8 @@ function isMysqlRuntime() {
 
 function tenantSyntheticPk(table) {
   if (!isMysqlRuntime()) return 'rowid';
-  if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
-  if (table === 'tenant_itens_composicao') return 'id_tenant_itens_composicao';
+  if (table === 'tenant_composicoes') return 'id_composicao';
+  if (table === 'tenant_itens_composicao') return 'id_item';
   return 'rowid';
 }
 

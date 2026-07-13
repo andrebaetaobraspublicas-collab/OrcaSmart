@@ -16,6 +16,24 @@ const TENANT_PK = {
   tenant_referential_overrides: 'id_override',
 };
 
+const USER_OVERRIDE_PK = {
+  tenant_componentes_bdi: 'id_componente',
+  tenant_composicoes: 'id_composicao',
+  tenant_composicoes_secao_itens: 'id_item_secao',
+  tenant_composicoes_secoes: 'id_secao',
+  tenant_grupos_encargos: 'id_grupo_enc',
+  tenant_insumos: 'id_insumo',
+  tenant_itens_composicao: 'id_item',
+  tenant_itens_encargo: 'id_item',
+  tenant_perfis_bdi: 'id_perfil_bdi',
+  tenant_perfis_encargos: 'id_perfil',
+  tenant_precos_equipamentos: 'id_preco_eq',
+  tenant_precos_insumos: 'id_preco',
+  tenant_datas_base: 'id_data_base',
+  tenant_unidades_medida: 'id_unidade',
+  tenant_referential_overrides: 'id_override',
+};
+
 const TENANT_SCOPED_TABLES = new Set([...TENANT_TABLES, ...USER_OVERRIDE_TABLES]);
 const CATALOG_TABLE_SET = new Set(CATALOG_TABLES);
 const TENANT_ID_SEQUENCE_CACHE = new WeakMap();
@@ -48,7 +66,7 @@ function normalizeSqlDialect(sql) {
     .replace(/\bINSERT\s+OR\s+IGNORE\b/gi, 'INSERT IGNORE');
 
   for (const table of USER_OVERRIDE_TABLES) {
-    const idColumn = `id_${table}`;
+    const idColumn = USER_OVERRIDE_PK[table] || `id_${table}`;
     const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const aliasRegex = new RegExp(`\\b\\\`?${escaped}\\\`?\\s+(?:AS\\s+)?\\\`?([A-Za-z_][A-Za-z0-9_]*)\\\`?\\b`, 'gi');
     for (const aliasMatch of text.matchAll(aliasRegex)) {
@@ -68,7 +86,7 @@ function normalizeSqlDialect(sql) {
     return new RegExp(`\\b(FROM|JOIN|UPDATE|INTO)\\s+\\\`?${escaped}\\\`?\\b`, 'i').test(text);
   });
   if (unqualifiedRowidTables.length === 1) {
-    const idColumn = `id_${unqualifiedRowidTables[0]}`;
+    const idColumn = USER_OVERRIDE_PK[unqualifiedRowidTables[0]] || `id_${unqualifiedRowidTables[0]}`;
     text = text.replace(/(?<![.`])\browid\b/gi, idColumn);
   }
 
@@ -199,7 +217,7 @@ async function qualifyTenantInsert(conn, sql, params, tenantId) {
     prefixParams.push(tenantId);
   }
 
-  const pkColumn = TENANT_PK[table];
+  const pkColumn = TENANT_PK[table] || USER_OVERRIDE_PK[table];
   if (pkColumn && !columns.includes(pkColumn)) {
     generatedId = await nextTenantId(conn, table, pkColumn, tenantId);
     prefixColumns.push(pkColumn);
@@ -239,7 +257,6 @@ function qualifyTenantWrite(sql, params, tenantId) {
 async function tableExists(conn, table) {
   const normalized = String(table || '').replace(/[`"'[\]]/g, '');
   if (!normalized) return false;
-  if (CATALOG_TABLE_SET.has(normalized) || TENANT_SCOPED_TABLES.has(normalized)) return true;
   const [rows] = await conn.execute(
     'SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
     [normalized],

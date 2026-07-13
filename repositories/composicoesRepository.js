@@ -834,9 +834,9 @@ async function getComposicao(db, idComposicao) {
 async function getTenantComposicao(db, rowid) {
   const hasCatalog = await hasCatalogComposicoes(db);
   const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
-  const tenantItemPk = tenantSyntheticPk('tenant_itens_composicao');
-  const tenantSecaoPk = tenantSyntheticPk('tenant_composicoes_secoes');
-  const tenantSecaoItemPk = tenantSyntheticPk('tenant_composicoes_secao_itens');
+  const hasTenantItens = await tableExists(db, 'tenant_itens_composicao');
+  const hasTenantSecoes = await tableExists(db, 'tenant_composicoes_secoes');
+  const hasTenantSecaoItens = await tableExists(db, 'tenant_composicoes_secao_itens');
   const comp = hasCatalog
     ? await one(db, `
         SELECT ${compSelectColumns(`'tenant:' || c.${tenantComposicaoPk}`, "'tenant'", 'c.tenant_catalog_id')}
@@ -852,28 +852,28 @@ async function getTenantComposicao(db, rowid) {
         FROM tenant_composicoes
         WHERE ${tenantComposicaoPk}=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
   if (!comp) return null;
-  comp.itens = await all(db, `
-    SELECT tenant_itens_composicao.*, id_item AS _rowid
-    FROM tenant_itens_composicao
-    WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, id_item`, [rowid]);
+  comp.itens = hasTenantItens ? await all(db, `
+      SELECT tenant_itens_composicao.*, id_item AS _rowid
+      FROM tenant_itens_composicao
+      WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY ordem, id_item`, [rowid]) : [];
   comp.itens.forEach((item) => {
     item.id_item = `tenant:${item._rowid || item.id_item}`;
     item.id_item_comp = item.id_item;
   });
-  comp.secoes = await all(db, `
-    SELECT tenant_composicoes_secoes.*, id_secao AS _rowid
-    FROM tenant_composicoes_secoes
-    WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, letra_secao, id_secao`, [rowid]);
+  comp.secoes = hasTenantSecoes ? await all(db, `
+      SELECT tenant_composicoes_secoes.*, id_secao AS _rowid
+      FROM tenant_composicoes_secoes
+      WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY ordem, letra_secao, id_secao`, [rowid]) : [];
   for (const secao of comp.secoes) {
     const secaoRowid = secao._rowid || secao.id_secao;
     secao.id_secao = `tenant:${secaoRowid}`;
-    secao.itens = await all(db, `
-      SELECT tenant_composicoes_secao_itens.*, id_item_secao AS _rowid
-      FROM tenant_composicoes_secao_itens
-      WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
-      ORDER BY ordem, id_item_secao`, [secaoRowid]);
+    secao.itens = hasTenantSecaoItens ? await all(db, `
+        SELECT tenant_composicoes_secao_itens.*, id_item_secao AS _rowid
+        FROM tenant_composicoes_secao_itens
+        WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
+        ORDER BY ordem, id_item_secao`, [secaoRowid]) : [];
     secao.itens.forEach((item) => {
       item.id_item_secao = `tenant:${item._rowid || item.id_item_secao}`;
     });

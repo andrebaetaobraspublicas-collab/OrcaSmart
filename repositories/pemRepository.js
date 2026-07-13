@@ -196,6 +196,9 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
   const itensTable = targetTenant ? 'tenant_composicoes_secao_itens' : 'composicoes_secao_itens';
   const secaoPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secoes') : 'id_secao';
   const itemPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secao_itens') : 'id_item_secao';
+  if (targetTenant && (!(await tableExists(db, secoesTable)) || !(await tableExists(db, itensTable)))) {
+    return;
+  }
   const secoes = await all(db, 'SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY ordem, letra_secao', [sourceId]);
   for (const sec of secoes) {
     const secResult = targetTenant
