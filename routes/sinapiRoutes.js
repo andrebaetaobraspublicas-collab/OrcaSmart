@@ -525,7 +525,14 @@ module.exports = function sinapiRoutes(db) {
         const codigoComp = findIdx(label => label.includes('codigo') && label.includes('composicao'));
         const tipoItem = findIdx(label => label.includes('tipo') && label.includes('item'));
         const codigoItem = findIdx(label => label.includes('codigo') && label.includes('item'));
-        const descricao = findIdx(label => label === 'descricao' || label.includes('descricao'));
+        const descricaoCandidates = labels
+          .map((label, index) => ({ label, index }))
+          .filter(({ label }) => label === 'descricao' || label.includes('descricao'))
+          .map(({ index }) => index);
+        const unidadeIdx = findIdx(label => label === 'unidade' || label.includes('unidade'));
+        const descricao = descricaoCandidates.find(index => (
+          (codigoItem < 0 || index > codigoItem) && (unidadeIdx < 0 || index < unidadeIdx)
+        )) ?? descricaoCandidates[0] ?? -1;
         const unidade = findIdx(label => label === 'unidade' || label.includes('unidade'));
         if (codigoComp >= 0 && descricao >= 0 && unidade >= 0) {
           return {
@@ -545,11 +552,14 @@ module.exports = function sinapiRoutes(db) {
     };
     const cols = findHeaderColumns();
     const col = key => (cols[key] >= 0 ? cols[key] : fallbackCols[key]);
+    const isLikelyGroupDescription = (value, grupo) => {
+      const valueNorm = normalizeText(value);
+      const grupoNorm = normalizeText(grupo);
+      return Boolean(valueNorm && grupoNorm && valueNorm === grupoNorm);
+    };
     const descriptionFromRow = (row, grupo) => {
       const primary = cell(row, col('descricao'));
-      const primaryNorm = normalizeText(primary);
-      const grupoNorm = normalizeText(grupo);
-      if (primary && primaryNorm !== grupoNorm) return primary;
+      if (primary && !isLikelyGroupDescription(primary, grupo)) return primary;
 
       const ignored = new Set([
         col('grupo'),
@@ -560,10 +570,19 @@ module.exports = function sinapiRoutes(db) {
         col('coeficiente'),
         col('situacao'),
       ]);
+      const preferredStart = Math.min(col('codigoItem') + 1, row.length);
+      const preferredEnd = Math.max(preferredStart, col('unidade'));
+      const preferred = (row || [])
+        .map((value, index) => ({ value: cell(row, index), index }))
+        .filter(({ value, index }) => value && index >= preferredStart && index < preferredEnd && !ignored.has(index))
+        .filter(({ value }) => !isLikelyGroupDescription(value, grupo) && !isCode(value))
+        .sort((a, b) => b.value.length - a.value.length);
+      if (preferred[0]?.value) return preferred[0].value;
+
       const candidates = (row || [])
         .map((value, index) => ({ value: cell(row, index), index }))
         .filter(({ value, index }) => value && !ignored.has(index))
-        .filter(({ value }) => normalizeText(value) !== grupoNorm && !isCode(value))
+        .filter(({ value }) => !isLikelyGroupDescription(value, grupo) && !isCode(value))
         .sort((a, b) => b.value.length - a.value.length);
       return candidates[0]?.value || primary || `${grupo || 'SINAPI'} ${codeAt(row, col('codigoComp'))}`;
     };
@@ -593,7 +612,7 @@ module.exports = function sinapiRoutes(db) {
         continue;
       }
 
-      if (!tipoItem && isCode(codigoComp) && unidade) {
+      if (!tipoItem && isCode(codigoComp) && !isCode(codigoItem) && unidade) {
         current = {
           codigo: codigoComp,
           descricao: descricao || `${grupo} ${codigoComp}`,
@@ -1584,14 +1603,22 @@ module.exports = function sinapiRoutes(db) {
             String(uf || '').trim().toUpperCase(),
             String(ref || '').trim(),
           ].join('|');
+          const isDescricaoComposicaoInvalida = (descricao, grupo) => {
+            const descNorm = normalizeText(descricao);
+            const grupoNorm = normalizeText(grupo);
+            return Boolean(!descNorm || (grupoNorm && descNorm === grupoNorm));
+          };
           reportProgress(43, 'Importando composicoes', `Conferindo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
           const compMap = new Map((await allC(`
-            SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia
+            SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia, descricao
             FROM ${compTable}
             WHERE fonte='SINAPI'
               AND mes_referencia=?
               AND uf_referencia IN (${ufWherePlaceholders})`, [mesRef, ...ufs]))
-            .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), r.id_composicao]));
+            .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), {
+              id: r.id_composicao,
+              descricao: r.descricao,
+            }]));
           reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
           if (!comps.length) {
@@ -1604,7 +1631,8 @@ module.exports = function sinapiRoutes(db) {
             const idGrupo = await getGrupo(comp.grupo);
             for (const compUf of ufs) {
               const keyComp = compKey(comp.codigo, compUf, mesRef);
-              let idComp = compMap.get(keyComp);
+              const existingComp = compMap.get(keyComp);
+              let idComp = existingComp?.id;
               let gravarItens = true;
               if (idComp) {
                 if (forceReferentialUpdate) {
@@ -1613,6 +1641,12 @@ module.exports = function sinapiRoutes(db) {
                   await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
                   out.composicoes_atualizadas += 1;
                 } else {
+                  if (isDescricaoComposicaoInvalida(existingComp?.descricao, comp.grupo)
+                    && !isDescricaoComposicaoInvalida(comp.descricao, comp.grupo)) {
+                    await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,situacao_ref=? WHERE ${compIdWhere}=?`,
+                      [comp.descricao, comp.unidade, idGrupo, comp.situacao, idComp]);
+                    out.composicoes_atualizadas += 1;
+                  }
                   gravarItens = false;
                 }
               } else {
@@ -1626,7 +1660,7 @@ module.exports = function sinapiRoutes(db) {
                   : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
                     [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
                 idComp = r.lastID;
-                compMap.set(keyComp, idComp);
+                compMap.set(keyComp, { id: idComp, descricao: comp.descricao });
                 out.composicoes_inseridas += 1;
               }
               if (gravarItens) out.itens_inseridos += await inserirItensComposicao(idComp, comp.itens);
