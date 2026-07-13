@@ -682,7 +682,7 @@ module.exports = function sinapiRoutes(db) {
       const importarIsd = requestedImportarIsd;
       const importarIcd = requestedImportarIcd;
       const importarAnalitico = requestedImportarAnalitico;
-      const sobrepor = true;
+      const sobrepor = String(fields.sobrepor || 'false').toLowerCase() === 'true';
       const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
 
       return db.withConnection(async (conn) => {
@@ -720,7 +720,7 @@ module.exports = function sinapiRoutes(db) {
           directMysqlReusableConn = await createMysqlConnection();
           directMysqlReusableUses = 0;
           await directMysqlReusableConn.query('SET SESSION lock_wait_timeout=3').catch(() => {});
-          await directMysqlReusableConn.query('SET SESSION max_statement_time=8').catch(() => {});
+          await directMysqlReusableConn.query('SET SESSION max_statement_time=20').catch(() => {});
         }
         let timedOut = false;
         const execution = directMysqlReusableConn.execute(sql, params);
@@ -1211,6 +1211,9 @@ module.exports = function sinapiRoutes(db) {
               const idPreco = precoMap.get(key);
               const precoRef = precoDes ?? precoNao ?? 0;
               if (idPreco) {
+                if (forceReferentialUpdate && precoMudou(precoInfoMap.get(key), precoDes || 0, precoNao || 0, precoRef || 0)) {
+                  atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef, key });
+                }
                 continue;
               } else {
                 inserirPrecos.push({ idInsumo, uf, precoDes, precoNao, precoRef, key });
@@ -1222,50 +1225,56 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          for (let offset = 0; offset < inserirPrecos.length; offset += 1) {
-            const row = inserirPrecos[offset];
-            if (offset % 10 === 0) {
-              const ate = Math.min(offset + 10, inserirPrecos.length);
-              reportProgress(
-                30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)),
-                label,
-                `Gravando precos ${offset + 1}-${ate}/${inserirPrecos.length} (${row.key}).`,
-              );
+          const insertPrecoBatch = async (rows, baseIndex) => {
+            if (!rows.length) return 0;
+            const tableName = useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable;
+            const values = rows.map(() => '(?,?,?,?,?,?,?)').join(',');
+            const params = [];
+            for (const row of rows) {
+              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.precoDes ?? 0, row.precoNao ?? 0, row.precoRef ?? 0);
             }
-            const insertSql = `
-              INSERT INTO ${useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable}
+            const sql = `
+              INSERT INTO ${tableName}
                 (id_insumo,id_data_base,id_fonte,uf_referencia,preco_desonerado,preco_nao_desonerado,preco_referencia)
-              VALUES (?,?,?,?,?,?,?)`;
-            const insertParams = [
-              row.idInsumo,
-              idDataBase,
-              idFonte,
-              row.uf,
-              row.precoDes || 0,
-              row.precoNao || 0,
-              row.precoRef || 0,
-            ];
+              VALUES ${values}`;
+            const labelBatch = `Gravacao de precos SINAPI ${baseIndex + 1}-${baseIndex + rows.length}/${inserirPrecos.length}`;
             try {
               if (useDirectPrecoInsert) {
-                await executeDirectMysqlReusable(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+                await executeDirectMysqlReusable(sql, params, labelBatch, 15000);
               } else {
-                await runTimed(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+                await runTimed(sql, params, labelBatch, 30000);
               }
+              return rows.length;
             } catch (err) {
-              out.alertas.push(`Preco ${row.key} nao importado: ${err.message}`);
-              reportProgress(
-                30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)),
-                label,
-                `Pulando preco ${offset + 1}/${inserirPrecos.length} (${row.key}): ${err.message}`,
-              );
-              continue;
+              if (rows.length === 1) {
+                out.alertas.push(`Preco ${rows[0].key} nao importado: ${err.message}`);
+                reportProgress(
+                  30 + Math.round((10 * baseIndex) / Math.max(1, inserirPrecos.length)),
+                  label,
+                  `Pulando preco ${baseIndex + 1}/${inserirPrecos.length} (${rows[0].key}): ${err.message}`,
+                );
+                return 0;
+              }
+              const half = Math.ceil(rows.length / 2);
+              const first = await insertPrecoBatch(rows.slice(0, half), baseIndex);
+              const second = await insertPrecoBatch(rows.slice(half), baseIndex + half);
+              return first + second;
             }
-            out.precos_inseridos += 1;
-            if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
-              const done = offset + 1;
-              reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados.`);
-              await yieldToEventLoop();
-            }
+          };
+
+          const precoBatchSize = useDirectPrecoInsert ? 150 : 300;
+          for (let offset = 0; offset < inserirPrecos.length; offset += precoBatchSize) {
+            const batch = inserirPrecos.slice(offset, offset + precoBatchSize);
+            const ate = Math.min(offset + batch.length, inserirPrecos.length);
+            reportProgress(
+              30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)),
+              label,
+              `Gravando precos ${offset + 1}-${ate}/${inserirPrecos.length}.`,
+            );
+            const inseridos = await insertPrecoBatch(batch, offset);
+            out.precos_inseridos += inseridos;
+            reportProgress(30 + Math.round((10 * ate) / Math.max(1, inserirPrecos.length)), label, `${ate}/${inserirPrecos.length} precos processados; ${out.precos_inseridos} inseridos.`);
+            await yieldToEventLoop();
           }
 
           if (atualizarPrecos.length) {
@@ -1358,26 +1367,18 @@ module.exports = function sinapiRoutes(db) {
             return inseridos;
           }
 
-          if (forceReferentialUpdate && ufWherePlaceholders) {
-            reportProgress(43, 'Importando composicoes', `Removendo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
-            const removidas = await runC(`
-              DELETE FROM ${compTable}
-              WHERE fonte='SINAPI'
-                AND mes_referencia=?
-                AND uf_referencia IN (${ufWherePlaceholders})`, [mesRef, ...ufs]);
-            if (removidas.changes) out.composicoes_atualizadas += removidas.changes;
-            reportProgress(44, 'Importando composicoes', `${removidas.changes || 0} composicoes anteriores removidas; gravando planilha recebida.`);
-          }
-
           const compKey = (codigo, uf, ref) => [
             String(codigo || '').trim(),
             String(uf || '').trim().toUpperCase(),
             String(ref || '').trim(),
           ].join('|');
-          const compMap = forceReferentialUpdate ? new Map() : new Map((await allC(`
+          reportProgress(43, 'Importando composicoes', `Conferindo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
+          const compMap = new Map((await allC(`
             SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia
             FROM ${compTable}
-            WHERE UPPER(COALESCE(fonte,''))='SINAPI'`))
+            WHERE fonte='SINAPI'
+              AND mes_referencia=?
+              AND uf_referencia IN (${ufWherePlaceholders})`, [mesRef, ...ufs]))
             .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), r.id_composicao]));
           reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
