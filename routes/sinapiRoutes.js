@@ -704,6 +704,49 @@ module.exports = function sinapiRoutes(db) {
       });
       const runTimed = (sql, params = [], label = 'Comando SQL', ms = 20000) => withTimeout(runC(sql, params), ms, label);
       const directMysqlTable = table => String(table || '').replace(/^catalog\./i, '');
+      let directMysqlReusableConn = null;
+      let directMysqlReusableUses = 0;
+      const closeDirectMysqlReusable = async () => {
+        if (directMysqlReusableConn && typeof directMysqlReusableConn.end === 'function') {
+          await directMysqlReusableConn.end().catch(() => {});
+        }
+        directMysqlReusableConn = null;
+        directMysqlReusableUses = 0;
+      };
+      const executeDirectMysqlReusable = async (sql, params, label, ms = 12000) => {
+        if (!directMysqlReusableConn || directMysqlReusableUses >= 200) {
+          await closeDirectMysqlReusable();
+          directMysqlReusableConn = await createMysqlConnection();
+          directMysqlReusableUses = 0;
+          await directMysqlReusableConn.query('SET SESSION lock_wait_timeout=3').catch(() => {});
+          await directMysqlReusableConn.query('SET SESSION max_statement_time=8').catch(() => {});
+        }
+        let timedOut = false;
+        const execution = directMysqlReusableConn.execute(sql, params);
+        let timeoutHandle = null;
+        const timer = new Promise((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            if (directMysqlReusableConn && typeof directMysqlReusableConn.destroy === 'function') directMysqlReusableConn.destroy();
+            directMysqlReusableConn = null;
+            directMysqlReusableUses = 0;
+            reject(new Error(`${label} excedeu ${Math.round(ms / 1000)}s.`));
+          }, ms);
+        });
+        try {
+          const [result] = await Promise.race([execution, timer]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          directMysqlReusableUses += 1;
+          return result;
+        } catch (err) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (timedOut || /closed|destroyed|fatal/i.test(err.message || '')) {
+            directMysqlReusableConn = null;
+            directMysqlReusableUses = 0;
+          }
+          throw err;
+        }
+      };
       const executeDirectMysql = async (sql, params, label, ms = 12000) => {
         let directConn = null;
         let timedOut = false;
@@ -972,7 +1015,7 @@ module.exports = function sinapiRoutes(db) {
             let r = {};
             try {
               r = useDirectPrecoInsert
-                ? await executeDirectMysql(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`)
+                ? await executeDirectMysqlReusable(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`)
                 : await runTimed(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
             } catch (err) {
               out.alertas.push(`Preco ${row.key} nao importado: ${err.message}`);
@@ -1215,7 +1258,7 @@ module.exports = function sinapiRoutes(db) {
             ];
             try {
               if (useDirectPrecoInsert) {
-                await executeDirectMysql(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+                await executeDirectMysqlReusable(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
               } else {
                 await runTimed(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
               }
@@ -1472,10 +1515,12 @@ module.exports = function sinapiRoutes(db) {
         }
 
         reportProgress(99, 'Finalizando', 'Consolidando resultado da importacao.');
+        await closeDirectMysqlReusable();
         if (useLongTransaction) await runC('COMMIT');
         out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
       } catch (err) {
+        await closeDirectMysqlReusable();
         if (useLongTransaction) await runC('ROLLBACK').catch(() => {});
         throw err;
       }
