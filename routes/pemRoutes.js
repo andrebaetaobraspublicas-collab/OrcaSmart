@@ -5,6 +5,7 @@ const { ensureAdmin } = require('../utils/accessPolicy');
 module.exports = function pemRoutes(db, options = {}) {
   const router = express.Router();
   const readDb = options.readDb || db;
+  const withWriteConnection = task => (db && typeof db.withConnection === 'function' ? db.withConnection(task) : task(db));
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
@@ -24,16 +25,16 @@ module.exports = function pemRoutes(db, options = {}) {
 
   router.put('/equipamentos/:id', asyncHandler(async (req, res) => {
     ensureAdmin(req, 'Usuarios comuns nao podem alterar diretamente equipamentos referenciais de producao horaria.');
-    res.json(await service.updateEquipamento(db, req.params.id, req.body || {}));
+    res.json(await withWriteConnection(writeDb => service.updateEquipamento(writeDb, req.params.id, req.body || {})));
   }));
 
   router.put('/equipamentos/:id/variaveis', asyncHandler(async (req, res) => {
     ensureAdmin(req, 'Usuarios comuns nao podem alterar diretamente variaveis referenciais de producao horaria.');
-    res.json(await service.updateVariaveis(db, req.params.id, req.body || []));
+    res.json(await withWriteConnection(writeDb => service.updateVariaveis(writeDb, req.params.id, req.body || [])));
   }));
 
   router.post('/:id/criar-composicao-usuario', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.criarComposicaoUsuario(db, req.params.id, req.body || {}));
+    res.status(201).json(await withWriteConnection(writeDb => service.criarComposicaoUsuario(writeDb, req.params.id, req.body || {})));
   }));
 
   return router;

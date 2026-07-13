@@ -66,6 +66,8 @@ function tenantSyntheticPk(table) {
   if (!isMysqlRuntime()) return 'rowid';
   if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
   if (table === 'tenant_itens_composicao') return 'id_tenant_itens_composicao';
+  if (table === 'tenant_composicoes_secoes') return 'id_tenant_composicoes_secoes';
+  if (table === 'tenant_composicoes_secao_itens') return 'id_tenant_composicoes_secao_itens';
   return 'rowid';
 }
 
@@ -738,7 +740,8 @@ async function recalcularCustosReferenciais(db, filters = {}) {
 function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_composicoes' : 'catalog.composicoes';
-  const idExpr = isTenant ? "'tenant:' || c.rowid" : 'CAST(c.id_composicao AS TEXT)';
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
+  const idExpr = isTenant ? `'tenant:' || c.${tenantComposicaoPk}` : 'CAST(c.id_composicao AS TEXT)';
   const scopeExpr = isTenant ? "'tenant'" : "'catalog'";
   const catalogIdExpr = isTenant ? 'c.tenant_catalog_id' : 'c.id_composicao';
   const columns = compSelectColumns(idExpr, scopeExpr, catalogIdExpr);
@@ -796,6 +799,7 @@ async function getComposicao(db, idComposicao) {
   if (await useTenantCatalogRead(db)) {
     const scoped = scopedComposicaoId(idComposicao);
     if (scoped.scope === 'tenant') return getTenantComposicao(db, scoped.value);
+    const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
     const hasOverrides = await hasTenantReferentialOverrides(db);
     const deleted = hasOverrides ? await one(db, `
       SELECT 1 FROM tenant_referential_overrides
@@ -804,12 +808,12 @@ async function getComposicao(db, idComposicao) {
       LIMIT 1`, [scoped.value]) : null;
     if (deleted) return null;
     const override = await one(db, `
-      SELECT rowid AS tenant_rowid
+      SELECT ${tenantComposicaoPk} AS tenant_rowid
       FROM tenant_composicoes
       WHERE tenant_catalog_id = ?
         AND tenant_override_action='update'
         AND COALESCE(tenant_override_status,'active')='active'
-      ORDER BY rowid DESC LIMIT 1`, [scoped.value]);
+      ORDER BY ${tenantComposicaoPk} DESC LIMIT 1`, [scoped.value]);
     if (override) return getTenantComposicao(db, override.tenant_rowid);
     const built = buildTenantCatalogListSelect({}, 'catalog', hasOverrides);
     const comp = await one(db, `${built.sql} AND c.id_composicao = ?`, [...built.params, scoped.value]);
@@ -834,38 +838,42 @@ async function getComposicao(db, idComposicao) {
 
 async function getTenantComposicao(db, rowid) {
   const hasCatalog = await hasCatalogComposicoes(db);
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
+  const tenantItemPk = tenantSyntheticPk('tenant_itens_composicao');
+  const tenantSecaoPk = tenantSyntheticPk('tenant_composicoes_secoes');
+  const tenantSecaoItemPk = tenantSyntheticPk('tenant_composicoes_secao_itens');
   const comp = hasCatalog
     ? await one(db, `
-        SELECT ${compSelectColumns("'tenant:' || c.rowid", "'tenant'", 'c.tenant_catalog_id')}
+        SELECT ${compSelectColumns(`'tenant:' || c.${tenantComposicaoPk}`, "'tenant'", 'c.tenant_catalog_id')}
         FROM tenant_composicoes c
         LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
-        WHERE c.rowid = ? AND COALESCE(c.tenant_override_status,'active')='active'`, [rowid])
+        WHERE c.${tenantComposicaoPk} = ? AND COALESCE(c.tenant_override_status,'active')='active'`, [rowid])
     : await one(db, `
-        SELECT 'tenant:' || rowid AS id_composicao,
+        SELECT 'tenant:' || ${tenantComposicaoPk} AS id_composicao,
                codigo, fonte, formato, descricao, unidade, id_grupo_comp, mes_referencia,
                uf_referencia, situacao_ref, custo_unitario, fic, producao_equipe, unidade_producao,
                situacao, observacoes, custo_horario_execucao, custo_unitario_execucao, custo_fic,
                subtotal_sicro, 'tenant' AS _tenant_scope, tenant_catalog_id AS _catalog_id
         FROM tenant_composicoes
-        WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+        WHERE ${tenantComposicaoPk}=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
   if (!comp) return null;
   comp.itens = await all(db, `
-    SELECT *, 'tenant:' || rowid AS id_item, 'tenant:' || rowid AS id_item_comp
+    SELECT *, 'tenant:' || ${tenantItemPk} AS id_item, 'tenant:' || ${tenantItemPk} AS id_item_comp
     FROM tenant_itens_composicao
     WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, rowid`, [rowid]);
+    ORDER BY ordem, ${tenantItemPk}`, [rowid]);
   comp.secoes = await all(db, `
-    SELECT *, 'tenant:' || rowid AS id_secao
+    SELECT *, 'tenant:' || ${tenantSecaoPk} AS id_secao
     FROM tenant_composicoes_secoes
     WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
     ORDER BY ordem, letra_secao`, [rowid]);
   for (const secao of comp.secoes) {
     const secaoRowid = String(secao.id_secao).startsWith('tenant:') ? Number(String(secao.id_secao).slice(7)) : secao.id_secao;
     secao.itens = await all(db, `
-      SELECT *, 'tenant:' || rowid AS id_item_secao
+      SELECT *, 'tenant:' || ${tenantSecaoItemPk} AS id_item_secao
       FROM tenant_composicoes_secao_itens
       WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
-      ORDER BY ordem, rowid`, [secaoRowid]);
+      ORDER BY ordem, ${tenantSecaoItemPk}`, [secaoRowid]);
   }
   return aplicarPrecosResolvidosTenant(db, comp);
 }
@@ -972,7 +980,7 @@ async function deleteComposicaoDirect(db, idComposicao) {
       await run(db, "UPDATE tenant_composicoes_secao_itens SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
       await run(db, "UPDATE tenant_composicoes_secoes SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
       await run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), scoped.value]);
-      return run(db, "UPDATE tenant_composicoes SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=? WHERE rowid = ?", [new Date().toISOString(), scoped.value]);
+      return run(db, `UPDATE tenant_composicoes SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=? WHERE ${tenantSyntheticPk('tenant_composicoes')} = ?`, [new Date().toISOString(), scoped.value]);
     }
     await run(db, `
       UPDATE tenant_composicoes
@@ -1034,7 +1042,7 @@ async function insertTenantComposicao(db, data = {}, options = {}) {
     new Date().toISOString(),
     new Date().toISOString(),
   ]);
-  await run(db, 'UPDATE tenant_composicoes SET id_composicao = ? WHERE rowid = ?', [result.lastID, result.lastID]);
+  await run(db, `UPDATE tenant_composicoes SET id_composicao = ? WHERE ${tenantSyntheticPk('tenant_composicoes')} = ?`, [result.lastID, result.lastID]);
   await recordReferentialOverride(db, {
     catalogId: options.catalogId || null,
     tenantRowid: result.lastID,
@@ -1187,6 +1195,7 @@ async function impactoComposicaoTenantCatalog(db, idComposicao) {
   const variantesOrigem = codigoVariantes(comp.codigo);
   const parents = new Map();
   const hasOverrides = await hasTenantReferentialOverrides(db);
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
   if (variantesOrigem.length) {
     const qs = variantesOrigem.map(() => '?').join(',');
     const catalogParents = await all(db, `
@@ -1198,9 +1207,9 @@ async function impactoComposicaoTenantCatalog(db, idComposicao) {
         AND ic.codigo_item IN (${qs})
         AND ${visibleCatalogClause('c', hasOverrides)}`, variantesOrigem);
     const tenantParents = await all(db, `
-      SELECT ${compSelectColumns("'tenant:' || c.rowid", "'tenant'", 'c.tenant_catalog_id')}
+      SELECT ${compSelectColumns(`'tenant:' || c.${tenantComposicaoPk}`, "'tenant'", 'c.tenant_catalog_id')}
       FROM tenant_itens_composicao ic
-      JOIN tenant_composicoes c ON c.rowid = ic.id_composicao
+      JOIN tenant_composicoes c ON c.${tenantComposicaoPk} = ic.id_composicao
       LEFT JOIN catalog.grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp
       WHERE UPPER(COALESCE(ic.tipo_item, '')) = 'COMPOSICAO'
         AND ic.codigo_item IN (${qs})

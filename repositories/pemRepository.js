@@ -3,6 +3,22 @@ const toNum = (v, d = 0) => {
   return Number.isFinite(n) ? n : d;
 };
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function isMysqlRuntime() {
+  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+}
+
+function tenantSyntheticPk(table) {
+  if (!isMysqlRuntime()) return 'rowid';
+  if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
+  if (table === 'tenant_composicoes_secoes') return 'id_tenant_composicoes_secoes';
+  if (table === 'tenant_composicoes_secao_itens') return 'id_tenant_composicoes_secao_itens';
+  return 'rowid';
+}
+
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
@@ -21,6 +37,19 @@ function run(db, sql, params = []) {
       err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes });
     });
   });
+}
+
+async function tableExists(db, table, schema = 'main') {
+  const row = await one(
+    db,
+    `SELECT name FROM ${quoteIdent(schema)}.sqlite_master WHERE type='table' AND name=? LIMIT 1`,
+    [table],
+  ).catch(() => null);
+  return !!row;
+}
+
+async function hasTenantComposicoes(db) {
+  return tableExists(db, 'tenant_composicoes');
 }
 
 async function stats(db) {
@@ -162,12 +191,27 @@ async function getOrCreateUserGroup(db, source, dataBase, uf) {
   return result.lastID;
 }
 
-async function copySectionItems(db, sourceId, targetId, equipamentosEditados = new Map()) {
+async function copySectionItems(db, sourceId, targetId, equipamentosEditados = new Map(), options = {}) {
+  const targetTenant = !!options.targetTenant;
+  const secoesTable = targetTenant ? 'tenant_composicoes_secoes' : 'composicoes_secoes';
+  const itensTable = targetTenant ? 'tenant_composicoes_secao_itens' : 'composicoes_secao_itens';
+  const secaoPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secoes') : 'id_secao';
+  const itemPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secao_itens') : 'id_item_secao';
   const secoes = await all(db, 'SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY ordem, letra_secao', [sourceId]);
   for (const sec of secoes) {
-    const secResult = await run(db, `
-      INSERT INTO composicoes_secoes (id_composicao, letra_secao, nome_secao, custo_total_secao, ordem)
-      VALUES (?,?,?,?,?)`, [targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem]);
+    const secResult = targetTenant
+      ? await run(db, `
+        INSERT INTO ${secoesTable}
+          (id_composicao, letra_secao, nome_secao, custo_total_secao, ordem,
+           tenant_catalog_id, tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+        VALUES (?,?,?,?,?, ?, 'create', 'active', ?, ?)`, [
+        targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem,
+        sec.id_secao || null, new Date().toISOString(), new Date().toISOString(),
+      ])
+      : await run(db, `
+        INSERT INTO ${secoesTable} (id_composicao, letra_secao, nome_secao, custo_total_secao, ordem)
+        VALUES (?,?,?,?,?)`, [targetId, sec.letra_secao, sec.nome_secao, sec.custo_total_secao, sec.ordem]);
+    if (targetTenant) await run(db, `UPDATE ${secoesTable} SET id_secao=? WHERE ${secaoPk}=?`, [secResult.lastID, secResult.lastID]);
 
     const itens = await all(db, 'SELECT * FROM composicoes_secao_itens WHERE id_secao=? ORDER BY ordem, id_item_secao', [sec.id_secao]);
     let totalSecao = 0;
@@ -185,17 +229,65 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
         custoTotal = qtd * ((toNum(utilOp) * hp) + (toNum(utilImp) * hi));
       }
       totalSecao += toNum(custoTotal);
-      await run(db, `
-        INSERT INTO composicoes_secao_itens
-          (id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,util_operativa,util_improdutiva,custo_hp,custo_hi,preco_unitario,custo_total,cod_transporte,cod_transp_ln,cod_transp_rp,cod_transp_p,fit,dmt,ordem)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
-        targetId, secResult.lastID, item.letra_secao, item.codigo_item, item.descricao, item.quantidade, item.unidade,
-        utilOp, utilImp, item.custo_hp, item.custo_hi, item.preco_unitario, custoTotal,
-        item.cod_transporte, item.cod_transp_ln, item.cod_transp_rp, item.cod_transp_p, item.fit, item.dmt, item.ordem,
-      ]);
+      const itemResult = targetTenant
+        ? await run(db, `
+          INSERT INTO ${itensTable}
+            (id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,util_operativa,util_improdutiva,custo_hp,custo_hi,preco_unitario,custo_total,cod_transporte,cod_transp_ln,cod_transp_rp,cod_transp_p,fit,dmt,ordem,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'create', 'active', ?, ?)`, [
+          targetId, secResult.lastID, item.letra_secao, item.codigo_item, item.descricao, item.quantidade, item.unidade,
+          utilOp, utilImp, item.custo_hp, item.custo_hi, item.preco_unitario, custoTotal,
+          item.cod_transporte, item.cod_transp_ln, item.cod_transp_rp, item.cod_transp_p, item.fit, item.dmt, item.ordem,
+          item.id_item_secao || null, new Date().toISOString(), new Date().toISOString(),
+        ])
+        : await run(db, `
+          INSERT INTO ${itensTable}
+            (id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,util_operativa,util_improdutiva,custo_hp,custo_hi,preco_unitario,custo_total,cod_transporte,cod_transp_ln,cod_transp_rp,cod_transp_p,fit,dmt,ordem)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+          targetId, secResult.lastID, item.letra_secao, item.codigo_item, item.descricao, item.quantidade, item.unidade,
+          utilOp, utilImp, item.custo_hp, item.custo_hi, item.preco_unitario, custoTotal,
+          item.cod_transporte, item.cod_transp_ln, item.cod_transp_rp, item.cod_transp_p, item.fit, item.dmt, item.ordem,
+        ]);
+      if (targetTenant) await run(db, `UPDATE ${itensTable} SET id_item_secao=? WHERE ${itemPk}=?`, [itemResult.lastID, itemResult.lastID]);
     }
-    await run(db, 'UPDATE composicoes_secoes SET custo_total_secao=? WHERE id_secao=?', [Number(totalSecao.toFixed(2)), secResult.lastID]);
+    await run(db, `UPDATE ${secoesTable} SET custo_total_secao=? WHERE ${secaoPk}=?`, [Number(totalSecao.toFixed(2)), secResult.lastID]);
   }
+}
+
+async function criarComposicaoUsuarioTenant(db, pem, source, dataBase, uf, mesRef, idGrupo, equipamentosEditados) {
+  const compPk = tenantSyntheticPk('tenant_composicoes');
+  const result = await run(db, `
+    INSERT INTO tenant_composicoes
+      (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,custo_unitario,fic,producao_equipe,unidade_producao,situacao,observacoes,custo_horario_execucao,custo_unitario_execucao,custo_fic,subtotal_sicro,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'create', 'active', ?, ?)`, [
+    `USUARIO.${source.codigo || pem.codigo}.${Date.now()}`,
+    'USUARIO',
+    source.formato || 'PRODUCAO_HORARIA',
+    source.descricao || pem.servico,
+    source.unidade || pem.unidade,
+    idGrupo,
+    mesRef,
+    uf,
+    'Usuario',
+    source.custo_unitario,
+    source.fic,
+    pem.producao_equipe,
+    pem.unidade,
+    'Ativo',
+    `Composicao de usuario criada a partir do PEM SICRO ${pem.codigo}.`,
+    source.custo_horario_execucao,
+    source.custo_unitario_execucao,
+    source.custo_fic,
+    source.subtotal_sicro,
+    source.id_composicao || null,
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ]);
+  await run(db, `UPDATE tenant_composicoes SET id_composicao=? WHERE ${compPk}=?`, [result.lastID, result.lastID]);
+  await copySectionItems(db, source.id_composicao, result.lastID, equipamentosEditados, { targetTenant: true });
+  return one(db, `
+    SELECT *, 'tenant:' || ${compPk} AS id_composicao, 'tenant' AS _tenant_scope
+    FROM tenant_composicoes
+    WHERE ${compPk}=? AND COALESCE(tenant_override_status,'active')='active'`, [result.lastID]);
 }
 
 async function criarComposicaoUsuario(db, idPem, data = {}) {
@@ -216,7 +308,8 @@ async function criarComposicaoUsuario(db, idPem, data = {}) {
 
   const uf = String(data.uf || source.uf_referencia || '').toUpperCase();
   const mesRef = `${String(dataBase.mes).padStart(2, '0')}/${dataBase.ano}`;
-  const idGrupo = await getOrCreateUserGroup(db, source, dataBase, uf);
+  const tenantMode = await hasTenantComposicoes(db);
+  const idGrupo = tenantMode ? (source.id_grupo_comp || null) : await getOrCreateUserGroup(db, source, dataBase, uf);
   const equipamentosEditados = new Map();
   for (const equip of (data.equipamentos || [])) {
     const dbEquip = pem.equipamentos.find(e => Number(e.id_pem_equip) === Number(equip.id_pem_equip));
@@ -228,6 +321,10 @@ async function criarComposicaoUsuario(db, idPem, data = {}) {
       producao_horaria: equip.producao_horaria === undefined ? dbEquip?.producao_horaria : toNum(equip.producao_horaria),
       num_unidades: equip.num_unidades === undefined ? dbEquip?.num_unidades : toNum(equip.num_unidades),
     });
+  }
+
+  if (tenantMode) {
+    return criarComposicaoUsuarioTenant(db, pem, source, dataBase, uf, mesRef, idGrupo, equipamentosEditados);
   }
 
   const result = await run(db, `
