@@ -890,8 +890,13 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          for (let offset = 0; offset < inserirPrecos.length; offset += batchSize) {
-            const batch = inserirPrecos.slice(offset, offset + batchSize);
+          const precoInsertBatchSize = 50;
+          for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
+            const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
+            const antes = Math.min(offset + 1, inserirPrecos.length);
+            const ate = Math.min(offset + batch.length, inserirPrecos.length);
+            const pctAntes = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * offset / Math.max(1, inserirPrecos.length))) );
+            reportProgress(pctAntes, label, `${label}: gravando precos ${antes}-${ate}/${inserirPrecos.length}.`);
             const params = [];
             const values = batch.map(row => {
               params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.preco, row.preco);
@@ -922,7 +927,7 @@ module.exports = function sinapiRoutes(db) {
             }
             const done = Math.min(offset + batch.length, inserirPrecos.length);
             const pct = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * done / Math.max(1, inserirPrecos.length))) );
-            reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados em lote.`);
+            reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados.`);
           }
 
           if (atualizarPrecos.length) {
@@ -1122,8 +1127,12 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          for (let offset = 0; offset < inserirPrecos.length; offset += batchSize) {
-            const batch = inserirPrecos.slice(offset, offset + batchSize);
+          const precoInsertBatchSize = 50;
+          for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
+            const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
+            const antes = Math.min(offset + 1, inserirPrecos.length);
+            const ate = Math.min(offset + batch.length, inserirPrecos.length);
+            reportProgress(30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)), label, `Gravando precos ${antes}-${ate}/${inserirPrecos.length}.`);
             const params = [];
             const values = batch.map(row => {
               params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.precoDes || 0, row.precoNao || 0, row.precoRef || 0);
@@ -1135,7 +1144,7 @@ module.exports = function sinapiRoutes(db) {
               VALUES ${values}`, params);
             out.precos_inseridos += batch.length;
             const done = Math.min(offset + batch.length, inserirPrecos.length);
-            reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados em lote.`);
+            reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados.`);
           }
 
           if (atualizarPrecos.length) {
