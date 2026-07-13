@@ -233,9 +233,9 @@ async function listGrupos(db, query = {}) {
       LEFT JOIN (
         SELECT id_composicao, id_grupo_comp FROM catalog.composicoes c WHERE ${visibleCatalogClause('c', hasOverrides)}
         UNION ALL
-        SELECT 'tenant:' || ${tenantComposicoesPk} AS id_composicao, id_grupo_comp
-        FROM tenant_composicoes
-        WHERE COALESCE(tenant_override_status,'active')='active'
+        SELECT 'tenant:' || tc.${tenantComposicoesPk} AS id_composicao, tc.id_grupo_comp
+        FROM tenant_composicoes tc
+        WHERE COALESCE(tc.tenant_override_status,'active')='active'
       ) v ON v.id_grupo_comp = g.id_grupo_comp
       WHERE 1 = 1 ${fonteFilter}
       GROUP BY g.id_grupo_comp

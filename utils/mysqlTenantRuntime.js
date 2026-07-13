@@ -120,7 +120,7 @@ function qualifyTenantSelect(sql, params, tenantId) {
     return `${match}\`${scopedAlias}\`.tenant_id = ${id} AND `;
   });
 
-  text = text.replace(new RegExp(`\\bFROM\\s+\\\`?(${tableNames})\\\`?\\s+(?=(GROUP\\s+BY|ORDER\\s+BY|HAVING|LIMIT|OFFSET|\\)|$))`, 'gi'), (match, table) => (
+  text = text.replace(new RegExp(`\\bFROM\\s+\\\`?(${tableNames})\\\`?(?=\\s*(GROUP\\s+BY|ORDER\\s+BY|HAVING|LIMIT|OFFSET|\\)|$))`, 'gi'), (match, table) => (
     `FROM \`${table}\` WHERE \`${table}\`.tenant_id = ${id} `
   ));
 
