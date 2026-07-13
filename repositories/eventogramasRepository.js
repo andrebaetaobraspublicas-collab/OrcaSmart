@@ -47,6 +47,17 @@ function formatNumeroEvento(indexes = []) {
   return indexes.map(i => String(i).padStart(2, '0')).join('.');
 }
 
+async function insertEventoItens(db, idEvento, rows = []) {
+  const itemIds = rows.map(row => row.id_item).filter(Boolean);
+  const batchSize = 200;
+  for (let i = 0; i < itemIds.length; i += batchSize) {
+    const batch = itemIds.slice(i, i + batchSize);
+    const placeholders = batch.map(() => '(?,?)').join(',');
+    const params = batch.flatMap(idItem => [idEvento, idItem]);
+    await run(db, `INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES ${placeholders}`, params);
+  }
+}
+
 function buildEventosPorEstrutura(itens = [], bdi = 0) {
   const roots = [];
   const stack = [];
@@ -245,9 +256,7 @@ async function gerarAutomatico(db, idEventograma, options = {}) {
       ordem,
     ]);
     criados += 1;
-    for (const it of evento.rows) {
-      await run(db, 'INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES (?,?)', [result.lastID, it.id_item]);
-    }
+    await insertEventoItens(db, result.lastID, evento.rows);
     let childOrder = 1;
     for (const child of evento.children) {
       await insertEvento(child, result.lastID, childOrder);
