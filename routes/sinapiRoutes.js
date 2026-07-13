@@ -668,7 +668,7 @@ module.exports = function sinapiRoutes(db) {
       const importarIsd = requestedImportarIsd;
       const importarIcd = requestedImportarIcd;
       const importarAnalitico = requestedImportarAnalitico;
-      const sobrepor = String(fields.sobrepor || 'false').toLowerCase() === 'true';
+      const sobrepor = true;
       const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
 
       return db.withConnection(async (conn) => {
@@ -722,6 +722,7 @@ module.exports = function sinapiRoutes(db) {
         const insumoTable = `${refPrefix}insumos`;
         const precoTable = `${refPrefix}precos_insumos`;
         const forceReferentialUpdate = sobrepor;
+        const ufWherePlaceholders = ufs.map(() => '?').join(',');
 
         let dataBase = await getC(`SELECT id_data_base FROM ${dataBaseTable} WHERE mes=? AND ano=?`, [mes, ano]);
         if (!dataBase) dataBase = await runC(`INSERT INTO ${dataBaseTable} (mes,ano,descricao) VALUES (?,?,?)`, [mes, ano, `SINAPI ${mesRef}`]).then(r => ({ id_data_base: r.lastID }));
@@ -844,6 +845,19 @@ module.exports = function sinapiRoutes(db) {
                 `${label}: ${Math.min(offset + batch.length, insumos.length)}/${insumos.length} cadastros revisados.`,
               );
             }
+          }
+
+          if (forceReferentialUpdate && ufWherePlaceholders) {
+            reportProgress(23, label, `Removendo precos SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
+            await runC(`
+              DELETE FROM ${precoTable}
+              WHERE id_data_base=?
+                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, [idDataBase, ...ufs]);
+            for (const key of [...precoMap.keys()]) {
+              const uf = String(key).split('|').pop();
+              if (ufs.includes(String(uf || '').toUpperCase())) precoMap.delete(key);
+            }
+            reportProgress(24, label, 'Precos anteriores removidos; gravando novamente a planilha recebida.');
           }
 
           const inserirPrecos = [];
@@ -1157,9 +1171,9 @@ module.exports = function sinapiRoutes(db) {
           const compTable = useTenantComps ? 'tenant_composicoes' : (useCatalogReferencial ? 'catalog.composicoes' : 'composicoes');
           const itemTable = useTenantComps ? 'tenant_itens_composicao' : (useCatalogReferencial ? 'catalog.itens_composicao' : 'itens_composicao');
           const groupTable = useCatalogReferencial ? 'catalog.grupos_composicoes' : 'grupos_composicoes';
-          const compIdSelect = useTenantComps ? 'rowid AS id_composicao' : 'id_composicao';
-          const compIdWhere = useTenantComps ? 'rowid' : 'id_composicao';
-          const itemIdWhere = useTenantComps ? 'rowid' : 'id_item';
+          const compIdWhere = useTenantComps ? 'id_tenant_composicoes' : 'id_composicao';
+          const compIdSelect = `${compIdWhere} AS id_composicao`;
+          const itemIdWhere = useTenantComps ? 'id_tenant_itens_composicao' : 'id_item';
           const grupos = new Map((await allC(`SELECT nome_grupo,id_grupo_comp FROM ${groupTable}`)).map(r => [String(r.nome_grupo || ''), r.id_grupo_comp]));
           async function getGrupo(nome) {
             const key = String(nome || 'SINAPI').trim() || 'SINAPI';
@@ -1188,7 +1202,7 @@ module.exports = function sinapiRoutes(db) {
                   offset + idx,
                 );
                 return useTenantComps
-                  ? "(?,?,?,?,?,?,?,?,'create','active',datetime('now'),datetime('now'))"
+                  ? "(?,?,?,?,?,?,?,?,'create','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
                   : '(?,?,?,?,?,?,?,?)';
               }).join(',');
               if (useTenantComps) {
@@ -1208,16 +1222,40 @@ module.exports = function sinapiRoutes(db) {
             return inseridos;
           }
 
+          if (forceReferentialUpdate && ufWherePlaceholders) {
+            reportProgress(43, 'Importando composicoes', `Removendo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
+            const targetParams = [mesRef, ...ufs];
+            const existentes = await allC(`
+              SELECT ${compIdSelect}
+              FROM ${compTable}
+              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+                AND mes_referencia=?
+                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, targetParams);
+            const idsExistentes = existentes.map(row => row.id_composicao).filter(id => id != null);
+            for (let offset = 0; offset < idsExistentes.length; offset += 500) {
+              const batch = idsExistentes.slice(offset, offset + 500);
+              await runC(`DELETE FROM ${itemTable} WHERE id_composicao IN (${batch.map(() => '?').join(',')})`, batch);
+            }
+            await runC(`
+              DELETE FROM ${compTable}
+              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+                AND mes_referencia=?
+                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, targetParams);
+            if (idsExistentes.length) out.composicoes_atualizadas += idsExistentes.length;
+            reportProgress(44, 'Importando composicoes', `${idsExistentes.length} composicoes anteriores removidas; gravando planilha recebida.`);
+          }
+
           const compKey = (codigo, uf, ref) => [
             String(codigo || '').trim(),
             String(uf || '').trim().toUpperCase(),
             String(ref || '').trim(),
           ].join('|');
-          const compMap = new Map((await allC(`
+          const compMap = forceReferentialUpdate ? new Map() : new Map((await allC(`
             SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia
             FROM ${compTable}
             WHERE UPPER(COALESCE(fonte,''))='SINAPI'`))
             .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), r.id_composicao]));
+          reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
           if (!comps.length) {
             throw httpError(400, `Nenhuma composicao foi detectada na aba ${analSheet.name}. Verifique se o arquivo e a planilha SINAPI Referencia oficial.`);
@@ -1246,7 +1284,7 @@ module.exports = function sinapiRoutes(db) {
                     INSERT INTO tenant_composicoes
                       (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao,
                        tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-                    VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo','create','active',datetime('now'),datetime('now'))`,
+                    VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo','create','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
                     [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao])
                   : await runC(`INSERT INTO ${compTable} (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao) VALUES (?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')`,
                     [comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao]);
