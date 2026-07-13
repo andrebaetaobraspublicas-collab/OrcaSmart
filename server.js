@@ -281,9 +281,15 @@ function readPhase4MysqlExecutionReport() {
 
 function phase4RuntimePolicy() {
   const cutover = readPhase4CutoverReport();
+  const execution = readPhase4MysqlExecutionReport();
   const mysqlRuntimeRequested = bootState.mysql.engine === 'mysql';
+  const liveMysqlReady = bootState.mysql.ready && masterDb.engine === 'mysql';
+  const staleLocalReportOnly = execution.reportExists
+    && !execution.ok
+    && execution.blockedReasons.length > 0
+    && execution.blockedReasons.every(reason => /Variaveis MySQL ausentes/i.test(String(reason || '')));
 
-  if (mysqlRuntimeRequested && (!cutover.ready || !bootState.mysql.ready || masterDb.engine !== 'mysql')) {
+  if (mysqlRuntimeRequested && (!liveMysqlReady || (!cutover.ready && !staleLocalReportOnly))) {
     return {
       ...cutover,
       blocked: true,
@@ -296,7 +302,9 @@ function phase4RuntimePolicy() {
       ...cutover,
       blocked: false,
       ready: true,
-      policy: 'mysql ativo nas rotas de negocio com isolamento por tenant_id',
+      policy: staleLocalReportOnly
+        ? 'mysql ativo por validacao viva do ambiente; relatorio versionado local ignorado por estar obsoleto'
+        : 'mysql ativo nas rotas de negocio com isolamento por tenant_id',
     };
   }
 
