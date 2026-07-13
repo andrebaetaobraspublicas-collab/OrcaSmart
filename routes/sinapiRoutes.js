@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const { databaseEngine } = require('../utils/mysqlRuntime');
+const { createMysqlConnection, databaseEngine } = require('../utils/mysqlRuntime');
 
 const SINAPI_IMPORT_JOBS = new Map();
 const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
@@ -703,6 +703,33 @@ module.exports = function sinapiRoutes(db) {
         );
       });
       const runTimed = (sql, params = [], label = 'Comando SQL', ms = 20000) => withTimeout(runC(sql, params), ms, label);
+      const directMysqlTable = table => String(table || '').replace(/^catalog\./i, '');
+      const executeDirectMysql = async (sql, params, label, ms = 12000) => {
+        let directConn = null;
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          if (directConn && typeof directConn.destroy === 'function') directConn.destroy();
+        }, ms);
+        try {
+          directConn = await createMysqlConnection();
+          if (timedOut) {
+            if (directConn && typeof directConn.destroy === 'function') directConn.destroy();
+            throw new Error(`${label} excedeu ${Math.round(ms / 1000)}s.`);
+          }
+          await directConn.query('SET SESSION lock_wait_timeout=3').catch(() => {});
+          await directConn.query('SET SESSION max_statement_time=8').catch(() => {});
+          const [result] = await directConn.execute(sql, params);
+          return result;
+        } catch (err) {
+          const wrapped = new Error(timedOut ? `${label} excedeu ${Math.round(ms / 1000)}s.` : err.message);
+          wrapped.code = err.code || (timedOut ? 'SINAPI_DIRECT_TIMEOUT' : null);
+          throw wrapped;
+        } finally {
+          clearTimeout(timer);
+          if (directConn && typeof directConn.end === 'function') await directConn.end().catch(() => {});
+        }
+      };
       const tableC = async (schema, table) => {
         const prefix = schema ? `${schema}.` : '';
         return !!await getC(`SELECT name FROM ${prefix}sqlite_master WHERE type='table' AND name=?`, [table]).catch(() => null);
@@ -900,6 +927,7 @@ module.exports = function sinapiRoutes(db) {
 
           const inserirPrecos = [];
           const atualizarPrecos = [];
+          const useDirectPrecoInsert = databaseEngine() === 'mysql' && useCatalogReferencial;
           let registrosPreparados = 0;
           for (const ins of insumos) {
             const idInsumo = insumoMap.get(ins.codigo);
@@ -929,20 +957,32 @@ module.exports = function sinapiRoutes(db) {
               const pctAntes = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * offset / Math.max(1, inserirPrecos.length))) );
               reportProgress(pctAntes, label, `${label}: gravando precos ${offset + 1}-${ate}/${inserirPrecos.length} (${row.key}).`);
             }
-            const r = await runTimed(`
-              INSERT INTO ${precoTable}
+            const insertSql = `
+              INSERT INTO ${useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable}
                 (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia)
-              VALUES (?,?,?,?,?,?)`, [
+              VALUES (?,?,?,?,?,?)`;
+            const insertParams = [
               row.idInsumo,
               idDataBase,
               idFonte,
               row.uf,
               row.preco,
               row.preco,
-            ], `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+            ];
+            let r = {};
+            try {
+              r = useDirectPrecoInsert
+                ? await executeDirectMysql(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`)
+                : await runTimed(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+            } catch (err) {
+              out.alertas.push(`Preco ${row.key} nao importado: ${err.message}`);
+              reportProgress(pctAntes, label, `${label}: pulando preco ${offset + 1}/${inserirPrecos.length} (${row.key}): ${err.message}`);
+              continue;
+            }
             out.precos_inseridos += 1;
-            if (r.lastID) {
-              precoMap.set(row.key, r.lastID);
+            const insertedId = r.lastID || r.insertId;
+            if (insertedId) {
+              precoMap.set(row.key, insertedId);
               precosCriadosNestaImportacao.add(row.key);
             }
             if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
@@ -1122,6 +1162,7 @@ module.exports = function sinapiRoutes(db) {
 
           const inserirPrecos = [];
           const atualizarPrecos = [];
+          const useDirectPrecoInsert = databaseEngine() === 'mysql' && useCatalogReferencial;
           let varridos = 0;
           for (const ins of insumos) {
             const idInsumo = insumoMap.get(ins.codigo);
@@ -1159,10 +1200,11 @@ module.exports = function sinapiRoutes(db) {
                 `Gravando precos ${offset + 1}-${ate}/${inserirPrecos.length} (${row.key}).`,
               );
             }
-            await runTimed(`
-              INSERT INTO ${precoTable}
+            const insertSql = `
+              INSERT INTO ${useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable}
                 (id_insumo,id_data_base,id_fonte,uf_referencia,preco_desonerado,preco_nao_desonerado,preco_referencia)
-              VALUES (?,?,?,?,?,?,?)`, [
+              VALUES (?,?,?,?,?,?,?)`;
+            const insertParams = [
               row.idInsumo,
               idDataBase,
               idFonte,
@@ -1170,7 +1212,22 @@ module.exports = function sinapiRoutes(db) {
               row.precoDes || 0,
               row.precoNao || 0,
               row.precoRef || 0,
-            ], `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+            ];
+            try {
+              if (useDirectPrecoInsert) {
+                await executeDirectMysql(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+              } else {
+                await runTimed(insertSql, insertParams, `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+              }
+            } catch (err) {
+              out.alertas.push(`Preco ${row.key} nao importado: ${err.message}`);
+              reportProgress(
+                30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)),
+                label,
+                `Pulando preco ${offset + 1}/${inserirPrecos.length} (${row.key}): ${err.message}`,
+              );
+              continue;
+            }
             out.precos_inseridos += 1;
             if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
               const done = offset + 1;
