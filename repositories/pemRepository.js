@@ -7,15 +7,8 @@ function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
-function isMysqlRuntime() {
-  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
-}
-
 function tenantSyntheticPk(table) {
-  if (!isMysqlRuntime()) return 'rowid';
-  if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
-  if (table === 'tenant_composicoes_secoes') return 'id_tenant_composicoes_secoes';
-  if (table === 'tenant_composicoes_secao_itens') return 'id_tenant_composicoes_secao_itens';
+  void table;
   return 'rowid';
 }
 
