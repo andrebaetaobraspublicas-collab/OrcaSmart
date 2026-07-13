@@ -1224,25 +1224,13 @@ module.exports = function sinapiRoutes(db) {
 
           if (forceReferentialUpdate && ufWherePlaceholders) {
             reportProgress(43, 'Importando composicoes', `Removendo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
-            const targetParams = [mesRef, ...ufs];
-            const existentes = await allC(`
-              SELECT ${compIdSelect}
-              FROM ${compTable}
-              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
-                AND mes_referencia=?
-                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, targetParams);
-            const idsExistentes = existentes.map(row => row.id_composicao).filter(id => id != null);
-            for (let offset = 0; offset < idsExistentes.length; offset += 500) {
-              const batch = idsExistentes.slice(offset, offset + 500);
-              await runC(`DELETE FROM ${itemTable} WHERE id_composicao IN (${batch.map(() => '?').join(',')})`, batch);
-            }
-            await runC(`
+            const removidas = await runC(`
               DELETE FROM ${compTable}
-              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+              WHERE fonte='SINAPI'
                 AND mes_referencia=?
-                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, targetParams);
-            if (idsExistentes.length) out.composicoes_atualizadas += idsExistentes.length;
-            reportProgress(44, 'Importando composicoes', `${idsExistentes.length} composicoes anteriores removidas; gravando planilha recebida.`);
+                AND uf_referencia IN (${ufWherePlaceholders})`, [mesRef, ...ufs]);
+            if (removidas.changes) out.composicoes_atualizadas += removidas.changes;
+            reportProgress(44, 'Importando composicoes', `${removidas.changes || 0} composicoes anteriores removidas; gravando planilha recebida.`);
           }
 
           const compKey = (codigo, uf, ref) => [
