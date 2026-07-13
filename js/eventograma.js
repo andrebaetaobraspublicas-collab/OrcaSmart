@@ -202,7 +202,7 @@ Router.register('eventograma', async () => {
         <button class="btn btn-secondary btn-sm" id="btnVoltarLista">← Voltar</button>
         <div style="flex:1;min-width:0">
           <h2 style="margin:0;font-size:1rem;font-weight:700">${Utils.esc(evg.nome)}</h2>
-          <div style="font-size:.77rem;color:var(--c-text-2)">${Utils.esc(evg.nome_obra)} · ${Utils.esc(evg.nome_orcamento)} · BDI ${(evg.bdi_percentual||0).toFixed(2)}% · Total: ${Utils.moeda(vt)}</div>
+          <div style="font-size:.77rem;color:var(--c-text-2)">${Utils.esc(evg.nome_obra)} · ${Utils.esc(evg.nome_orcamento)} · BDI ${Number(evg.bdi_percentual||0).toFixed(2)}% · Total: ${Utils.moeda(vt)}</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-secondary btn-sm" id="btnReGerar" title="Regerar automaticamente">🔄 Regerar</button>

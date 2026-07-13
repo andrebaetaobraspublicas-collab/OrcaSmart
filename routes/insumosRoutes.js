@@ -34,8 +34,11 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
-    ensureAdmin(req, 'Usuarios comuns nao podem excluir insumos referenciais em lote.');
-    res.json(await service.deleteBatch(db, req.body || {}));
+    const payload = { ...(req.body || {}) };
+    if (req.user?.role !== 'admin') {
+      payload.tenant_only = true;
+    }
+    res.json(await service.deleteBatch(db, payload));
   }));
 
   router.get('/', asyncHandler(async (req, res) => {

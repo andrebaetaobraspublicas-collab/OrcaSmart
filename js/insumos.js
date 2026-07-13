@@ -55,7 +55,7 @@ const TIPO_COLORS   = {
 Router.register('insumos', async () => {
 
   /* ── Estado ──────────────────────────────────────────────────────────────── */
-  let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {};
+  let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {}, _me = null;
   const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:300 };
   let pesquisaMercadoResultados = [];
   let pesquisaMercadoSelecionado = null;
@@ -65,13 +65,14 @@ Router.register('insumos', async () => {
   /* ── Carregamento ────────────────────────────────────────────────────────── */
   async function carregar() {
     try {
-      [insumos, unidades, fontes, datasBase, grupos, stats] = await Promise.all([
+      [insumos, unidades, fontes, datasBase, grupos, stats, _me] = await Promise.all([
         API.insumos.list(filtros),
         API.unidades.list(),
         API.fontes.list(),
         API.datasBase.list(),
         API.grupos.list(),
         API.insumos.stats(),
+        API.auth.me().catch(() => null),
       ]);
       render();
     } catch(e) { Toast.error(e.message); }
@@ -1114,6 +1115,7 @@ Router.register('insumos', async () => {
   }
 
   async function abrirModalExcluirLote() {
+    const isAdmin = _me && _me.role === 'admin';
     const dbOpts = `<option value="">Todas as datas-base</option>` +
       datasBase
         .slice().sort((a,b) => b.ano - a.ano || b.mes - a.mes)
@@ -1201,6 +1203,14 @@ Router.register('insumos', async () => {
           Excluir
         </button>`,
     });
+
+    if (!isAdmin) {
+      const origemEl = document.getElementById('eil_origem');
+      if (origemEl) {
+        origemEl.innerHTML = '<option value="" selected>Insumos proprios</option>';
+        origemEl.value = '';
+      }
+    }
 
     const getParams = () => {
       const dbVal = document.getElementById('eil_db').value;

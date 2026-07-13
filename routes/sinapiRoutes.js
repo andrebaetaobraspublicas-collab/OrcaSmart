@@ -707,7 +707,7 @@ module.exports = function sinapiRoutes(db) {
         const unidadeTable = `${refPrefix}unidades_medida`;
         const insumoTable = `${refPrefix}insumos`;
         const precoTable = `${refPrefix}precos_insumos`;
-        const forceReferentialUpdate = useCatalogReferencial || sobrepor;
+        const forceReferentialUpdate = sobrepor;
 
         let dataBase = await getC(`SELECT id_data_base FROM ${dataBaseTable} WHERE mes=? AND ano=?`, [mes, ano]);
         if (!dataBase) dataBase = await runC(`INSERT INTO ${dataBaseTable} (mes,ano,descricao) VALUES (?,?,?)`, [mes, ano, `SINAPI ${mesRef}`]).then(r => ({ id_data_base: r.lastID }));
@@ -869,11 +869,16 @@ module.exports = function sinapiRoutes(db) {
             for (const compUf of ufs) {
               const keyComp = compKey(comp.codigo, compUf, mesRef);
               let idComp = compMap.get(keyComp);
+              let gravarItens = true;
               if (idComp) {
-                await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE ${compIdWhere}=?`,
-                  [comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao, idComp]);
-                await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
-                out.composicoes_atualizadas += 1;
+                if (forceReferentialUpdate) {
+                  await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,uf_referencia=?,situacao_ref=? WHERE ${compIdWhere}=?`,
+                    [comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao, idComp]);
+                  await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
+                  out.composicoes_atualizadas += 1;
+                } else {
+                  gravarItens = false;
+                }
               } else {
                 const r = useTenantComps
                   ? await runC(`
@@ -888,7 +893,7 @@ module.exports = function sinapiRoutes(db) {
                 compMap.set(keyComp, idComp);
                 out.composicoes_inseridas += 1;
               }
-              out.itens_inseridos += await inserirItensComposicao(idComp, comp.itens);
+              if (gravarItens) out.itens_inseridos += await inserirItensComposicao(idComp, comp.itens);
               compWork += 1;
               if (compWork % 50 === 0 || compWork === totalCompWork) {
                 const pct = 45 + Math.round((35 * compWork) / totalCompWork);
@@ -899,7 +904,8 @@ module.exports = function sinapiRoutes(db) {
 
           const recalcUfs = ufs.map(uf => String(uf || '').toUpperCase()).filter(Boolean);
           const ufPlaceholders = recalcUfs.map(() => '?').join(',');
-          if (ufPlaceholders) {
+          const deveRecalcular = out.composicoes_inseridas || out.composicoes_atualizadas || out.precos_inseridos || out.precos_atualizados;
+          if (ufPlaceholders && deveRecalcular) {
             reportProgress(82, 'Recalculando custos', 'Lendo precos e itens para recalculo das composicoes.');
             const precos = await allC(`
               SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia,

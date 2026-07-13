@@ -1000,6 +1000,26 @@ async function deleteBatch(db, data = {}) {
     filters.push('(descricao LIKE ? OR codigo_insumo LIKE ?)');
     params.push(`%${data.q}%`, `%${data.q}%`);
   }
+  if (data.tenant_only && await hasTenantInsumoOverrides(db)) {
+    const tenantFilters = filters.map(filter => filter
+      .replace(/\borigem\b/g, 'i.origem')
+      .replace(/\btipo_insumo\b/g, 'i.tipo_insumo')
+      .replace(/\bsituacao\b/g, 'i.situacao')
+      .replace(/\bid_grupo\b/g, 'i.id_grupo')
+      .replace(/\bdescricao\b/g, 'i.descricao')
+      .replace(/\bcodigo_insumo\b/g, 'i.codigo_insumo'));
+    tenantFilters.push("COALESCE(i.tenant_override_status,'active')='active'");
+    const tenantWhere = `WHERE ${tenantFilters.join(' AND ')}`;
+    if (data.dry_run) {
+      const row = await one(db, `SELECT COUNT(*) AS total FROM tenant_insumos i ${tenantWhere}`, params);
+      return { total: row?.total || 0, dry_run: true };
+    }
+    const result = await run(db, `
+      UPDATE tenant_insumos i
+      SET tenant_override_status='deleted', situacao='Inativo', tenant_updated_at=?
+      ${tenantWhere}`, [new Date().toISOString(), ...params]);
+    return { excluidos: result.changes, mensagem: `${result.changes} insumo(s) excluido(s) com sucesso.` };
+  }
   const where = `WHERE ${filters.join(' AND ')}`;
   if (data.dry_run) {
     const row = await one(db, `SELECT COUNT(*) AS total FROM insumos ${where}`, params);

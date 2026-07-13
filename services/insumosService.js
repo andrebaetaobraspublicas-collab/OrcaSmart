@@ -123,7 +123,7 @@ async function deletePreco(db, idPreco) {
 }
 
 async function deleteBatch(db, data = {}) {
-  if (!data.tipo && !data.origem && !data.situacao && !data.id_grupo && !data.q) {
+  if (!data.tenant_only && !data.tipo && !data.origem && !data.situacao && !data.id_grupo && !data.q) {
     throw httpError(400, 'Informe pelo menos um criterio de selecao para excluir.');
   }
   try {

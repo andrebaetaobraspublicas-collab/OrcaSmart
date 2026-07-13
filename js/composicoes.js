@@ -52,6 +52,7 @@ Router.register('composicoes', async () => {
 
   let stats = {}, grupos = [], _undList = [];
   let _me = null;
+  let _editReturnContext = null;
   // Estado do formulário de composição do usuário
   let _formItens   = [];  // itens em edição no momento
   let _originalIds = [];  // ids dos itens pré-existentes ao abrir o form
@@ -112,7 +113,16 @@ Router.register('composicoes', async () => {
     let pending = {};
     try { pending = JSON.parse(raw); } catch(e) { pending = { id: raw }; }
     if (!pending.id) return;
-    setTimeout(() => iniciarEdicao(pending.id), 0);
+    setTimeout(() => iniciarEdicao(pending.id, pending), 0);
+  }
+
+  function voltarAoOrcamentoSeAplicavel() {
+    const ctx = _editReturnContext || {};
+    if (ctx.origem !== 'orcamento-sintetico' || !ctx.id_orcamento) return false;
+    try { sessionStorage.setItem('osSintId', String(ctx.id_orcamento)); } catch(e) {}
+    _editReturnContext = null;
+    Router.navigate('orcamento-sintetico');
+    return true;
   }
 
   async function buscar() {
@@ -142,8 +152,6 @@ Router.register('composicoes', async () => {
     const nCDHU    = (sf.find(r=>r.fonte==='CDHU')?.total    || 0);
     const nUSUARIO = (sf.find(r=>r.fonte==='USUARIO')?.total || 0);
     const nTOTAL = nSINAPI + nSICRO + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nUSUARIO;
-    const isAdmin = _me && _me.role === 'admin';
-
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
         <div class="page-header-left">
@@ -151,11 +159,11 @@ Router.register('composicoes', async () => {
           <p>${nTOTAL.toLocaleString('pt-BR')} composições carregadas</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${isAdmin ? `<button class="btn btn-sm" id="btnExcluirLote"
+          <button class="btn btn-sm" id="btnExcluirLote"
             title="Excluir composições em grupo por critérios selecionados"
             style="background:#fff5f5;color:#dc2626;border:1px solid #fca5a5">
             🗑️ Excluir em Lote
-          </button>` : ''}
+          </button>
           <button class="btn btn-sm" id="btnRecalcComp"
             title="Recalcula o custo unitário das composições SINAPI/SICRO"
             style="background:#faf5ff;color:#7c3aed;border:1px solid #c4b5fd">
@@ -1511,13 +1519,11 @@ Router.register('composicoes', async () => {
   async function abrirModalRecalcular() {
     let datasBase = [];
     try { datasBase = await API.datasBase.list(); } catch(e) {}
-
     const dbOpts = `<option value="">Todas as datas-base</option>` +
       datasBase.map(db => {
         const label = `${String(db.mes).padStart(2,'0')}/${db.ano}${db.descricao ? ' — '+db.descricao : ''}`;
         return `<option value="${String(db.mes).padStart(2,'0')}/${db.ano}">${label}</option>`;
       }).join('');
-
     Modal.open({
       title: '⟳ Recalcular Custos SINAPI / SICRO',
       size:  'modal-md',
@@ -1631,6 +1637,7 @@ Router.register('composicoes', async () => {
   async function abrirModalExcluirLote() {
     let datasBase = [];
     try { datasBase = await API.datasBase.list(); } catch(e) {}
+    const isAdmin = _me && _me.role === 'admin';
 
     const dbOpts = `<option value="">Todas as datas-base</option>` +
       datasBase.map(db => {
@@ -1709,6 +1716,14 @@ Router.register('composicoes', async () => {
         </button>`,
     });
 
+    if (!isAdmin) {
+      const fonteEl = document.getElementById('el_fonte');
+      if (fonteEl) {
+        fonteEl.innerHTML = '<option value="USUARIO" selected>Usuario</option>';
+        fonteEl.value = 'USUARIO';
+      }
+    }
+
     const getElParams = () => ({
       fonte:        document.getElementById('el_fonte').value,
       formato:      document.getElementById('el_fmt').value,
@@ -1768,7 +1783,8 @@ Router.register('composicoes', async () => {
   // ══════════════════════════════════════════════════════════════════════════
   // EDITAR COMPOSIÇÃO — com tratamento de orçamentos vinculados
   // ══════════════════════════════════════════════════════════════════════════
-  async function iniciarEdicao(id) {
+  async function iniciarEdicao(id, context = {}) {
+    _editReturnContext = context || null;
     // Busca composição e usos simultaneamente
     let comp, impacto = null, usos = [], auxiliares = [];
     try {
@@ -1802,7 +1818,7 @@ Router.register('composicoes', async () => {
           acao_orcamentos: window._editAcaoOrcamentos,
         });
         Toast.success(res.mensagem || 'Composicao editada com sucesso.');
-        carregar();
+        if (!voltarAoOrcamentoSeAplicavel()) carregar();
         return true;
       } catch(e) {
         Toast.error(e.message);
@@ -1950,7 +1966,7 @@ Router.register('composicoes', async () => {
           acao_orcamentos: window._editAcaoOrcamentos,
         });
         Toast.success(res.mensagem || 'Composição editada com sucesso.');
-        carregar();
+        if (!voltarAoOrcamentoSeAplicavel()) carregar();
         return true;
       } catch(e) {
         Toast.error(e.message);
