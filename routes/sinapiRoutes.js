@@ -933,11 +933,12 @@ module.exports = function sinapiRoutes(db) {
         composicoes_recalculadas: 0,
         alertas: [],
       };
-      const reportProgress = (percent, fase, mensagem) => progress({
-        percent,
-        fase,
-        mensagem,
-        counts: {
+      const reportProgress = (percent, fase, mensagem) => {
+        const payload = {
+          percent,
+          fase,
+          mensagem,
+          counts: {
           insumos_inseridos: out.insumos_inseridos,
           insumos_atualizados: out.insumos_atualizados,
           precos_inseridos: out.precos_inseridos,
@@ -946,8 +947,16 @@ module.exports = function sinapiRoutes(db) {
           composicoes_atualizadas: out.composicoes_atualizadas,
           itens_inseridos: out.itens_inseridos,
           composicoes_recalculadas: out.composicoes_recalculadas,
-        },
-      });
+          },
+        };
+        console.log('[SINAPI_IMPORT_PROGRESS]', JSON.stringify({
+          percent: payload.percent,
+          fase: payload.fase,
+          mensagem: payload.mensagem,
+          counts: payload.counts,
+        }));
+        progress(payload);
+      };
 
       const useLongTransaction = databaseEngine() !== 'mysql';
       if (databaseEngine() === 'mysql') {
@@ -970,8 +979,31 @@ module.exports = function sinapiRoutes(db) {
         const ufWherePlaceholders = ufs.map(() => '?').join(',');
         const useDirectCatalogLookups = databaseEngine() === 'mysql' && useCatalogReferencial;
         const selectRowsTimed = async (sql, params, label, ms = 12000) => {
-          if (useDirectCatalogLookups) return executeDirectMysqlReusable(sql, params, label, ms);
-          return withTimeout(allC(sql, params), ms, label);
+          const started = Date.now();
+          console.log('[SINAPI_IMPORT_SQL_START]', JSON.stringify({
+            label,
+            params: Array.isArray(params) ? params.length : 0,
+            direct: useDirectCatalogLookups,
+          }));
+          try {
+            const rows = useDirectCatalogLookups
+              ? await executeDirectMysqlReusable(sql, params, label, ms)
+              : await withTimeout(allC(sql, params), ms, label);
+            console.log('[SINAPI_IMPORT_SQL_DONE]', JSON.stringify({
+              label,
+              rows: Array.isArray(rows) ? rows.length : null,
+              elapsed_ms: Date.now() - started,
+            }));
+            return rows;
+          } catch (err) {
+            console.error('[SINAPI_IMPORT_SQL_ERROR]', JSON.stringify({
+              label,
+              elapsed_ms: Date.now() - started,
+              error: err && err.message ? err.message : String(err),
+              code: err && err.code ? err.code : null,
+            }));
+            throw err;
+          }
         };
 
         let dataBase = await getC(`SELECT id_data_base FROM ${dataBaseTable} WHERE mes=? AND ano=?`, [mes, ano]);
@@ -1722,6 +1754,12 @@ module.exports = function sinapiRoutes(db) {
         arquivo: file.originalname || '',
       });
       await persistSinapiJob(job);
+      console.log('[SINAPI_IMPORT_JOB_CREATED]', JSON.stringify({
+        job_id: job.id,
+        user_id: job.id_user,
+        tenant_id: job.tenant_id,
+        meta: job.meta,
+      }));
       sinapiActiveImportId = job.id;
       setImmediate(() => {
         const progress = patch => {
@@ -1731,10 +1769,19 @@ module.exports = function sinapiRoutes(db) {
         executarImportacao(progress)
           .then(async resultado => {
             const finished = finishSinapiJob(job.id, resultado);
+            console.log('[SINAPI_IMPORT_JOB_DONE]', JSON.stringify({
+              job_id: job.id,
+              result: resultado,
+            }));
             await persistSinapiJob(finished).catch(() => {});
           })
           .catch(async err => {
             const failed = failSinapiJob(job.id, err);
+            console.error('[SINAPI_IMPORT_JOB_ERROR]', JSON.stringify({
+              job_id: job.id,
+              error: err && err.message ? err.message : String(err),
+              stack: err && err.stack ? String(err.stack).split('\n').slice(0, 8).join('\n') : null,
+            }));
             await persistSinapiJob(failed).catch(() => {});
           });
       });
