@@ -93,7 +93,7 @@ Router.register('eventograma', async () => {
   // ─── Modal Novo Eventograma ───────────────────────────────────────────────
   async function abrirModalNovo() {
     let orcs = [];
-    try { orcs = await API.orcamentos.list('', ''); } catch(e) {}
+    try { orcs = await API.orcamentos.list({}); } catch(e) {}
     Modal.open({
       title: 'Novo Eventograma',
       size: 'modal-md',
@@ -103,7 +103,7 @@ Router.register('eventograma', async () => {
             <label class="form-label">Orçamento Sintético *</label>
             <select class="form-control" id="ev_id_orc">
               <option value="">— Selecione o orçamento —</option>
-              ${orcs.filter(o=>o.valor_total>0).map(o =>
+              ${orcs.map(o =>
                 `<option value="${o.id_orcamento}">${Utils.esc(o.nome_obra)} — ${Utils.esc(o.nome_orcamento)} (${Utils.moeda(o.valor_total)})</option>`
               ).join('')}
             </select>
