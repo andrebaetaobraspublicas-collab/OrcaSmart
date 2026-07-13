@@ -185,7 +185,15 @@ Router.register('fontes', async () => {
     const txt = await response.text();
     let data;
     try { data = JSON.parse(txt); }
-    catch(e) { throw new Error('Resposta inválida do servidor: ' + txt.slice(0, 200)); }
+    catch(e) {
+      if ([502, 503, 504].includes(response.status) || /Gateway Time-?out/i.test(txt)) {
+        return {
+          processando_segundo_plano: true,
+          mensagem: 'O servidor recebeu a planilha e a importacao continua em segundo plano. Aguarde alguns minutos e atualize a consulta da fonte SINAPI.',
+        };
+      }
+      throw new Error('Resposta invalida do servidor: ' + txt.slice(0, 200));
+    }
     if (!response.ok || data.erro) {
       throw new Error(data.erro + (data.detalhe ? '\n\n' + data.detalhe.slice(0, 400) : ''));
     }
@@ -949,6 +957,18 @@ Router.register('fontes', async () => {
       document.getElementById('sinapiProgresso').style.display = 'none';
       document.getElementById('sinapiResultado').style.display = 'block';
       document.getElementById('btnFecharSINAPI').style.display = '';
+
+      if (res.processando_segundo_plano) {
+        document.getElementById('sinapiResultado').innerHTML = `
+          <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:16px 18px;color:#1e3a8a;line-height:1.55">
+            <div style="font-size:1rem;font-weight:800;margin-bottom:8px">Importação em processamento</div>
+            <div style="font-size:.86rem">${Utils.esc(res.mensagem)}</div>
+            <div style="margin-top:10px;font-size:.8rem;color:#1d4ed8">
+              Data-base: <strong>${String(cfg.mes).padStart(2,'0')}/${cfg.ano}</strong> · UF: <strong>${Utils.esc(cfg.uf || 'DF')}</strong>
+            </div>
+          </div>`;
+        return;
+      }
 
       const kpi = (label, value, color='var(--c-primary)') => `
         <div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:10px 14px">
