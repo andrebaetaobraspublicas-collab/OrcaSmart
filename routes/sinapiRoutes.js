@@ -900,8 +900,174 @@ module.exports = function sinapiRoutes(db) {
           reportProgress(progressEnd, label, `${label}: ${insumos.length}/${insumos.length} insumos processados.`);
         }
 
-        if (importarIsd) await processarInsumos(isdSheet, false, 8, importarIcd ? 24 : 42, 'Importando insumos sem desoneracao');
-        if (importarIcd) await processarInsumos(icdSheet, true, importarIsd ? 25 : 8, 42, 'Importando insumos desonerados');
+        async function processarInsumosCombinados() {
+          if (!importarIsd && !importarIcd) return;
+          const porCodigo = new Map();
+          const adicionar = (sheet, desonerado) => {
+            if (!sheet) return;
+            for (const ins of parseInsumosRows(parseSheetRows(files, sheet.path), desonerado)) {
+              if (!porCodigo.has(ins.codigo)) {
+                porCodigo.set(ins.codigo, {
+                  codigo: ins.codigo,
+                  descricao: ins.descricao,
+                  tipo: ins.tipo,
+                  unidade: ins.unidade,
+                  precos: {},
+                });
+              }
+              const alvo = porCodigo.get(ins.codigo);
+              if (!alvo.descricao && ins.descricao) alvo.descricao = ins.descricao;
+              if (!alvo.tipo && ins.tipo) alvo.tipo = ins.tipo;
+              if (!alvo.unidade && ins.unidade) alvo.unidade = ins.unidade;
+              for (const uf of ufs) {
+                const preco = ins.precos[uf];
+                if (preco == null) continue;
+                if (!alvo.precos[uf]) alvo.precos[uf] = {};
+                if (desonerado) alvo.precos[uf].desonerado = preco;
+                else alvo.precos[uf].nao_desonerado = preco;
+              }
+            }
+          };
+
+          adicionar(isdSheet, false);
+          adicionar(icdSheet, true);
+          const insumos = [...porCodigo.values()];
+          const progressStart = 8;
+          const progressEnd = 42;
+          const label = 'Importando insumos e precos SINAPI';
+          const batchSize = 500;
+          reportProgress(progressStart, label, `Preparando ${insumos.length} insumos das abas ISD/ICD.`);
+
+          const novos = [];
+          const unidadePorCodigo = new Map();
+          let preparados = 0;
+          for (const ins of insumos) {
+            const idUnidade = await getUnidade(ins.unidade);
+            unidadePorCodigo.set(ins.codigo, idUnidade);
+            if (!insumoMap.has(ins.codigo)) novos.push({ ins, idUnidade });
+            preparados += 1;
+            if (preparados % 300 === 0 || preparados === insumos.length) {
+              reportProgress(10 + Math.round((8 * preparados) / Math.max(1, insumos.length)), label, `${preparados}/${insumos.length} insumos preparados em memoria.`);
+            }
+          }
+
+          for (let offset = 0; offset < novos.length; offset += batchSize) {
+            const batch = novos.slice(offset, offset + batchSize);
+            const params = [];
+            const values = batch.map(({ ins, idUnidade }) => {
+              params.push(ins.codigo, ins.descricao, ins.tipo, idUnidade);
+              return "(?,?,?,?, 'SINAPI','Ativo')";
+            }).join(',');
+            await runC(`
+              INSERT INTO ${insumoTable}
+                (codigo_insumo,descricao,tipo_insumo,id_unidade,origem,situacao)
+              VALUES ${values}`, params);
+            out.insumos_inseridos += batch.length;
+            reportProgress(18, label, `${Math.min(offset + batch.length, novos.length)}/${novos.length} insumos novos gravados.`);
+          }
+
+          if (novos.length) {
+            for (let offset = 0; offset < novos.length; offset += batchSize) {
+              const batch = novos.slice(offset, offset + batchSize).map(row => row.ins.codigo);
+              const placeholders = batch.map(() => '?').join(',');
+              const rows = await allC(`
+                SELECT codigo_insumo,id_insumo
+                FROM ${insumoTable}
+                WHERE UPPER(COALESCE(origem,''))='SINAPI'
+                  AND codigo_insumo IN (${placeholders})`, batch);
+              rows.forEach(row => insumoMap.set(String(row.codigo_insumo), row.id_insumo));
+            }
+          }
+
+          if (forceReferentialUpdate) {
+            for (let offset = 0; offset < insumos.length; offset += batchSize) {
+              const batch = insumos.slice(offset, offset + batchSize);
+              for (const ins of batch) {
+                const idInsumo = insumoMap.get(ins.codigo);
+                if (!idInsumo) continue;
+                await runC(`UPDATE ${insumoTable} SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?`, [
+                  ins.descricao,
+                  ins.tipo,
+                  unidadePorCodigo.get(ins.codigo) || null,
+                  idInsumo,
+                ]);
+                out.insumos_atualizados += 1;
+              }
+              reportProgress(22, label, `${Math.min(offset + batch.length, insumos.length)}/${insumos.length} cadastros revisados.`);
+            }
+          }
+
+          const inserirPrecos = [];
+          const atualizarPrecos = [];
+          let varridos = 0;
+          for (const ins of insumos) {
+            const idInsumo = insumoMap.get(ins.codigo);
+            if (!idInsumo) continue;
+            for (const uf of ufs) {
+              const par = ins.precos[uf];
+              if (!par) continue;
+              const precoDes = par.desonerado ?? null;
+              const precoNao = par.nao_desonerado ?? null;
+              if (precoDes == null && precoNao == null) continue;
+              const key = `${ins.codigo}|${uf}`;
+              const idPreco = precoMap.get(key);
+              const precoRef = precoDes ?? precoNao ?? 0;
+              if (idPreco) {
+                if (forceReferentialUpdate) atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef });
+              } else {
+                inserirPrecos.push({ idInsumo, uf, precoDes, precoNao, precoRef, key });
+              }
+            }
+            varridos += 1;
+            if (varridos % 300 === 0 || varridos === insumos.length) {
+              reportProgress(24 + Math.round((6 * varridos) / Math.max(1, insumos.length)), label, `${varridos}/${insumos.length} insumos varridos; ${inserirPrecos.length} precos novos na fila.`);
+            }
+          }
+
+          for (let offset = 0; offset < inserirPrecos.length; offset += batchSize) {
+            const batch = inserirPrecos.slice(offset, offset + batchSize);
+            const params = [];
+            const values = batch.map(row => {
+              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.precoDes || 0, row.precoNao || 0, row.precoRef || 0);
+              return '(?,?,?,?,?,?,?)';
+            }).join(',');
+            await runC(`
+              INSERT INTO ${precoTable}
+                (id_insumo,id_data_base,id_fonte,uf_referencia,preco_desonerado,preco_nao_desonerado,preco_referencia)
+              VALUES ${values}`, params);
+            out.precos_inseridos += batch.length;
+            const done = Math.min(offset + batch.length, inserirPrecos.length);
+            reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados em lote.`);
+          }
+
+          if (atualizarPrecos.length) {
+            for (let offset = 0; offset < atualizarPrecos.length; offset += batchSize) {
+              const batch = atualizarPrecos.slice(offset, offset + batchSize);
+              const desCase = [];
+              const naoCase = [];
+              const refCase = [];
+              const ids = [];
+              const params = [];
+              for (const row of batch) { desCase.push('WHEN ? THEN ?'); params.push(row.idPreco, row.precoDes || 0); }
+              for (const row of batch) { naoCase.push('WHEN ? THEN ?'); params.push(row.idPreco, row.precoNao || 0); }
+              for (const row of batch) { refCase.push('WHEN ? THEN ?'); params.push(row.idPreco, row.precoRef || 0); }
+              for (const row of batch) { ids.push('?'); params.push(row.idPreco); }
+              await runC(`
+                UPDATE ${precoTable}
+                SET preco_desonerado=CASE id_preco ${desCase.join(' ')} ELSE preco_desonerado END,
+                    preco_nao_desonerado=CASE id_preco ${naoCase.join(' ')} ELSE preco_nao_desonerado END,
+                    preco_referencia=CASE id_preco ${refCase.join(' ')} ELSE preco_referencia END
+                WHERE id_preco IN (${ids.join(',')})`, params);
+              out.precos_atualizados += batch.length;
+              const done = Math.min(offset + batch.length, atualizarPrecos.length);
+              reportProgress(40, label, `${done}/${atualizarPrecos.length} precos existentes atualizados em lote.`);
+            }
+          }
+
+          reportProgress(progressEnd, label, `${insumos.length}/${insumos.length} insumos e precos processados.`);
+        }
+
+        await processarInsumosCombinados();
 
         if (importarAnalitico && !analSheet) {
           throw httpError(400, 'Aba Analitico/Analitico com Custo nao encontrada no arquivo SINAPI enviado.');
