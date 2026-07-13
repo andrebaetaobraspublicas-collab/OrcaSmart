@@ -859,10 +859,8 @@ module.exports = function sinapiRoutes(db) {
           tipo: String(r.tipo_insumo || ''),
           idUnidade: r.id_unidade == null ? null : Number(r.id_unidade),
         }]));
-        reportProgress(7, 'Preparando', forceReferentialUpdate
-          ? 'Modo sobrescrever ativo; pulando leitura de precos existentes.'
-          : 'Carregando precos SINAPI existentes.');
-        const precoRows = forceReferentialUpdate ? [] : await allC(`
+        reportProgress(7, 'Preparando', 'Carregando mapa de precos SINAPI existentes para importacao retomavel.');
+        const precoRows = await allC(`
             SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
                    p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
             FROM ${precoTable} p
@@ -956,17 +954,8 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          if (forceReferentialUpdate && ufWherePlaceholders) {
-            reportProgress(23, label, `Removendo precos SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
-            await runC(`
-              DELETE FROM ${precoTable}
-              WHERE id_data_base=?
-                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufWherePlaceholders})`, [idDataBase, ...ufs]);
-            for (const key of [...precoMap.keys()]) {
-              const uf = String(key).split('|').pop();
-              if (ufs.includes(String(uf || '').toUpperCase())) precoMap.delete(key);
-            }
-            reportProgress(24, label, 'Precos anteriores removidos; gravando novamente a planilha recebida.');
+          if (forceReferentialUpdate) {
+            reportProgress(23, label, 'Precos existentes preservados; a importacao vai inserir apenas registros faltantes.');
           }
 
           const inserirPrecos = [];
@@ -982,7 +971,7 @@ module.exports = function sinapiRoutes(db) {
               const key = `${ins.codigo}|${uf}`;
               const idPreco = precoMap.get(key);
               if (idPreco) {
-                if (forceReferentialUpdate || precosCriadosNestaImportacao.has(key)) atualizarPrecos.push({ idPreco, preco });
+                continue;
               } else {
                 inserirPrecos.push({ idInsumo, uf, preco, key });
               }
@@ -1222,9 +1211,7 @@ module.exports = function sinapiRoutes(db) {
               const idPreco = precoMap.get(key);
               const precoRef = precoDes ?? precoNao ?? 0;
               if (idPreco) {
-                if (forceReferentialUpdate && precoMudou(precoInfoMap.get(key), precoDes, precoNao, precoRef)) {
-                  atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef });
-                }
+                continue;
               } else {
                 inserirPrecos.push({ idInsumo, uf, precoDes, precoNao, precoRef, key });
               }
