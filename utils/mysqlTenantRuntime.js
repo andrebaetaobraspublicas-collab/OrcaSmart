@@ -120,6 +120,17 @@ function qualifyTenantSelect(sql, params, tenantId) {
     return `${match}\`${scopedAlias}\`.tenant_id = ${id} AND `;
   });
 
+  text = text.replace(new RegExp(`\\bFROM\\s+${tableRef}((?:(?!\\bFROM\\b|\\bWHERE\\b)[\\s\\S])*?)\\bWHERE\\s+`, 'gi'), (match, table, alias, between) => {
+    let scopedAlias = String(alias || table).replace(/`/g, '');
+    if (/^(WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|GROUP|ORDER|LIMIT|ON)$/i.test(scopedAlias)) {
+      scopedAlias = table;
+    }
+    const alreadyScoped = new RegExp(`\\b\\\`?${scopedAlias}\\\`?\\.\\\`?tenant_id\\\`?\\s*=`, 'i').test(match);
+    if (alreadyScoped) return match;
+    const aliasSql = scopedAlias === table ? '' : ` \`${scopedAlias}\``;
+    return `FROM \`${table}\`${aliasSql}${between} WHERE \`${scopedAlias}\`.tenant_id = ${id} AND `;
+  });
+
   text = text.replace(new RegExp(`\\bFROM\\s+\\\`?(${tableNames})\\\`?(?=\\s*(GROUP\\s+BY|ORDER\\s+BY|HAVING|LIMIT|OFFSET|\\)|$))`, 'gi'), (match, table) => (
     `FROM \`${table}\` WHERE \`${table}\`.tenant_id = ${id} `
   ));
