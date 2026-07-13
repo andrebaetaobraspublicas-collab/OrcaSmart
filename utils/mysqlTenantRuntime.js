@@ -38,6 +38,12 @@ const TENANT_SCOPED_TABLES = new Set([...TENANT_TABLES, ...USER_OVERRIDE_TABLES]
 const CATALOG_TABLE_SET = new Set(CATALOG_TABLES);
 const TENANT_ID_SEQUENCE_CACHE = new WeakMap();
 
+function isMissingOptionalOverrideTable(err, sql) {
+  if (!err || err.code !== 'ER_NO_SUCH_TABLE') return false;
+  const text = `${err.message || ''} ${sql || ''}`;
+  return USER_OVERRIDE_TABLES.some(table => new RegExp(`\\b${table}\\b`, 'i').test(text));
+}
+
 function normalizeParams(params, cb) {
   if (typeof params === 'function') return { params: [], cb: params };
   return { params: Array.isArray(params) ? params : [], cb };
@@ -331,7 +337,12 @@ class MysqlTenantRuntime {
           nextSql = qualified.sql;
           nextParams = qualified.params;
         }
-        const [result] = await conn.execute(nextSql, nextParams);
+        const [result] = await conn.execute(nextSql, nextParams).catch((err) => {
+          if (isMissingOptionalOverrideTable(err, nextSql)) {
+            return [{ insertId: null, affectedRows: 0 }];
+          }
+          throw err;
+        });
         return {
           lastID: generatedId || result.insertId || null,
           changes: typeof result.affectedRows === 'number' ? result.affectedRows : 0,
@@ -339,7 +350,10 @@ class MysqlTenantRuntime {
       }
 
       const qualified = qualifyTenantSelect(nextSql, nextParams, this.tenantId);
-      const [rows] = await conn.execute(qualified.sql, qualified.params);
+      const [rows] = await conn.execute(qualified.sql, qualified.params).catch((err) => {
+        if (isMissingOptionalOverrideTable(err, qualified.sql)) return [[]];
+        throw err;
+      });
       return method === 'get' ? (rows[0] || null) : rows;
     } finally {
       if (!existingConnection) await conn.end().catch(() => {});
