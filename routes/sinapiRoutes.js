@@ -872,10 +872,28 @@ module.exports = function sinapiRoutes(db) {
           if (atualizarPrecos.length) {
             for (let offset = 0; offset < atualizarPrecos.length; offset += batchSize) {
               const batch = atualizarPrecos.slice(offset, offset + batchSize);
+              const colCase = [];
+              const refCase = [];
+              const ids = [];
+              const params = [];
               for (const row of batch) {
-                await runC(`UPDATE ${precoTable} SET ${colPreco}=?,preco_referencia=? WHERE id_preco=?`, [row.preco, row.preco, row.idPreco]);
-                out.precos_atualizados += 1;
+                colCase.push('WHEN ? THEN ?');
+                params.push(row.idPreco, row.preco);
               }
+              for (const row of batch) {
+                refCase.push('WHEN ? THEN ?');
+                params.push(row.idPreco, row.preco);
+              }
+              for (const row of batch) {
+                ids.push('?');
+                params.push(row.idPreco);
+              }
+              await runC(`
+                UPDATE ${precoTable}
+                SET ${colPreco}=CASE id_preco ${colCase.join(' ')} ELSE ${colPreco} END,
+                    preco_referencia=CASE id_preco ${refCase.join(' ')} ELSE preco_referencia END
+                WHERE id_preco IN (${ids.join(',')})`, params);
+              out.precos_atualizados += batch.length;
               reportProgress(progressEnd, label, `${label}: ${Math.min(offset + batch.length, atualizarPrecos.length)}/${atualizarPrecos.length} precos atualizados.`);
             }
           }
