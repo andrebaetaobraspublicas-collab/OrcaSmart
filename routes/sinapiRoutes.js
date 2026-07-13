@@ -97,6 +97,7 @@ function failSinapiJob(id, err) {
 
 module.exports = function sinapiRoutes(db) {
   const router = express.Router();
+  let sinapiJobTableReady = false;
 
   const toNum = (v, d = 0) => {
     const n = Number(v);
@@ -112,6 +113,133 @@ module.exports = function sinapiRoutes(db) {
   const run = (sql, params = []) => new Promise((resolve, reject) => {
     db.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); });
   });
+
+  const safeJson = value => {
+    try { return JSON.stringify(value || {}); } catch (_) { return '{}'; }
+  };
+
+  const parseJson = value => {
+    try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
+  };
+
+  const toSqlDateTime = value => {
+    const date = value instanceof Date ? value : new Date(value || Date.now());
+    if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+  };
+
+  async function ensureSinapiJobTable() {
+    if (sinapiJobTableReady) return;
+    if (databaseEngine() === 'mysql') {
+      await run(`
+        CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
+          job_id VARCHAR(64) PRIMARY KEY,
+          id_user INTEGER NULL,
+          tenant_id VARCHAR(191) NULL,
+          status VARCHAR(20) NOT NULL,
+          percent DECIMAL(5,2) NOT NULL DEFAULT 1,
+          fase VARCHAR(191) NULL,
+          mensagem TEXT NULL,
+          counts_json LONGTEXT NULL,
+          result_json LONGTEXT NULL,
+          erro TEXT NULL,
+          meta_json LONGTEXT NULL,
+          started_at DATETIME NULL,
+          updated_at DATETIME NULL,
+          INDEX idx_sinapi_import_jobs_status_updated (status, updated_at)
+        )`);
+    } else {
+      await run(`
+        CREATE TABLE IF NOT EXISTS sinapi_import_jobs (
+          job_id TEXT PRIMARY KEY,
+          id_user INTEGER,
+          tenant_id TEXT,
+          status TEXT NOT NULL,
+          percent REAL NOT NULL DEFAULT 1,
+          fase TEXT,
+          mensagem TEXT,
+          counts_json TEXT,
+          result_json TEXT,
+          erro TEXT,
+          meta_json TEXT,
+          started_at TEXT,
+          updated_at TEXT
+        )`);
+    }
+    sinapiJobTableReady = true;
+  }
+
+  async function persistSinapiJob(job) {
+    if (!job?.id) return;
+    await ensureSinapiJobTable();
+    const row = await one('SELECT job_id FROM sinapi_import_jobs WHERE job_id=?', [job.id]).catch(() => null);
+    const params = [
+      job.id,
+      job.id_user || null,
+      job.tenant_id || null,
+      job.status || 'running',
+      Number(job.percent || 1),
+      job.fase || null,
+      job.mensagem || null,
+      safeJson(job.counts || {}),
+      job.result ? safeJson(job.result) : null,
+      job.erro || null,
+      safeJson(job.meta || {}),
+      toSqlDateTime(job.started_at),
+      toSqlDateTime(job.updated_at),
+    ];
+    if (row) {
+      await run(`
+        UPDATE sinapi_import_jobs
+        SET id_user=?, tenant_id=?, status=?, percent=?, fase=?, mensagem=?, counts_json=?, result_json=?, erro=?, meta_json=?, started_at=?, updated_at=?
+        WHERE job_id=?`, [...params.slice(1), job.id]);
+    } else {
+      await run(`
+        INSERT INTO sinapi_import_jobs
+          (job_id,id_user,tenant_id,status,percent,fase,mensagem,counts_json,result_json,erro,meta_json,started_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, params);
+    }
+  }
+
+  async function loadSinapiJob(id) {
+    await ensureSinapiJobTable();
+    const row = await one('SELECT * FROM sinapi_import_jobs WHERE job_id=?', [id]).catch(() => null);
+    if (!row) return null;
+    const updatedMs = row.updated_at ? new Date(row.updated_at).getTime() : Date.now();
+    return {
+      id: row.job_id,
+      id_user: row.id_user,
+      tenant_id: row.tenant_id,
+      status: row.status,
+      percent: Number(row.percent || 1),
+      fase: row.fase,
+      mensagem: row.mensagem,
+      counts: parseJson(row.counts_json),
+      result: row.result_json ? parseJson(row.result_json) : null,
+      erro: row.erro,
+      meta: parseJson(row.meta_json),
+      started_at: row.started_at instanceof Date ? row.started_at.toISOString() : row.started_at,
+      updated_at: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+      updated_at_ms: Number.isFinite(updatedMs) ? updatedMs : Date.now(),
+    };
+  }
+
+  async function getPersistentActiveSinapiImport() {
+    await ensureSinapiJobTable();
+    const row = await one(`
+      SELECT job_id
+      FROM sinapi_import_jobs
+      WHERE status='running'
+        AND updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT 1`, [toSqlDateTime(Date.now() - 90 * 1000)]).catch(() => null);
+    return row?.job_id ? loadSinapiJob(row.job_id) : null;
+  }
+
+  function persistSinapiJobSoon(job) {
+    if (!job?.id) return;
+    setImmediate(() => persistSinapiJob(job).catch(() => {}));
+  }
 
   const UFS_SINAPI = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
   const TIPO_SINAPI_MAP = {
@@ -615,10 +743,24 @@ module.exports = function sinapiRoutes(db) {
 
   router.get('/importar/:jobId', asyncHandler(async (req, res) => {
     cleanupSinapiJobs();
-    const job = SINAPI_IMPORT_JOBS.get(req.params.jobId);
+    let job = SINAPI_IMPORT_JOBS.get(req.params.jobId);
+    if (!job) {
+      job = await loadSinapiJob(req.params.jobId);
+      if (job) SINAPI_IMPORT_JOBS.set(job.id, job);
+    }
     if (!job) return res.status(404).json({ erro: 'Importacao SINAPI nao encontrada ou expirada.' });
     if (job.id_user && req.user?.id_user && job.id_user !== req.user.id_user && req.user.role !== 'admin') {
       return res.status(403).json({ erro: 'Importacao SINAPI pertence a outro usuario.' });
+    }
+    if (job.status === 'running' && Date.now() - Number(job.updated_at_ms || 0) > 90 * 1000) {
+      job.status = 'error';
+      job.fase = 'Erro';
+      job.erro = 'A importacao SINAPI ficou sem resposta do servidor por mais de 90 segundos.';
+      job.mensagem = 'A operacao ficou sem batimento. Reabra a importacao ou tente novamente; o ultimo checkpoint foi preservado.';
+      job.updated_at = toSqlDateTime();
+      job.updated_at_ms = Date.now();
+      if (sinapiActiveImportId === job.id) sinapiActiveImportId = null;
+      await persistSinapiJob(job).catch(() => {});
     }
     res.json({
       job_id: job.id,
@@ -1519,7 +1661,7 @@ module.exports = function sinapiRoutes(db) {
     };
 
     if (asyncMode) {
-      const activeJob = getActiveSinapiImport();
+      const activeJob = getActiveSinapiImport() || await getPersistentActiveSinapiImport();
       if (activeJob) {
         return res.status(409).json({
           erro: 'Ja existe uma importacao SINAPI em andamento. Aguarde a conclusao ou recarregue apos alguns minutos.',
@@ -1541,11 +1683,22 @@ module.exports = function sinapiRoutes(db) {
         },
         arquivo: file.originalname || '',
       });
+      await persistSinapiJob(job);
       sinapiActiveImportId = job.id;
       setImmediate(() => {
-        executarImportacao(patch => updateSinapiJob(job.id, patch))
-          .then(resultado => finishSinapiJob(job.id, resultado))
-          .catch(err => failSinapiJob(job.id, err));
+        const progress = patch => {
+          const updated = updateSinapiJob(job.id, patch);
+          if (updated) persistSinapiJobSoon(updated);
+        };
+        executarImportacao(progress)
+          .then(async resultado => {
+            const finished = finishSinapiJob(job.id, resultado);
+            await persistSinapiJob(finished).catch(() => {});
+          })
+          .catch(async err => {
+            const failed = failSinapiJob(job.id, err);
+            await persistSinapiJob(failed).catch(() => {});
+          });
       });
       return res.status(202).json({
         job_id: job.id,
