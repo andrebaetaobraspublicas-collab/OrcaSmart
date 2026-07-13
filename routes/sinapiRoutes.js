@@ -730,15 +730,37 @@ module.exports = function sinapiRoutes(db) {
           return row.id_unidade;
         }
 
-        const insumoMap = new Map((await allC(`SELECT codigo_insumo,id_insumo FROM ${insumoTable} WHERE UPPER(COALESCE(origem,''))='SINAPI'`))
-          .map(r => [String(r.codigo_insumo), r.id_insumo]));
-        const precoMap = new Map((await allC(`
-          SELECT p.id_preco, i.codigo_insumo, p.uf_referencia
+        const insumoRows = await allC(`
+          SELECT codigo_insumo,id_insumo,descricao,tipo_insumo,id_unidade
+          FROM ${insumoTable}
+          WHERE UPPER(COALESCE(origem,''))='SINAPI'`);
+        const insumoMap = new Map(insumoRows.map(r => [String(r.codigo_insumo), r.id_insumo]));
+        const insumoInfoMap = new Map(insumoRows.map(r => [String(r.codigo_insumo), {
+          descricao: String(r.descricao || ''),
+          tipo: String(r.tipo_insumo || ''),
+          idUnidade: r.id_unidade == null ? null : Number(r.id_unidade),
+        }]));
+        const precoRows = await allC(`
+          SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
+                 p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
           FROM ${precoTable} p
           JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
-          WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]))
-          .map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
+          WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]);
+        const precoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
+        const precoInfoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, {
+          desonerado: Number(r.preco_desonerado || 0),
+          naoDesonerado: Number(r.preco_nao_desonerado || 0),
+          referencia: Number(r.preco_referencia || 0),
+        }]));
         const precosCriadosNestaImportacao = new Set();
+        const sameText = (a, b) => String(a || '').trim() === String(b || '').trim();
+        const sameNumber = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.000001;
+        const precoMudou = (atual, precoDes, precoNao, precoRef) => {
+          if (!atual) return true;
+          return !sameNumber(atual.desonerado, precoDes)
+            || !sameNumber(atual.naoDesonerado, precoNao)
+            || !sameNumber(atual.referencia, precoRef);
+        };
 
         async function processarInsumos(sheet, desonerado, progressStart, progressEnd, label) {
           if (!sheet) return;
@@ -983,12 +1005,20 @@ module.exports = function sinapiRoutes(db) {
             const updateBatchSize = 250;
             for (let offset = 0; offset < insumos.length; offset += updateBatchSize) {
               const batch = insumos.slice(offset, offset + updateBatchSize)
-                .map(ins => ({
-                  idInsumo: insumoMap.get(ins.codigo),
-                  descricao: ins.descricao,
-                  tipo: ins.tipo,
-                  idUnidade: unidadePorCodigo.get(ins.codigo) || null,
-                }))
+                .map(ins => {
+                  const idUnidade = unidadePorCodigo.get(ins.codigo) || null;
+                  const atual = insumoInfoMap.get(ins.codigo);
+                  const changed = !atual
+                    || !sameText(atual.descricao, ins.descricao)
+                    || !sameText(atual.tipo, ins.tipo)
+                    || Number(atual.idUnidade || 0) !== Number(idUnidade || 0);
+                  return {
+                    idInsumo: changed ? insumoMap.get(ins.codigo) : null,
+                    descricao: ins.descricao,
+                    tipo: ins.tipo,
+                    idUnidade,
+                  };
+                })
                 .filter(row => row.idInsumo);
               if (!batch.length) continue;
 
@@ -1024,6 +1054,9 @@ module.exports = function sinapiRoutes(db) {
               out.insumos_atualizados += batch.length;
               reportProgress(22, label, `${Math.min(offset + updateBatchSize, insumos.length)}/${insumos.length} cadastros revisados em lote.`);
             }
+            if (!out.insumos_atualizados) {
+              reportProgress(22, label, `${insumos.length}/${insumos.length} cadastros conferidos; nenhuma atualizacao necessaria.`);
+            }
           }
 
           const inserirPrecos = [];
@@ -1042,7 +1075,9 @@ module.exports = function sinapiRoutes(db) {
               const idPreco = precoMap.get(key);
               const precoRef = precoDes ?? precoNao ?? 0;
               if (idPreco) {
-                if (forceReferentialUpdate) atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef });
+                if (forceReferentialUpdate && precoMudou(precoInfoMap.get(key), precoDes, precoNao, precoRef)) {
+                  atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef });
+                }
               } else {
                 inserirPrecos.push({ idInsumo, uf, precoDes, precoNao, precoRef, key });
               }
