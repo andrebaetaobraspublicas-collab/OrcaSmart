@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const zlib = require('zlib');
+const { databaseEngine } = require('../utils/mysqlRuntime');
 
 module.exports = function sinapiRoutes(db) {
   const router = express.Router();
@@ -487,7 +488,8 @@ module.exports = function sinapiRoutes(db) {
         alertas: [],
       };
 
-      await runC('BEGIN IMMEDIATE');
+      const useLongTransaction = databaseEngine() !== 'mysql';
+      if (useLongTransaction) await runC('BEGIN IMMEDIATE');
       try {
         const adminImport = req.user && req.user.role === 'admin';
         const hasCatalogComps = await tableC('catalog', 'composicoes');
@@ -725,11 +727,11 @@ module.exports = function sinapiRoutes(db) {
           }
         }
 
-        await runC('COMMIT');
+        if (useLongTransaction) await runC('COMMIT');
         out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
       } catch (err) {
-        await runC('ROLLBACK').catch(() => {});
+        if (useLongTransaction) await runC('ROLLBACK').catch(() => {});
         throw err;
       }
     });
