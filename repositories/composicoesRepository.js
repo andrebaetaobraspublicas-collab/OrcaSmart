@@ -878,6 +878,20 @@ async function getTenantComposicao(db, rowid) {
       item.id_item_secao = `tenant:${item._rowid || item.id_item_secao}`;
     });
   }
+  if (!comp.secoes.length && comp._catalog_id) {
+    comp.secoes = await all(db, `
+      SELECT *, 'catalog' AS _tenant_scope
+      FROM catalog.composicoes_secoes
+      WHERE id_composicao = ?
+      ORDER BY ordem, letra_secao`, [comp._catalog_id]).catch(() => []);
+    for (const secao of comp.secoes) {
+      secao.itens = await all(db, `
+        SELECT *, 'catalog' AS _tenant_scope
+        FROM catalog.composicoes_secao_itens
+        WHERE id_secao = ?
+        ORDER BY ordem, id_item_secao`, [secao.id_secao]).catch(() => []);
+    }
+  }
   return aplicarPrecosResolvidosTenant(db, comp);
 }
 

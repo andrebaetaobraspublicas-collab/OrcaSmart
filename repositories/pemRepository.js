@@ -190,6 +190,54 @@ async function getOrCreateUserGroup(db, source, dataBase, uf) {
   return result.lastID;
 }
 
+async function ensureTenantSectionTables(db) {
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS tenant_composicoes_secoes (
+      tenant_id BIGINT UNSIGNED NOT NULL,
+      id_secao BIGINT UNSIGNED NULL,
+      id_composicao BIGINT UNSIGNED NULL,
+      letra_secao TEXT NULL,
+      nome_secao TEXT NULL,
+      custo_total_secao DECIMAL(20,8) NULL,
+      ordem BIGINT NULL,
+      tenant_catalog_id BIGINT UNSIGNED NULL,
+      tenant_override_action TEXT NOT NULL DEFAULT 'create',
+      tenant_override_status TEXT NOT NULL DEFAULT 'active',
+      tenant_created_at TEXT NULL,
+      tenant_updated_at TEXT NULL
+    )`);
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS tenant_composicoes_secao_itens (
+      tenant_id BIGINT UNSIGNED NOT NULL,
+      id_item_secao BIGINT UNSIGNED NULL,
+      id_composicao BIGINT UNSIGNED NULL,
+      id_secao BIGINT UNSIGNED NULL,
+      letra_secao TEXT NULL,
+      codigo_item TEXT NULL,
+      descricao TEXT NULL,
+      quantidade DECIMAL(20,8) NULL,
+      unidade TEXT NULL,
+      util_operativa DECIMAL(20,8) NULL,
+      util_improdutiva DECIMAL(20,8) NULL,
+      custo_hp DECIMAL(20,8) NULL,
+      custo_hi DECIMAL(20,8) NULL,
+      preco_unitario DECIMAL(20,8) NULL,
+      custo_total DECIMAL(20,8) NULL,
+      cod_transporte TEXT NULL,
+      cod_transp_ln TEXT NULL,
+      cod_transp_rp TEXT NULL,
+      cod_transp_p TEXT NULL,
+      fit DECIMAL(20,8) NULL,
+      dmt DECIMAL(20,8) NULL,
+      ordem BIGINT NULL,
+      tenant_catalog_id BIGINT UNSIGNED NULL,
+      tenant_override_action TEXT NOT NULL DEFAULT 'create',
+      tenant_override_status TEXT NOT NULL DEFAULT 'active',
+      tenant_created_at TEXT NULL,
+      tenant_updated_at TEXT NULL
+    )`);
+}
+
 async function copySectionItems(db, sourceId, targetId, equipamentosEditados = new Map(), options = {}) {
   const targetTenant = !!options.targetTenant;
   const secoesTable = targetTenant ? 'tenant_composicoes_secoes' : 'composicoes_secoes';
@@ -197,7 +245,7 @@ async function copySectionItems(db, sourceId, targetId, equipamentosEditados = n
   const secaoPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secoes') : 'id_secao';
   const itemPk = targetTenant ? tenantSyntheticPk('tenant_composicoes_secao_itens') : 'id_item_secao';
   if (targetTenant && (!(await tableExists(db, secoesTable)) || !(await tableExists(db, itensTable)))) {
-    return;
+    await ensureTenantSectionTables(db);
   }
   const secoes = await all(db, 'SELECT * FROM composicoes_secoes WHERE id_composicao=? ORDER BY ordem, letra_secao', [sourceId]);
   for (const sec of secoes) {
