@@ -979,7 +979,7 @@ module.exports = function sinapiRoutes(db) {
         ).then(r => ({ id_fonte: r.lastID }));
         const idFonte = fonte.id_fonte;
 
-        reportProgress(6, 'Preparando', 'Carregando unidades e insumos SINAPI existentes.');
+        reportProgress(6, 'Preparando', 'Carregando unidades cadastradas.');
         const unidades = new Map((await allC(`SELECT sigla,id_unidade FROM ${unidadeTable}`)).map(r => [String(r.sigla || '').toUpperCase(), r.id_unidade]));
         async function getUnidade(sigla) {
           const key = String(sigla || '').trim().toUpperCase().slice(0, 20);
@@ -991,10 +991,32 @@ module.exports = function sinapiRoutes(db) {
           return row.id_unidade;
         }
 
-        const insumoRows = await allC(`
-          SELECT codigo_insumo,id_insumo,descricao,tipo_insumo,id_unidade
-          FROM ${insumoTable}
-          WHERE UPPER(COALESCE(origem,''))='SINAPI'`);
+        const insumoCodesImportacao = new Set();
+        const addInsumoCodesImportacao = sheet => {
+          if (!sheet) return;
+          for (const ins of parseInsumosRows(parseSheetRows(files, sheet.path), false)) {
+            if (ins.codigo) insumoCodesImportacao.add(String(ins.codigo));
+          }
+        };
+        if (importarIsd) addInsumoCodesImportacao(isdSheet);
+        if (importarIcd) addInsumoCodesImportacao(icdSheet);
+
+        reportProgress(6, 'Preparando', `Carregando ${insumoCodesImportacao.size} insumos SINAPI existentes relacionados a planilha.`);
+        const insumoRows = [];
+        const insumoCodes = [...insumoCodesImportacao];
+        for (let offset = 0; offset < insumoCodes.length; offset += 500) {
+          const batch = insumoCodes.slice(offset, offset + 500);
+          const placeholders = batch.map(() => '?').join(',');
+          const rows = await allC(`
+            SELECT codigo_insumo,id_insumo,descricao,tipo_insumo,id_unidade
+            FROM ${insumoTable}
+            WHERE origem='SINAPI'
+              AND codigo_insumo IN (${placeholders})`, batch);
+          insumoRows.push(...rows);
+          if (offset + batch.length < insumoCodes.length) {
+            reportProgress(6, 'Preparando', `${offset + batch.length}/${insumoCodes.length} insumos existentes conferidos.`);
+          }
+        }
         const insumoMap = new Map(insumoRows.map(r => [String(r.codigo_insumo), r.id_insumo]));
         const insumoInfoMap = new Map(insumoRows.map(r => [String(r.codigo_insumo), {
           descricao: String(r.descricao || ''),
@@ -1002,14 +1024,24 @@ module.exports = function sinapiRoutes(db) {
           idUnidade: r.id_unidade == null ? null : Number(r.id_unidade),
         }]));
         reportProgress(7, 'Preparando', 'Carregando mapa de precos SINAPI existentes para importacao retomavel.');
-        const precoRows = await allC(`
+        const precoRows = [];
+        for (let offset = 0; offset < insumoCodes.length; offset += 500) {
+          const batch = insumoCodes.slice(offset, offset + 500);
+          const placeholders = batch.map(() => '?').join(',');
+          const rows = await allC(`
             SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
                    p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
             FROM ${precoTable} p
             JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
             WHERE p.id_data_base=?
-              AND UPPER(COALESCE(i.origem,''))='SINAPI'
-              AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufWherePlaceholders})`, [idDataBase, ...ufs]);
+              AND i.origem='SINAPI'
+              AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufWherePlaceholders})
+              AND i.codigo_insumo IN (${placeholders})`, [idDataBase, ...ufs, ...batch]);
+          precoRows.push(...rows);
+          if (offset + batch.length < insumoCodes.length) {
+            reportProgress(7, 'Preparando', `${offset + batch.length}/${insumoCodes.length} insumos com precos existentes conferidos.`);
+          }
+        }
         const precoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
         const precoInfoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, {
           desonerado: Number(r.preco_desonerado || 0),
