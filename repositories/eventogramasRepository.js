@@ -39,6 +39,75 @@ function classificarGrupo(texto) {
   return 'Outros Servicos';
 }
 
+function cleanDescricao(value, fallback = 'Evento') {
+  return String(value || fallback).replace(/\s+/g, ' ').trim() || fallback;
+}
+
+function formatNumeroEvento(indexes = []) {
+  return indexes.map(i => String(i).padStart(2, '0')).join('.');
+}
+
+function buildEventosPorEstrutura(itens = [], bdi = 0) {
+  const roots = [];
+  const stack = [];
+  const counters = [];
+  let fallbackGrupo = null;
+
+  function ensureFallbackGrupo(item) {
+    if (fallbackGrupo) return fallbackGrupo;
+    const descricao = classificarGrupo(item?.descricao || '');
+    fallbackGrupo = {
+      descricao,
+      grupo: descricao,
+      depth: 0,
+      indexes: [1],
+      rows: [],
+      children: [],
+    };
+    roots.push(fallbackGrupo);
+    return fallbackGrupo;
+  }
+
+  for (const row of itens) {
+    const tipo = String(row.tipo_linha || '').toLowerCase();
+    const depth = Math.max(0, Number(row.profundidade || 0));
+    if (tipo === 'section') {
+      stack.length = Math.min(stack.length, depth);
+      counters.length = Math.min(counters.length, depth + 1);
+      counters[depth] = (counters[depth] || 0) + 1;
+      for (let i = depth + 1; i < counters.length; i += 1) counters[i] = 0;
+      const indexes = counters.slice(0, depth + 1).filter(Boolean);
+      const evento = {
+        descricao: cleanDescricao(row.descricao, `Etapa ${formatNumeroEvento(indexes)}`),
+        grupo: cleanDescricao(row.descricao, 'Orcamento'),
+        depth,
+        indexes,
+        rows: [],
+        children: [],
+      };
+      const parent = stack[depth - 1];
+      if (parent) parent.children.push(evento);
+      else roots.push(evento);
+      stack[depth] = evento;
+      stack.length = depth + 1;
+      continue;
+    }
+    if (tipo !== 'item') continue;
+    const parent = [...stack].reverse().find(Boolean) || ensureFallbackGrupo(row);
+    parent.rows.push(row);
+  }
+
+  function totalEvento(evento) {
+    const own = evento.rows.reduce((sum, it) => sum + valorItem(it, bdi), 0);
+    const childTotal = evento.children.reduce((sum, child) => sum + totalEvento(child), 0);
+    evento.total = Number((own + childTotal).toFixed(2));
+    return evento.total;
+  }
+
+  roots.forEach(totalEvento);
+  return roots.filter(evento => evento.rows.length || evento.children.length);
+}
+
 async function getEventosTree(db, idEventograma) {
   const eventos = await all(db, `
     SELECT *
@@ -154,38 +223,41 @@ async function gerarAutomatico(db, idEventograma, options = {}) {
     WHERE id_orcamento=?
     ORDER BY ordem, id_item`, [evg.id_orcamento]);
 
-  const grupos = new Map();
-  let secao = '';
-  for (const it of itens) {
-    if (it.tipo_linha === 'section') secao = it.descricao || '';
-    if (it.tipo_linha !== 'item') continue;
-    const grupo = classificarGrupo(secao || it.descricao);
-    if (!grupos.has(grupo)) grupos.set(grupo, []);
-    grupos.get(grupo).push(it);
-  }
+  const eventos = buildEventosPorEstrutura(itens, bdi);
+  let criados = 0;
 
-  let num = 1;
-  for (const [grupo, rows] of grupos.entries()) {
-    const total = rows.reduce((s, it) => s + valorItem(it, bdi), 0);
+  async function insertEvento(evento, parentId = null, ordem = 1) {
     const result = await run(db, `
-      INSERT INTO ev_eventos (id_eventograma,numero_evento,descricao,grupo,criterio_medicao,valor_calculado,ordem)
-      VALUES (?,?,?,?,?,?,?)`, [
+      INSERT INTO ev_eventos (id_eventograma,id_evento_pai,numero_evento,descricao,grupo,criterio_medicao,valor_calculado,ordem)
+      VALUES (?,?,?,?,?,?,?,?)`, [
       idEventograma,
-      String(num).padStart(2, '0'),
-      grupo,
-      grupo,
+      parentId,
+      formatNumeroEvento(evento.indexes),
+      evento.descricao,
+      evento.grupo,
       'Medicao fisica com base nas quantidades executadas e atestadas.',
-      Number(total.toFixed(2)),
-      num,
+      evento.total || 0,
+      ordem,
     ]);
-    for (const it of rows) {
+    criados += 1;
+    for (const it of evento.rows) {
       await run(db, 'INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES (?,?)', [result.lastID, it.id_item]);
     }
-    num += 1;
+    let childOrder = 1;
+    for (const child of evento.children) {
+      await insertEvento(child, result.lastID, childOrder);
+      childOrder += 1;
+    }
+  }
+
+  let ordem = 1;
+  for (const evento of eventos) {
+    await insertEvento(evento, null, ordem);
+    ordem += 1;
   }
 
   await run(db, "UPDATE eventogramas SET modo_geracao=?, data_atualizacao=datetime('now') WHERE id_eventograma=?", [options.modo || 'automatico', idEventograma]);
-  return { status: 'ok', eventos_criados: num - 1 };
+  return { status: 'ok', eventos_criados: criados };
 }
 
 async function validarEventograma(db, idEventograma) {

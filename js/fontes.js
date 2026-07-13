@@ -856,8 +856,9 @@ Router.register('fontes', async () => {
           <div>
             <label class="form-label">UF para recálculo das composições</label>
             <select class="form-control" id="sinapi_uf">
+              <option value="DF" selected>DF</option>
               <option value="TODAS">Todas as UFs (importa todos os preços)</option>
-              ${UFS.map(uf => `<option value="${uf}">${uf}</option>`).join('')}
+              ${UFS.filter(uf => uf !== 'DF').map(uf => `<option value="${uf}">${uf}</option>`).join('')}
             </select>
             <div style="font-size:.74rem;color:var(--c-text-3);margin-top:3px">
               Selecione "Todas" para importar preços de todas as UFs, ou uma UF específica.
@@ -885,7 +886,7 @@ Router.register('fontes', async () => {
         isd:  document.getElementById('chk_isd')?.checked,
         icd:  document.getElementById('chk_icd')?.checked,
         anal: document.getElementById('chk_anal')?.checked,
-        uf:   document.getElementById('sinapi_uf')?.value || 'TODAS',
+        uf:   document.getElementById('sinapi_uf')?.value || 'DF',
         sob:  document.getElementById('chkSobrepor')?.checked || false,
       };
       if (!cfg.isd && !cfg.icd && !cfg.anal) {

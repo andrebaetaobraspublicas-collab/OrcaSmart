@@ -113,7 +113,7 @@ function qualifyTenantSelect(sql, params, tenantId) {
   text = text.replace(new RegExp(`\\bFROM\\s+${tableRef}\\s+WHERE\\s+`, 'gi'), (match, table, alias) => {
     const scopedAlias = String(alias || table).replace(/`/g, '');
     if (/^(WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|GROUP|ORDER|LIMIT)$/i.test(scopedAlias)) {
-      return match;
+      return `FROM \`${table}\` WHERE \`${table}\`.tenant_id = ${id} AND `;
     }
     return `${match}\`${scopedAlias}\`.tenant_id = ${id} AND `;
   });
