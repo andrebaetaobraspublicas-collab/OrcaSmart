@@ -37,6 +37,15 @@ function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
+function isMysqlRuntime() {
+  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+}
+
+function tenantSyntheticPk(table) {
+  if (!isMysqlRuntime()) return 'rowid';
+  return table === 'tenant_precos_insumos' ? 'id_tenant_precos_insumos' : 'id_tenant_insumos';
+}
+
 async function tableExists(db, table, schema = 'main') {
   const row = await one(
     db,
@@ -253,7 +262,7 @@ async function stats(db) {
           FROM catalog.insumos i
           WHERE ${visibleCatalog}
           UNION ALL
-          SELECT rowid FROM tenant_insumos WHERE tenant_override_status='active'
+          SELECT ${tenantSyntheticPk('tenant_insumos')} FROM tenant_insumos WHERE tenant_override_status='active'
         ) AS insumos_unificados`,
       material: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND tipo_insumo='Material' UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND tipo_insumo='Material') AS insumos_material`,
       mao_de_obra: `SELECT COUNT(*) AS total FROM (SELECT tipo_insumo FROM catalog.insumos i WHERE ${visibleCatalog} AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra') UNION ALL SELECT tipo_insumo FROM tenant_insumos WHERE tenant_override_status='active' AND (tipo_insumo='Mao de Obra' OR tipo_insumo='MÃ£o de Obra')) AS insumos_mao_de_obra`,
@@ -295,10 +304,12 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
   const table = isTenant ? 'tenant_insumos' : 'catalog.insumos';
   const priceTable = isTenant ? 'tenant_precos_insumos' : 'catalog.precos_insumos';
   const lookupPrefix = 'catalog.';
-  const idExpr = isTenant ? "'tenant:' || i.rowid" : 'CAST(i.id_insumo AS TEXT)';
+  const tenantInsumoPk = tenantSyntheticPk('tenant_insumos');
+  const tenantPrecoPk = tenantSyntheticPk('tenant_precos_insumos');
+  const idExpr = isTenant ? `'tenant:' || i.${tenantInsumoPk}` : 'CAST(i.id_insumo AS TEXT)';
   const scopeExpr = isTenant ? "'tenant'" : "'catalog'";
   const catalogIdExpr = isTenant ? 'i.tenant_catalog_id' : 'i.id_insumo';
-  const priceInsumoExpr = isTenant ? 'i.rowid' : 'i.id_insumo';
+  const priceInsumoExpr = isTenant ? `i.${tenantInsumoPk}` : 'i.id_insumo';
 
   let subWhere = `WHERE id_insumo = ${priceInsumoExpr}`;
   const subParams = [];
@@ -324,10 +335,10 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
     FROM ${table} i
     LEFT JOIN ${lookupPrefix}unidades_medida um ON i.id_unidade = um.id_unidade
     LEFT JOIN ${lookupPrefix}grupos_insumos gi ON i.id_grupo = gi.id_grupo
-    LEFT JOIN ${priceTable} p ON p.${isTenant ? 'rowid' : 'id_preco'} = (
-      SELECT ${isTenant ? 'rowid' : 'id_preco'} FROM ${priceTable}
+    LEFT JOIN ${priceTable} p ON p.${isTenant ? tenantPrecoPk : 'id_preco'} = (
+      SELECT ${isTenant ? tenantPrecoPk : 'id_preco'} FROM ${priceTable}
       ${subWhere}
-      ORDER BY ${isTenant ? 'rowid' : 'id_preco'} DESC LIMIT 1
+      ORDER BY ${isTenant ? tenantPrecoPk : 'id_preco'} DESC LIMIT 1
     )
     LEFT JOIN ${lookupPrefix}datas_base db2 ON p.id_data_base = db2.id_data_base
     LEFT JOIN ${lookupPrefix}fontes_referencia fr ON p.id_fonte = fr.id_fonte
