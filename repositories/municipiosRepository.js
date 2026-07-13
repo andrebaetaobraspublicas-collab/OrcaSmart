@@ -1,3 +1,9 @@
+const { mysqlModeEnabled } = require('../utils/mysqlRuntime');
+
+function isMysqlRuntime() {
+  return mysqlModeEnabled();
+}
+
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
@@ -20,6 +26,25 @@ function run(db, sql, params = []) {
 }
 
 async function ensureAliquotasTable(db) {
+  if (isMysqlRuntime()) {
+    await run(db, `
+      CREATE TABLE IF NOT EXISTS municipio_aliquotas_anuais (
+        id_aliquota BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        id_municipio BIGINT UNSIGNED NOT NULL,
+        ano INT NOT NULL,
+        iva_percentual DECIMAL(20,8) NOT NULL DEFAULT 0,
+        aliquota_cbs DECIMAL(20,8) NOT NULL DEFAULT 0,
+        aliquota_ibs DECIMAL(20,8) NOT NULL DEFAULT 0,
+        aliquota_iss DECIMAL(20,8) NOT NULL DEFAULT 0,
+        data_atualizacao TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id_aliquota),
+        UNIQUE KEY uq_municipio_aliquotas_anuais_municipio_ano (id_municipio, ano),
+        KEY idx_municipio_aliquotas_anuais_ano (ano),
+        KEY idx_municipio_aliquotas_anuais_municipio (id_municipio)
+      )`);
+    return;
+  }
+
   await run(db, `
     CREATE TABLE IF NOT EXISTS municipio_aliquotas_anuais (
       id_aliquota INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,7 +76,10 @@ async function listMunicipios(db, { uf, busca, ano }) {
     params.push(String(uf).toUpperCase().trim());
   }
   if (busca) {
-    where.push('(m.nome_municipio LIKE ? OR CAST(m.codigo_ibge_municipio AS TEXT) LIKE ?)');
+    const codigoIbgeCast = isMysqlRuntime()
+      ? 'CAST(m.codigo_ibge_municipio AS CHAR)'
+      : 'CAST(m.codigo_ibge_municipio AS TEXT)';
+    where.push(`(m.nome_municipio LIKE ? OR ${codigoIbgeCast} LIKE ?)`);
     params.push(`%${busca}%`, `%${busca}%`);
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -95,16 +123,29 @@ async function getMunicipioByIbge(db, codigoIbge) {
 
 async function upsertAliquotas(db, idMunicipio, { ano, iva, cbs, ibs, iss }) {
   await ensureAliquotasTable(db);
-  await run(db, `
-    INSERT INTO municipio_aliquotas_anuais
-      (id_municipio, ano, iva_percentual, aliquota_cbs, aliquota_ibs, aliquota_iss, data_atualizacao)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(id_municipio, ano) DO UPDATE SET
-      iva_percentual = excluded.iva_percentual,
-      aliquota_cbs = excluded.aliquota_cbs,
-      aliquota_ibs = excluded.aliquota_ibs,
-      aliquota_iss = excluded.aliquota_iss,
-      data_atualizacao = datetime('now')`, [idMunicipio, ano, iva, cbs, ibs, iss]);
+  if (isMysqlRuntime()) {
+    await run(db, `
+      INSERT INTO municipio_aliquotas_anuais
+        (id_municipio, ano, iva_percentual, aliquota_cbs, aliquota_ibs, aliquota_iss, data_atualizacao)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON DUPLICATE KEY UPDATE
+        iva_percentual = VALUES(iva_percentual),
+        aliquota_cbs = VALUES(aliquota_cbs),
+        aliquota_ibs = VALUES(aliquota_ibs),
+        aliquota_iss = VALUES(aliquota_iss),
+        data_atualizacao = CURRENT_TIMESTAMP`, [idMunicipio, ano, iva, cbs, ibs, iss]);
+  } else {
+    await run(db, `
+      INSERT INTO municipio_aliquotas_anuais
+        (id_municipio, ano, iva_percentual, aliquota_cbs, aliquota_ibs, aliquota_iss, data_atualizacao)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(id_municipio, ano) DO UPDATE SET
+        iva_percentual = excluded.iva_percentual,
+        aliquota_cbs = excluded.aliquota_cbs,
+        aliquota_ibs = excluded.aliquota_ibs,
+        aliquota_iss = excluded.aliquota_iss,
+        data_atualizacao = datetime('now')`, [idMunicipio, ano, iva, cbs, ibs, iss]);
+  }
 
   if (Number(ano) === 2026) {
     await run(db, `
