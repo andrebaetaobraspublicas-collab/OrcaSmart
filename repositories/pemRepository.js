@@ -53,7 +53,7 @@ async function stats(db) {
   const comLigacao = (await one(db, `
     SELECT COUNT(DISTINCT p.id_pem) AS total
     FROM pem_servicos p
-    JOIN composicoes c ON c.codigo=p.codigo AND UPPER(c.fonte)='SICRO'`))?.total || 0;
+    JOIN composicoes c ON (c.codigo=p.codigo OR c.codigo='SICRO.' || p.codigo) AND UPPER(c.fonte)='SICRO'`))?.total || 0;
   return {
     total_servicos: totalServicos,
     total_equipamentos: totalEquipamentos,
@@ -79,7 +79,7 @@ async function list(db, query = {}) {
            c.uf_referencia, c.mes_referencia
     FROM pem_servicos s
     LEFT JOIN pem_equipamentos e ON e.id_pem=s.id_pem
-    LEFT JOIN composicoes c ON c.codigo=s.codigo AND UPPER(c.fonte)='SICRO'
+    LEFT JOIN composicoes c ON (c.codigo=s.codigo OR c.codigo='SICRO.' || s.codigo) AND UPPER(c.fonte)='SICRO'
     ${where}
     GROUP BY s.id_pem
     ORDER BY s.codigo
@@ -88,12 +88,14 @@ async function list(db, query = {}) {
 }
 
 async function getLinkedComposition(db, codigo) {
+  const raw = String(codigo || '').trim();
+  const withPrefix = raw.toUpperCase().startsWith('SICRO.') ? raw : `SICRO.${raw}`;
   return one(db, `
     SELECT *
     FROM composicoes
-    WHERE codigo=? AND UPPER(fonte)='SICRO'
+    WHERE codigo IN (?, ?) AND UPPER(fonte)='SICRO'
     ORDER BY id_composicao DESC
-    LIMIT 1`, [codigo]);
+    LIMIT 1`, [raw, withPrefix]);
 }
 
 async function getById(db, idPem) {
