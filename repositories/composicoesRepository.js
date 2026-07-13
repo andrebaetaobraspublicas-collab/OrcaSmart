@@ -58,6 +58,17 @@ function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
+function isMysqlRuntime() {
+  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+}
+
+function tenantSyntheticPk(table) {
+  if (!isMysqlRuntime()) return 'rowid';
+  if (table === 'tenant_composicoes') return 'id_tenant_composicoes';
+  if (table === 'tenant_itens_composicao') return 'id_tenant_itens_composicao';
+  return 'rowid';
+}
+
 async function tableExists(db, table, schema = 'main') {
   const row = await one(
     db,
@@ -215,6 +226,7 @@ const selectComp = `
 async function listGrupos(db, query = {}) {
   if (await useTenantCatalogRead(db)) {
     const hasOverrides = await hasTenantReferentialOverrides(db);
+    const tenantComposicoesPk = tenantSyntheticPk('tenant_composicoes');
     const params = [];
     let fonteFilter = '';
     if (query.fonte) {
@@ -227,7 +239,7 @@ async function listGrupos(db, query = {}) {
       LEFT JOIN (
         SELECT id_composicao, id_grupo_comp FROM catalog.composicoes c WHERE ${visibleCatalogClause('c', hasOverrides)}
         UNION ALL
-        SELECT 'tenant:' || rowid AS id_composicao, id_grupo_comp
+        SELECT 'tenant:' || ${tenantComposicoesPk} AS id_composicao, id_grupo_comp
         FROM tenant_composicoes
         WHERE COALESCE(tenant_override_status,'active')='active'
       ) v ON v.id_grupo_comp = g.id_grupo_comp
