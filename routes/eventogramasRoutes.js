@@ -3,6 +3,7 @@ const service = require('../services/eventogramasService');
 
 module.exports = function eventogramasRoutes(db) {
   const router = express.Router();
+  const withWriteConnection = task => (db && typeof db.withConnection === 'function' ? db.withConnection(task) : task(db));
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
@@ -13,7 +14,7 @@ module.exports = function eventogramasRoutes(db) {
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createEventograma(db, req.body || {}));
+    res.status(201).json(await withWriteConnection(writeDb => service.createEventograma(writeDb, req.body || {})));
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
@@ -21,7 +22,7 @@ module.exports = function eventogramasRoutes(db) {
   }));
 
   router.post('/:id/gerar', asyncHandler(async (req, res) => {
-    res.json(await service.gerar(db, req.params.id, req.body || {}));
+    res.json(await withWriteConnection(writeDb => service.gerar(writeDb, req.params.id, req.body || {})));
   }));
 
   router.get('/:id/validar', asyncHandler(async (req, res) => {
@@ -29,31 +30,31 @@ module.exports = function eventogramasRoutes(db) {
   }));
 
   router.post('/:id/eventos', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createEvento(db, req.params.id, req.body || {}));
+    res.status(201).json(await withWriteConnection(writeDb => service.createEvento(writeDb, req.params.id, req.body || {})));
   }));
 
   router.put('/:eid/eventos/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updateEvento(db, req.params.eid, req.params.id, req.body || {}));
+    res.json(await withWriteConnection(writeDb => service.updateEvento(writeDb, req.params.eid, req.params.id, req.body || {})));
   }));
 
   router.delete('/:eid/eventos/:id', asyncHandler(async (req, res) => {
-    res.json(await service.deleteEvento(db, req.params.eid, req.params.id));
+    res.json(await withWriteConnection(writeDb => service.deleteEvento(writeDb, req.params.eid, req.params.id)));
   }));
 
   router.post('/:eid/eventos/:id/itens', asyncHandler(async (req, res) => {
-    res.json(await service.addItensEvento(db, req.params.id, req.body || {}));
+    res.json(await withWriteConnection(writeDb => service.addItensEvento(writeDb, req.params.id, req.body || {})));
   }));
 
   router.delete('/:eid/eventos/:id/itens/:item_id', asyncHandler(async (req, res) => {
-    res.json(await service.removeItemEvento(db, req.params.id, req.params.item_id));
+    res.json(await withWriteConnection(writeDb => service.removeItemEvento(writeDb, req.params.id, req.params.item_id)));
   }));
 
   router.post('/:eid/eventos/:id/itens/mover', asyncHandler(async (req, res) => {
-    res.json(await service.moveItensEvento(db, req.params.id, req.body || {}));
+    res.json(await withWriteConnection(writeDb => service.moveItensEvento(writeDb, req.params.id, req.body || {})));
   }));
 
   router.post('/:id/reordenar', asyncHandler(async (req, res) => {
-    res.json(await service.reordenarEventos(db, req.params.id, Array.isArray(req.body) ? req.body : []));
+    res.json(await withWriteConnection(writeDb => service.reordenarEventos(writeDb, req.params.id, Array.isArray(req.body) ? req.body : [])));
   }));
 
   router.get('/:id/exportar/json', asyncHandler(async (req, res) => {

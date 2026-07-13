@@ -284,18 +284,81 @@ module.exports = function sinapiRoutes(db) {
     };
     const codeAt = (row, idx) => normCode(cell(row, idx));
     const isCode = value => /^\d{3,}$/.test(normCode(value));
+    const headerLabel = value => normalizeText(value).replace(/\s+/g, ' ');
+    const fallbackCols = {
+      grupo: 0,
+      codigoComp: 1,
+      tipoItem: 2,
+      codigoItem: 3,
+      descricao: 4,
+      unidade: 5,
+      coeficiente: 6,
+      situacao: 7,
+      startRow: 0,
+    };
+    const findHeaderColumns = () => {
+      for (let r = 0; r < Math.min(rows.length, 30); r++) {
+        const row = rows[r] || [];
+        const labels = row.map(headerLabel);
+        const findIdx = predicate => labels.findIndex(predicate);
+        const codigoComp = findIdx(label => label.includes('codigo') && label.includes('composicao'));
+        const tipoItem = findIdx(label => label.includes('tipo') && label.includes('item'));
+        const codigoItem = findIdx(label => label.includes('codigo') && label.includes('item'));
+        const descricao = findIdx(label => label === 'descricao' || label.includes('descricao'));
+        const unidade = findIdx(label => label === 'unidade' || label.includes('unidade'));
+        if (codigoComp >= 0 && descricao >= 0 && unidade >= 0) {
+          return {
+            grupo: findIdx(label => label === 'grupo' || label.includes('grupo')),
+            codigoComp,
+            tipoItem,
+            codigoItem,
+            descricao,
+            unidade,
+            coeficiente: findIdx(label => label.includes('coeficiente')),
+            situacao: findIdx(label => label.includes('situacao')),
+            startRow: r + 1,
+          };
+        }
+      }
+      return fallbackCols;
+    };
+    const cols = findHeaderColumns();
+    const col = key => (cols[key] >= 0 ? cols[key] : fallbackCols[key]);
+    const descriptionFromRow = (row, grupo) => {
+      const primary = cell(row, col('descricao'));
+      const primaryNorm = normalizeText(primary);
+      const grupoNorm = normalizeText(grupo);
+      if (primary && primaryNorm !== grupoNorm) return primary;
 
-    for (let i = 0; i < rows.length; i++) {
+      const ignored = new Set([
+        col('grupo'),
+        col('codigoComp'),
+        col('tipoItem'),
+        col('codigoItem'),
+        col('unidade'),
+        col('coeficiente'),
+        col('situacao'),
+      ]);
+      const candidates = (row || [])
+        .map((value, index) => ({ value: cell(row, index), index }))
+        .filter(({ value, index }) => value && !ignored.has(index))
+        .filter(({ value }) => normalizeText(value) !== grupoNorm && !isCode(value))
+        .sort((a, b) => b.value.length - a.value.length);
+      return candidates[0]?.value || primary || `${grupo || 'SINAPI'} ${codeAt(row, col('codigoComp'))}`;
+    };
+
+    for (let i = cols.startRow || 0; i < rows.length; i++) {
       const row = rows[i] || [];
       if (!row.length) continue;
 
-      const codigoComp = codeAt(row, 1);
-      const tipoItem = itemKind(row[2]);
-      const codigoItem = codeAt(row, 3);
-      const descricao = cell(row, 4);
-      const unidade = cell(row, 5).toUpperCase();
-      const coeficiente = parseDecimal(row[6]);
-      const situacao = cell(row, 7);
+      const codigoComp = codeAt(row, col('codigoComp'));
+      const tipoItem = itemKind(row[col('tipoItem')]);
+      const codigoItem = codeAt(row, col('codigoItem'));
+      const grupo = cell(row, col('grupo')) || 'SINAPI';
+      const descricao = descriptionFromRow(row, grupo);
+      const unidade = cell(row, col('unidade')).toUpperCase();
+      const coeficiente = parseDecimal(row[col('coeficiente')]);
+      const situacao = cell(row, col('situacao'));
 
       if (tipoItem && current && current.codigo === codigoComp && isCode(codigoItem)) {
         current.itens.push({
@@ -312,9 +375,9 @@ module.exports = function sinapiRoutes(db) {
       if (!tipoItem && isCode(codigoComp) && unidade) {
         current = {
           codigo: codigoComp,
-          descricao: descricao || `${cell(row, 0) || 'SINAPI'} ${codigoComp}`,
+          descricao: descricao || `${grupo} ${codigoComp}`,
           unidade,
-          grupo: cell(row, 0) || 'SINAPI',
+          grupo,
           situacao,
           itens: [],
         };

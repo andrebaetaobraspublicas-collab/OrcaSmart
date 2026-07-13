@@ -212,6 +212,11 @@ async function gerarAutomatico(db, idEventograma, options = {}) {
   if (!evg) return null;
 
   if (options.limpar_existentes !== false) {
+    const antigos = await all(db, 'SELECT id_evento FROM ev_eventos WHERE id_eventograma=?', [idEventograma]);
+    const idsAntigos = antigos.map(row => row.id_evento).filter(Boolean);
+    if (idsAntigos.length) {
+      await run(db, `DELETE FROM ev_evento_itens WHERE id_evento IN (${idsAntigos.map(() => '?').join(',')})`, idsAntigos);
+    }
     await run(db, 'DELETE FROM ev_eventos WHERE id_eventograma=?', [idEventograma]);
   }
 
