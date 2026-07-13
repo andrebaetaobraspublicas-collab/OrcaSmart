@@ -848,8 +848,8 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
           id_insumo=NULL,
           codigo=?,
           fonte=?,
-          descricao=COALESCE(NULLIF(?,''), descricao),
-          unidade=COALESCE(NULLIF(?,''), unidade),
+          descricao=?,
+          unidade=?,
           custo_unitario=?
       WHERE id_item=?`, [
       comp.id_composicao,
