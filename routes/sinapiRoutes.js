@@ -980,20 +980,49 @@ module.exports = function sinapiRoutes(db) {
           }
 
           if (forceReferentialUpdate) {
-            for (let offset = 0; offset < insumos.length; offset += batchSize) {
-              const batch = insumos.slice(offset, offset + batchSize);
-              for (const ins of batch) {
-                const idInsumo = insumoMap.get(ins.codigo);
-                if (!idInsumo) continue;
-                await runC(`UPDATE ${insumoTable} SET descricao=?,tipo_insumo=?,id_unidade=? WHERE id_insumo=?`, [
-                  ins.descricao,
-                  ins.tipo,
-                  unidadePorCodigo.get(ins.codigo) || null,
-                  idInsumo,
-                ]);
-                out.insumos_atualizados += 1;
+            const updateBatchSize = 250;
+            for (let offset = 0; offset < insumos.length; offset += updateBatchSize) {
+              const batch = insumos.slice(offset, offset + updateBatchSize)
+                .map(ins => ({
+                  idInsumo: insumoMap.get(ins.codigo),
+                  descricao: ins.descricao,
+                  tipo: ins.tipo,
+                  idUnidade: unidadePorCodigo.get(ins.codigo) || null,
+                }))
+                .filter(row => row.idInsumo);
+              if (!batch.length) continue;
+
+              const descCase = [];
+              const tipoCase = [];
+              const unidadeCase = [];
+              const ids = [];
+              const params = [];
+
+              for (const row of batch) {
+                descCase.push('WHEN ? THEN ?');
+                params.push(row.idInsumo, row.descricao);
               }
-              reportProgress(22, label, `${Math.min(offset + batch.length, insumos.length)}/${insumos.length} cadastros revisados.`);
+              for (const row of batch) {
+                tipoCase.push('WHEN ? THEN ?');
+                params.push(row.idInsumo, row.tipo);
+              }
+              for (const row of batch) {
+                unidadeCase.push('WHEN ? THEN ?');
+                params.push(row.idInsumo, row.idUnidade);
+              }
+              for (const row of batch) {
+                ids.push('?');
+                params.push(row.idInsumo);
+              }
+
+              await runC(`
+                UPDATE ${insumoTable}
+                SET descricao=CASE id_insumo ${descCase.join(' ')} ELSE descricao END,
+                    tipo_insumo=CASE id_insumo ${tipoCase.join(' ')} ELSE tipo_insumo END,
+                    id_unidade=CASE id_insumo ${unidadeCase.join(' ')} ELSE id_unidade END
+                WHERE id_insumo IN (${ids.join(',')})`, params);
+              out.insumos_atualizados += batch.length;
+              reportProgress(22, label, `${Math.min(offset + updateBatchSize, insumos.length)}/${insumos.length} cadastros revisados em lote.`);
             }
           }
 
