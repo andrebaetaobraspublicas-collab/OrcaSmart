@@ -35,6 +35,12 @@ module.exports = function sinapiRoutes(db) {
     return (req, res) => fn(req, res).catch(err => res.status(err.status || 500).json({ erro: err.message }));
   }
 
+  function httpError(status, message) {
+    const err = new Error(message);
+    err.status = status;
+    return err;
+  }
+
   function decodeXml(value) {
     return String(value || '')
       .replace(/&lt;/g, '<')
@@ -318,7 +324,7 @@ module.exports = function sinapiRoutes(db) {
   }
 
   function findAnaliticoSheet(files, sheets) {
-    const named = findSheet(sheets, 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas');
+    const named = findSheet(sheets, 'Analitico com Custo', 'AnalÃ­tico com Custo', 'Analítico com Custo', 'Analitico', 'AnalÃ­tico', 'Analítico', 'Analitica', 'Analítica', 'Composicoes Analiticas', 'Composições Analíticas');
     if (named) return named;
     for (const sheet of sheets) {
       const name = normalizeText(sheet.name);
