@@ -520,8 +520,8 @@ module.exports = function sinapiRoutes(db) {
     const findHeaderColumns = () => {
       for (let r = 0; r < Math.min(rows.length, 30); r++) {
         const row = rows[r] || [];
-        const labels = row.map(headerLabel);
-        const findIdx = predicate => labels.findIndex(predicate);
+        const labels = Array.from({ length: row.length }, (_, idx) => headerLabel(row[idx]));
+        const findIdx = predicate => labels.findIndex(label => predicate(label || ''));
         const codigoComp = findIdx(label => label.includes('codigo') && label.includes('composicao'));
         const tipoItem = findIdx(label => label.includes('tipo') && label.includes('item'));
         const codigoItem = findIdx(label => label.includes('codigo') && label.includes('item'));
