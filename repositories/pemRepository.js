@@ -77,13 +77,17 @@ async function list(db, query = {}) {
     SELECT s.*, COUNT(e.id_pem_equip) AS qtd_equipamentos,
            c.id_composicao AS id_composicao_vinculada,
            c.uf_referencia, c.mes_referencia
-    FROM pem_servicos s
+    FROM (
+      SELECT *
+      FROM pem_servicos s
+      ${where}
+      ORDER BY s.codigo
+      LIMIT ? OFFSET ?
+    ) s
     LEFT JOIN pem_equipamentos e ON e.id_pem=s.id_pem
     LEFT JOIN composicoes c ON (c.codigo=s.codigo OR c.codigo='SICRO.' || s.codigo) AND UPPER(c.fonte)='SICRO'
-    ${where}
     GROUP BY s.id_pem
-    ORDER BY s.codigo
-    LIMIT ? OFFSET ?`, [...params, limit, offset]);
+    ORDER BY s.codigo`, [...params, limit, offset]);
   return { total, items };
 }
 

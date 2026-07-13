@@ -853,22 +853,30 @@ async function getTenantComposicao(db, rowid) {
         WHERE ${tenantComposicaoPk}=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
   if (!comp) return null;
   comp.itens = await all(db, `
-    SELECT *, 'tenant:' || ${tenantItemPk} AS id_item, 'tenant:' || ${tenantItemPk} AS id_item_comp
+    SELECT tenant_itens_composicao.*, id_item AS _rowid
     FROM tenant_itens_composicao
     WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, ${tenantItemPk}`, [rowid]);
+    ORDER BY ordem, id_item`, [rowid]);
+  comp.itens.forEach((item) => {
+    item.id_item = `tenant:${item._rowid || item.id_item}`;
+    item.id_item_comp = item.id_item;
+  });
   comp.secoes = await all(db, `
-    SELECT *, 'tenant:' || ${tenantSecaoPk} AS id_secao
+    SELECT tenant_composicoes_secoes.*, id_secao AS _rowid
     FROM tenant_composicoes_secoes
     WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY ordem, letra_secao`, [rowid]);
+    ORDER BY ordem, letra_secao, id_secao`, [rowid]);
   for (const secao of comp.secoes) {
-    const secaoRowid = String(secao.id_secao).startsWith('tenant:') ? Number(String(secao.id_secao).slice(7)) : secao.id_secao;
+    const secaoRowid = secao._rowid || secao.id_secao;
+    secao.id_secao = `tenant:${secaoRowid}`;
     secao.itens = await all(db, `
-      SELECT *, 'tenant:' || ${tenantSecaoItemPk} AS id_item_secao
+      SELECT tenant_composicoes_secao_itens.*, id_item_secao AS _rowid
       FROM tenant_composicoes_secao_itens
       WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
-      ORDER BY ordem, ${tenantSecaoItemPk}`, [secaoRowid]);
+      ORDER BY ordem, id_item_secao`, [secaoRowid]);
+    secao.itens.forEach((item) => {
+      item.id_item_secao = `tenant:${item._rowid || item.id_item_secao}`;
+    });
   }
   return aplicarPrecosResolvidosTenant(db, comp);
 }
