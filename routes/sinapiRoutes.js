@@ -713,7 +713,7 @@ module.exports = function sinapiRoutes(db) {
       try {
         reportProgress(5, 'Preparando', `Preparando importacao SINAPI ${mesRef}.`);
         const adminImport = req.user && req.user.role === 'admin';
-        const hasCatalogComps = await tableC('catalog', 'composicoes');
+        const hasCatalogComps = databaseEngine() === 'mysql' ? true : await tableC('catalog', 'composicoes');
         const useCatalogReferencial = adminImport && hasCatalogComps;
         const refPrefix = useCatalogReferencial ? 'catalog.' : '';
         const dataBaseTable = `${refPrefix}datas_base`;
@@ -734,6 +734,7 @@ module.exports = function sinapiRoutes(db) {
         ).then(r => ({ id_fonte: r.lastID }));
         const idFonte = fonte.id_fonte;
 
+        reportProgress(6, 'Preparando', 'Carregando unidades e insumos SINAPI existentes.');
         const unidades = new Map((await allC(`SELECT sigla,id_unidade FROM ${unidadeTable}`)).map(r => [String(r.sigla || '').toUpperCase(), r.id_unidade]));
         async function getUnidade(sigla) {
           const key = String(sigla || '').trim().toUpperCase().slice(0, 20);
@@ -755,12 +756,17 @@ module.exports = function sinapiRoutes(db) {
           tipo: String(r.tipo_insumo || ''),
           idUnidade: r.id_unidade == null ? null : Number(r.id_unidade),
         }]));
-        const precoRows = await allC(`
-          SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
-                 p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
-          FROM ${precoTable} p
-          JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
-          WHERE p.id_data_base=? AND UPPER(COALESCE(i.origem,''))='SINAPI'`, [idDataBase]);
+        reportProgress(7, 'Preparando', forceReferentialUpdate
+          ? 'Modo sobrescrever ativo; pulando leitura de precos existentes.'
+          : 'Carregando precos SINAPI existentes.');
+        const precoRows = forceReferentialUpdate ? [] : await allC(`
+            SELECT p.id_preco, i.codigo_insumo, p.uf_referencia,
+                   p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia
+            FROM ${precoTable} p
+            JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
+            WHERE p.id_data_base=?
+              AND UPPER(COALESCE(i.origem,''))='SINAPI'
+              AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufWherePlaceholders})`, [idDataBase, ...ufs]);
         const precoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, r.id_preco]));
         const precoInfoMap = new Map(precoRows.map(r => [`${r.codigo_insumo}|${r.uf_referencia}`, {
           desonerado: Number(r.preco_desonerado || 0),
