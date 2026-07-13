@@ -689,6 +689,20 @@ module.exports = function sinapiRoutes(db) {
       const getC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
       const allC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
       const runC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+      const withTimeout = (promise, ms, label) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} excedeu ${Math.round(ms / 1000)}s.`)), ms);
+        promise.then(
+          value => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          err => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        );
+      });
+      const runTimed = (sql, params = [], label = 'Comando SQL', ms = 20000) => withTimeout(runC(sql, params), ms, label);
       const tableC = async (schema, table) => {
         const prefix = schema ? `${schema}.` : '';
         return !!await getC(`SELECT name FROM ${prefix}sqlite_master WHERE type='table' AND name=?`, [table]).catch(() => null);
@@ -908,44 +922,34 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          const precoInsertBatchSize = 10;
-          for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
-            const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
-            const antes = Math.min(offset + 1, inserirPrecos.length);
-            const ate = Math.min(offset + batch.length, inserirPrecos.length);
-            const pctAntes = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * offset / Math.max(1, inserirPrecos.length))) );
-            reportProgress(pctAntes, label, `${label}: gravando precos ${antes}-${ate}/${inserirPrecos.length}.`);
-            const params = [];
-            const values = batch.map(row => {
-              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.preco, row.preco);
-              return '(?,?,?,?,?,?)';
-            }).join(',');
-            await runC(`
+          for (let offset = 0; offset < inserirPrecos.length; offset += 1) {
+            const row = inserirPrecos[offset];
+            if (offset % 10 === 0) {
+              const ate = Math.min(offset + 10, inserirPrecos.length);
+              const pctAntes = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * offset / Math.max(1, inserirPrecos.length))) );
+              reportProgress(pctAntes, label, `${label}: gravando precos ${offset + 1}-${ate}/${inserirPrecos.length} (${row.key}).`);
+            }
+            const r = await runTimed(`
               INSERT INTO ${precoTable}
                 (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia)
-              VALUES ${values}`, params);
-            out.precos_inseridos += batch.length;
-            const idsInsumoBatch = [...new Set(batch.map(row => row.idInsumo))];
-            const ufsBatch = [...new Set(batch.map(row => row.uf))];
-            if (idsInsumoBatch.length && ufsBatch.length) {
-              const idPh = idsInsumoBatch.map(() => '?').join(',');
-              const ufPh = ufsBatch.map(() => '?').join(',');
-              const rows = await allC(`
-                SELECT p.id_preco, i.codigo_insumo, p.uf_referencia
-                FROM ${precoTable} p
-                JOIN ${insumoTable} i ON i.id_insumo=p.id_insumo
-                WHERE p.id_data_base=?
-                  AND p.id_insumo IN (${idPh})
-                  AND p.uf_referencia IN (${ufPh})`, [idDataBase, ...idsInsumoBatch, ...ufsBatch]);
-              rows.forEach((row) => {
-                const key = `${row.codigo_insumo}|${row.uf_referencia}`;
-                precoMap.set(key, row.id_preco);
-                precosCriadosNestaImportacao.add(key);
-              });
+              VALUES (?,?,?,?,?,?)`, [
+              row.idInsumo,
+              idDataBase,
+              idFonte,
+              row.uf,
+              row.preco,
+              row.preco,
+            ], `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+            out.precos_inseridos += 1;
+            if (r.lastID) {
+              precoMap.set(row.key, r.lastID);
+              precosCriadosNestaImportacao.add(row.key);
             }
-            const done = Math.min(offset + batch.length, inserirPrecos.length);
-            const pct = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * done / Math.max(1, inserirPrecos.length))) );
-            reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados.`);
+            if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
+              const done = offset + 1;
+              const pct = progressStart + Math.round(((progressEnd - progressStart) * (0.50 + 0.45 * done / Math.max(1, inserirPrecos.length))) );
+              reportProgress(pct, label, `${label}: ${done}/${inserirPrecos.length} precos novos gravados.`);
+            }
           }
 
           if (atualizarPrecos.length) {
@@ -1145,24 +1149,33 @@ module.exports = function sinapiRoutes(db) {
             }
           }
 
-          const precoInsertBatchSize = 10;
-          for (let offset = 0; offset < inserirPrecos.length; offset += precoInsertBatchSize) {
-            const batch = inserirPrecos.slice(offset, offset + precoInsertBatchSize);
-            const antes = Math.min(offset + 1, inserirPrecos.length);
-            const ate = Math.min(offset + batch.length, inserirPrecos.length);
-            reportProgress(30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)), label, `Gravando precos ${antes}-${ate}/${inserirPrecos.length}.`);
-            const params = [];
-            const values = batch.map(row => {
-              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.precoDes || 0, row.precoNao || 0, row.precoRef || 0);
-              return '(?,?,?,?,?,?,?)';
-            }).join(',');
-            await runC(`
+          for (let offset = 0; offset < inserirPrecos.length; offset += 1) {
+            const row = inserirPrecos[offset];
+            if (offset % 10 === 0) {
+              const ate = Math.min(offset + 10, inserirPrecos.length);
+              reportProgress(
+                30 + Math.round((10 * offset) / Math.max(1, inserirPrecos.length)),
+                label,
+                `Gravando precos ${offset + 1}-${ate}/${inserirPrecos.length} (${row.key}).`,
+              );
+            }
+            await runTimed(`
               INSERT INTO ${precoTable}
                 (id_insumo,id_data_base,id_fonte,uf_referencia,preco_desonerado,preco_nao_desonerado,preco_referencia)
-              VALUES ${values}`, params);
-            out.precos_inseridos += batch.length;
-            const done = Math.min(offset + batch.length, inserirPrecos.length);
-            reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados.`);
+              VALUES (?,?,?,?,?,?,?)`, [
+              row.idInsumo,
+              idDataBase,
+              idFonte,
+              row.uf,
+              row.precoDes || 0,
+              row.precoNao || 0,
+              row.precoRef || 0,
+            ], `Gravacao do preco SINAPI ${offset + 1}/${inserirPrecos.length} (${row.key})`);
+            out.precos_inseridos += 1;
+            if ((offset + 1) % 10 === 0 || offset + 1 === inserirPrecos.length) {
+              const done = offset + 1;
+              reportProgress(30 + Math.round((10 * done) / Math.max(1, inserirPrecos.length)), label, `${done}/${inserirPrecos.length} precos novos gravados.`);
+            }
           }
 
           if (atualizarPrecos.length) {
