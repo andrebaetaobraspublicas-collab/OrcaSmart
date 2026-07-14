@@ -10,6 +10,18 @@ function configValue(name, fallback = '') {
   return String(process.env[name] || fallback).trim();
 }
 
+function anthropicModel() {
+  const raw = configValue('ANTHROPIC_MODEL', 'claude-sonnet-4-6').toLowerCase();
+  const aliases = {
+    'claude-3-5-sonnet-20241022': 'claude-sonnet-4-6',
+    'claude-3-5-sonnet-20240620': 'claude-sonnet-4-6',
+    'claude-3-7-sonnet-20250219': 'claude-sonnet-4-6',
+    'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
+    'claude-opus-4-20250514': 'claude-opus-4-8',
+  };
+  return aliases[raw] || raw;
+}
+
 function toNum(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
   const clean = String(value).replace('R$', '').replace('%', '').trim();
@@ -238,7 +250,7 @@ async function callOpenAIMarketResearch(termo, tipo, uf, mes, ano) {
 async function callAnthropicMarketResearch(termo, tipo, uf, mes, ano) {
   const apiKey = configValue('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente do servidor.');
-  const model = configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').toLowerCase();
+  const model = anthropicModel();
   const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {

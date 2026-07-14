@@ -55,6 +55,18 @@ function configValue(name, fallback = '') {
   return String(process.env[name] || fallback || '').trim();
 }
 
+function anthropicModel() {
+  const raw = configValue('ANTHROPIC_MODEL', 'claude-sonnet-4-6').toLowerCase();
+  const aliases = {
+    'claude-3-5-sonnet-20241022': 'claude-sonnet-4-6',
+    'claude-3-5-sonnet-20240620': 'claude-sonnet-4-6',
+    'claude-3-7-sonnet-20250219': 'claude-sonnet-4-6',
+    'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
+    'claude-opus-4-20250514': 'claude-opus-4-8',
+  };
+  return aliases[raw] || raw;
+}
+
 function fetchWithTimeout(url, options = {}, timeoutMs = 180000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -84,7 +96,7 @@ async function callClaude(messages, maxTokens = 8000) {
   if (!apiKey) {
     throw httpError(500, 'ANTHROPIC_API_KEY nao configurada no ambiente do servidor. Configure a variavel no Hostinger para importar PDF/arquivos via IA.');
   }
-  const model = configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').toLowerCase();
+  const model = anthropicModel();
   const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
