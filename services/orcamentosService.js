@@ -562,6 +562,191 @@ function parseExcelRows(buffer) {
   }).filter(Boolean);
 }
 
+function normalizeUnit(value = '') {
+  const raw = String(value || '').trim().toUpperCase();
+  const map = {
+    'M2': 'm2',
+    'M3': 'm3',
+    'MÊS': 'mes',
+    'MES': 'mes',
+    'UN': 'un',
+    'KG': 'kg',
+    'PÇ': 'pc',
+    'PC': 'pc',
+    'M': 'm',
+    'H': 'h',
+    'L': 'l',
+    'TXKM': 'txkm',
+    'VB': 'vb',
+    'CJ': 'cj',
+    'PT': 'pt',
+    'PONTO': 'ponto',
+  };
+  return map[raw] || raw.toLowerCase();
+}
+
+function inferFonteFromCodigo(codigo = '') {
+  const raw = String(codigo || '').trim().toUpperCase();
+  if (!raw) return '';
+  if (raw.startsWith('COMP.')) return 'COMP';
+  if (raw.startsWith('MERC.')) return 'MERCADO';
+  if (raw.startsWith('SEINFRA')) return 'SEINFRA';
+  if (/^\d{4,7}(?:\/\d+)?$/.test(raw)) return 'SINAPI';
+  return '';
+}
+
+function sourceCodePattern() {
+  return '(?:COMP\\.\\s*[A-Z0-9./-]+|MERC\\.\\s*[A-Z0-9./-]+|TCPO\\s*[A-Z0-9./-]+|SEINFRA\\s*[A-Z0-9./-]+|[A-Z]?\\d[\\d./-]*)';
+}
+
+function addPdfSections(rows, seenSections, text = '') {
+  const sectionRegex = new RegExp(`\\b(\\d{1,2})\\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9 ,;:()/"'\\-.]{4,}?)\\s+(?:\\d{1,3}(?:\\.\\d{3})*,\\d{2}\\s+){3,}\\d{1,3}(?:\\.\\d{3})*,\\d{2}\\s+\\d{1,3},\\d{2}%`, 'g');
+  const subsectionRegex = new RegExp(`\\b(\\d{1,2}\\.\\d+(?:\\.\\d+)?)\\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9 ,;:()/"'\\-.]{4,}?)(?=\\s+${sourceCodePattern()}\\s+\\d{1,2}(?:\\.\\d+)+\\s+)`, 'g');
+
+  for (const regex of [sectionRegex, subsectionRegex]) {
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const itemNum = String(match[1] || '').trim();
+      let descricao = String(match[2] || '').replace(/\s+/g, ' ').trim();
+      descricao = descricao.replace(/\s+COLETIVA$/, ' COLETIVA');
+      if (!itemNum || !descricao || descricao.length < 4) continue;
+      if (/^(BDI|TOTAL|ITEM|REF|QUANT|PRECO|CUSTO|MATERIAL)/i.test(descricao)) continue;
+      const key = `${itemNum}|${descricao}`.toUpperCase();
+      if (seenSections.has(key)) continue;
+      seenSections.add(key);
+      rows.push({
+        item_num: itemNum,
+        tipo_linha: 'section',
+        codigo: '',
+        fonte: '',
+        descricao,
+        unidade: '',
+        quantidade: 0,
+        custo_unitario: 0,
+      });
+    }
+  }
+}
+
+function parsePdfItemSegment(segment = '') {
+  const header = segment.match(new RegExp(`^\\s*(${sourceCodePattern()})\\s+(\\d{1,2}(?:\\.\\d+)+)\\s+`));
+  if (!header) return null;
+  const codigo = String(header[1] || '').replace(/\s+/g, ' ').trim();
+  const itemNum = String(header[2] || '').trim();
+  const body = segment.slice(header[0].length).replace(/\s+/g, ' ').trim();
+  const unitRegex = /\s(UN|M2|M3|MÊS|MES|M|KG|PÇ|PC|TXKM|H|L|VB|CJ|PT|PONTO)\s+(-?\d{1,3}(?:\.\d{3})*,\d{1,5}|-?\d+,\d{1,5})/gi;
+  let candidate = null;
+  let match;
+  while ((match = unitRegex.exec(` ${body}`)) !== null) {
+    const after = body.slice(Math.max(0, match.index + match[0].length - 1));
+    const numbers = (after.match(/-?\d{1,3}(?:\.\d{3})*,\d{2,5}|-?\d+,\d{2,5}/g) || []).slice(0, 11);
+    if (numbers.length >= 5) {
+      candidate = {
+        index: Math.max(0, match.index - 1),
+        unidade: match[1],
+        quantidade: match[2],
+        numbers,
+      };
+    }
+  }
+  if (!candidate) return null;
+  const descricao = body.slice(0, candidate.index).replace(/\s+/g, ' ').trim();
+  if (!descricao || descricao.length < 3) return null;
+  const nums = candidate.numbers;
+  const quantidade = repo.toNum(candidate.quantidade, 0);
+  const totalLinha = repo.toNum(nums[nums.length - 1], 0);
+  const custoUnitario = quantidade ? totalLinha / quantidade : repo.toNum(nums[nums.length - 3] || nums[1], 0);
+  return {
+    item_num: itemNum,
+    tipo_linha: 'item',
+    codigo,
+    fonte: inferFonteFromCodigo(codigo),
+    descricao,
+    unidade: normalizeUnit(candidate.unidade),
+    quantidade,
+    custo_unitario: Number((custoUnitario || 0).toFixed(6)),
+  };
+}
+
+function parseSyntheticBudgetFromPdfPages(pages = []) {
+  const selected = [];
+  let insideBudget = false;
+  for (const page of pages) {
+    const text = String(page.text || '').replace(/\s+/g, ' ').trim();
+    const normalized = normalizeHeader(text);
+    const isCronograma = normalized.includes('cronograma fisico');
+    const isResumo = normalized.includes('resumo geral do orcamento');
+    const isAnalitica = normalized.includes('composicoes de precos unitarios')
+      || (normalized.includes('servico') && normalized.includes('referencia descricao servico material') && !normalized.includes('descricao dos servicos'));
+    const looksBudget = normalized.includes('bdi material') || normalized.includes('descricao dos servicos') || normalized.includes('preco unitario c bdi');
+    if (isAnalitica && !looksBudget && insideBudget) break;
+    if (!isCronograma && !isResumo && !isAnalitica && looksBudget) insideBudget = true;
+    if (insideBudget && (looksBudget || !isAnalitica)) selected.push({ ...page, text });
+  }
+
+  const rows = [];
+  const seenSections = new Set();
+  const seenItems = new Set();
+  const itemStart = new RegExp(`\\b${sourceCodePattern()}\\s+\\d{1,2}(?:\\.\\d+)+\\s+`, 'g');
+
+  for (const page of selected) {
+    const text = page.text;
+    const starts = [];
+    let match;
+    while ((match = itemStart.exec(text)) !== null) {
+      starts.push(match.index);
+    }
+    if (!starts.length) {
+      addPdfSections(rows, seenSections, text);
+      continue;
+    }
+    addPdfSections(rows, seenSections, text.slice(0, starts[0]));
+    for (let i = 0; i < starts.length; i += 1) {
+      const start = starts[i];
+      const end = starts[i + 1] || text.length;
+      const segment = text.slice(start, end);
+      const parsed = parsePdfItemSegment(segment);
+      if (parsed) {
+        const key = `${parsed.item_num}|${parsed.codigo}|${parsed.descricao}`.toUpperCase();
+        if (!seenItems.has(key)) {
+          seenItems.add(key);
+          rows.push(parsed);
+        }
+      }
+      if (i < starts.length - 1) {
+        addPdfSections(rows, seenSections, text.slice(start, starts[i + 1]));
+      }
+    }
+  }
+
+  return { rows, pages: selected.map(page => page.page) };
+}
+
+async function extractPdfTextPages(buffer) {
+  let PDFParse;
+  try {
+    ({ PDFParse } = require('pdf-parse'));
+  } catch (err) {
+    throw httpError(500, `Leitor de PDF nao instalado no backend: ${err.message}`);
+  }
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const info = await parser.getInfo({ parsePageInfo: false });
+    const total = Number(info.total || info.numpages || 0);
+    const pages = [];
+    for (let page = 1; page <= total; page += 1) {
+      const result = await parser.getText({ partial: [page] });
+      pages.push({
+        page,
+        text: String(result.text || '').replace(/\s+/g, ' ').trim(),
+      });
+    }
+    return pages;
+  } finally {
+    await parser.destroy().catch(() => {});
+  }
+}
+
 async function importarSinteticoExcel(db, idOrcamento, body, contentType) {
   let uploadData;
   try {
@@ -637,6 +822,24 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
   }
 
   if (ext === 'pdf') {
+    let localParsed = null;
+    try {
+      const pages = await extractPdfTextPages(file.buffer);
+      localParsed = parseSyntheticBudgetFromPdfPages(pages);
+    } catch (err) {
+      localParsed = { rows: [], pages: [], error: err.message };
+    }
+
+    if ((localParsed?.rows || []).filter(row => row.tipo_linha === 'item').length >= 3) {
+      const result = await repo.importarSinteticoRows(db, idOrcamento, localParsed.rows, modo, filename);
+      return {
+        ...result,
+        titulo_detectado: filename,
+        extracao: `PDF pesquisavel importado pelo parser direto do backend Node. Paginas usadas: ${(localParsed.pages || []).join(', ')}.`,
+        observacoes_ia: 'A IA nao foi necessaria: cronograma, resumo, composicoes analiticas e cotacoes foram ignorados antes da importacao.',
+      };
+    }
+
     const aiText = await callClaude([{
       role: 'user',
       content: [
