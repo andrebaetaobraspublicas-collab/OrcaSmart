@@ -380,6 +380,12 @@ function codigoBusca(codigo) {
   return [...new Set([raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`])];
 }
 
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 function precoPorRegime(row, regime) {
   if (!row) return null;
   if (regime === 'desonerado') {
@@ -483,6 +489,35 @@ function chaveComposicaoReferencia(codigo, uf, mesRef) {
     String(uf || '').trim().toUpperCase(),
     String(mesRef || '').trim(),
   ].join('|');
+}
+
+function chaveComposicaoMes(codigo, mesRef) {
+  return [
+    String(codigo || '').trim(),
+    String(mesRef || '').trim(),
+  ].join('|');
+}
+
+async function carregarItensComposicoesParaRecalculo(db, itemTable, itemPk, isTenant, comps) {
+  const ids = (comps || []).map(comp => comp.id).filter(id => id !== null && id !== undefined && id !== '');
+  const itensPorComp = new Map();
+  if (!ids.length) return itensPorComp;
+
+  for (const chunk of chunkArray(ids, 500)) {
+    const marks = chunk.map(() => '?').join(',');
+    const rows = await all(db, `
+      SELECT ${isTenant ? `${itemPk} AS _rowid, ${itemTable}.*` : '*'}
+      FROM ${itemTable}
+      WHERE id_composicao IN (${marks})
+      ORDER BY id_composicao, ordem${isTenant ? `, ${itemPk}` : ''}`, chunk).catch(() => []);
+    for (const row of rows) {
+      const key = String(row.id_composicao);
+      if (!itensPorComp.has(key)) itensPorComp.set(key, []);
+      itensPorComp.get(key).push(row);
+    }
+  }
+
+  return itensPorComp;
 }
 
 async function materializarComposicoesReferencia(db, source, filters = {}) {
@@ -633,21 +668,23 @@ async function recalcularFonte(db, source, filters = {}) {
     chaveComposicaoReferencia(comp.codigo, comp.uf_referencia, comp.mes_referencia),
     toNum(comp.custo_unitario, 0),
   ]));
+  const custoPorCodigoMes = new Map();
+  for (const comp of comps) {
+    const custo = toNum(comp.custo_unitario, 0);
+    if (custo > 0) custoPorCodigoMes.set(chaveComposicaoMes(comp.codigo, comp.mes_referencia), custo);
+  }
   const compPorId = new Map(comps.map(comp => [String(comp.id), comp]));
   const atualizadasIds = new Set();
   let semPreco = 0;
   const regime = filters.regime || 'nao_desonerado';
   const precoCache = await carregarCachePrecosInsumos(db, source, filters, regime);
+  const itensPorComp = await carregarItensComposicoesParaRecalculo(db, itemTable, itemPk, isTenant, comps);
 
   for (let pass = 0; pass < Math.max(3, Math.min(12, comps.length)); pass += 1) {
     let mudouNaPassada = false;
     semPreco = 0;
     for (const comp of comps) {
-      const itens = await all(db, `
-        SELECT ${isTenant ? `${itemPk} AS _rowid, ${itemTable}.*` : '*'}
-        FROM ${itemTable}
-        WHERE id_composicao = ?
-        ORDER BY ordem${isTenant ? `, ${itemPk}` : ''}`, [comp.id]);
+      const itens = itensPorComp.get(String(comp.id)) || [];
       let total = 0;
       let calculou = false;
       let faltouPreco = false;
@@ -659,9 +696,10 @@ async function recalcularFonte(db, source, filters = {}) {
           preco = custoPorCodigo.get(key);
           if (!preco) {
             const variantes = codigoVariantes(item.codigo_item);
-            const fallback = [...custoPorCodigo.entries()]
-              .find(([k, value]) => value > 0 && variantes.includes(k.split('|')[0]) && k.endsWith(`|${comp.mes_referencia}`));
-            preco = fallback ? fallback[1] : null;
+            for (const variante of variantes) {
+              preco = custoPorCodigoMes.get(chaveComposicaoMes(variante, comp.mes_referencia));
+              if (preco) break;
+            }
           }
         } else {
           const cacheKey = [
@@ -694,6 +732,7 @@ async function recalcularFonte(db, source, filters = {}) {
       if (Math.abs(toNum(custoPorCodigo.get(key), 0) - custo) > 0.0001) {
         await run(db, `UPDATE ${table} SET custo_unitario = ? WHERE ${idCol} = ?`, [custo, comp.id]);
         custoPorCodigo.set(key, custo);
+        custoPorCodigoMes.set(chaveComposicaoMes(comp.codigo, comp.mes_referencia), custo);
         const ref = compPorId.get(String(comp.id));
         if (ref) ref.custo_unitario = custo;
         atualizadasIds.add(String(comp.id));
