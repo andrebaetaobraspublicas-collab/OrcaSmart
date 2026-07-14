@@ -723,28 +723,55 @@ function parseSyntheticBudgetFromPdfPages(pages = []) {
 }
 
 async function extractPdfTextPages(buffer) {
-  let PDFParse;
+  let pdfParse;
   try {
-    ({ PDFParse } = require('pdf-parse'));
+    pdfParse = require('pdf-parse');
   } catch (err) {
     throw httpError(500, `Leitor de PDF nao instalado no backend: ${err.message}`);
   }
-  const parser = new PDFParse({ data: buffer });
-  try {
-    const info = await parser.getInfo({ parsePageInfo: false });
-    const total = Number(info.total || info.numpages || 0);
+
+  if (typeof pdfParse === 'function') {
     const pages = [];
-    for (let page = 1; page <= total; page += 1) {
-      const result = await parser.getText({ partial: [page] });
+    const result = await pdfParse(buffer, {
+      pagerender: async (pageData) => {
+        const content = await pageData.getTextContent();
+        const text = (content.items || []).map(item => item.str || '').join(' ');
+        pages.push({
+          page: pages.length + 1,
+          text: String(text || '').replace(/\s+/g, ' ').trim(),
+        });
+        return '';
+      },
+    });
+    if (!pages.length && result?.text) {
       pages.push({
-        page,
+        page: 1,
         text: String(result.text || '').replace(/\s+/g, ' ').trim(),
       });
     }
     return pages;
-  } finally {
-    await parser.destroy().catch(() => {});
   }
+
+  if (pdfParse?.PDFParse) {
+    const parser = new pdfParse.PDFParse({ data: buffer });
+    try {
+      const info = await parser.getInfo({ parsePageInfo: false });
+      const total = Number(info.total || info.numpages || 0);
+      const pages = [];
+      for (let page = 1; page <= total; page += 1) {
+        const result = await parser.getText({ partial: [page] });
+        pages.push({
+          page,
+          text: String(result.text || '').replace(/\s+/g, ' ').trim(),
+        });
+      }
+      return pages;
+    } finally {
+      await parser.destroy().catch(() => {});
+    }
+  }
+
+  throw httpError(500, 'Leitor de PDF instalado em formato nao reconhecido.');
 }
 
 async function importarSinteticoExcel(db, idOrcamento, body, contentType) {
