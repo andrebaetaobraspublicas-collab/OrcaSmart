@@ -91,33 +91,43 @@ function cleanJson(text = '') {
   }
 }
 
-async function callClaude(messages, maxTokens = 8000) {
-  const apiKey = configValue('ANTHROPIC_API_KEY');
-  if (!apiKey) {
-    throw httpError(500, 'ANTHROPIC_API_KEY nao configurada no ambiente do servidor. Configure a variavel no Hostinger para importar PDF/arquivos via IA.');
+async function callClaude(messages, maxTokens = 8000, requestApiKey = '') {
+  const envApiKey = configValue('ANTHROPIC_API_KEY');
+  const userApiKey = String(requestApiKey || '').trim();
+  const apiKeys = [envApiKey, userApiKey].filter((key, idx, arr) => key && arr.indexOf(key) === idx);
+  if (!apiKeys.length) {
+    throw httpError(500, 'ANTHROPIC_API_KEY nao configurada no ambiente do servidor. Configure a variavel no Hostinger ou informe uma chave Anthropic temporaria nesta importacao.');
   }
   const model = anthropicModel();
-  const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages,
-    }),
-  }, 180000);
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const detail = data?.error?.message || JSON.stringify(data).slice(0, 300);
-    throw httpError(resp.status, `Erro na API Anthropic: ${detail}`);
+  let lastError = null;
+  for (const apiKey of apiKeys) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          messages,
+        }),
+      }, 180000);
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        const text = (data.content || []).find(block => block.type === 'text')?.text || '';
+        if (!text) throw httpError(502, 'A API Anthropic respondeu sem texto.');
+        return text;
+      }
+      const detail = data?.error?.message || JSON.stringify(data).slice(0, 300);
+      lastError = httpError(resp.status, `Erro na API Anthropic: ${detail}`);
+      if (![401, 403, 429, 500, 502, 503, 504].includes(resp.status)) throw lastError;
+      await new Promise(resolve => setTimeout(resolve, 750 * attempt));
+    }
   }
-  const text = (data.content || []).find(block => block.type === 'text')?.text || '';
-  if (!text) throw httpError(502, 'A API Anthropic respondeu sem texto.');
-  return text;
+  throw lastError || httpError(502, 'Falha ao chamar a API Anthropic.');
 }
 
 function normalizeAiRows(data = {}) {
@@ -584,6 +594,7 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
   }
 
   const modo = String(uploadData.fields?.modo_merge || 'substituir');
+  const requestApiKey = String(uploadData.fields?.anthropic_api_key || '').trim();
   const file = uploadData.file;
   if (!file?.buffer) throw httpError(400, 'Nenhum arquivo enviado. Envie PDF, Excel ou CSV.');
 
@@ -612,7 +623,7 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
     const aiText = await callClaude([{
       role: 'user',
       content: PROMPT_IMPORTAR_SINTETICO.replace('{{conteudo}}', conteudo),
-    }], 8000);
+    }], 8000, requestApiKey);
     const estrutura = cleanJson(aiText);
     const rows = normalizeAiRows(estrutura).filter(row => String(row.descricao || '').trim());
     if (!rows.length) throw httpError(422, 'A IA nao conseguiu identificar linhas de orcamento no arquivo.');
@@ -642,7 +653,7 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
           text: PROMPT_IMPORTAR_SINTETICO.replace('{{conteudo}}', 'Interprete o PDF anexado e extraia o orcamento sintetico completo.'),
         },
       ],
-    }], 12000);
+    }], 12000, requestApiKey);
     const estrutura = cleanJson(aiText);
     const rows = normalizeAiRows(estrutura).filter(row => String(row.descricao || '').trim());
     if (!rows.length) throw httpError(422, 'A IA nao conseguiu identificar linhas de orcamento no PDF.');

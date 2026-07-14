@@ -2126,6 +2126,22 @@ Router.register('orcamento-sintetico', async () => {
           </select>
         </div>
 
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label">Chave Anthropic opcional</label>
+          <input type="password" id="importAnthropicKey" class="form-control" placeholder="sk-ant-...">
+          <div class="text-xs text-3" style="margin-top:6px;line-height:1.45">
+            O sistema tenta primeiro usar a chave cadastrada no servidor Hostinger.
+            Preencha este campo somente se quiser usar uma chave propria nesta importacao.
+            A chave nao sera salva no sistema.
+            Para obter uma chave, acesse
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">
+              console.anthropic.com/settings/keys
+            </a>,
+            crie uma conta ou entre com sua conta Anthropic, ative billing/creditos se solicitado,
+            clique em criar chave de API e copie o valor que comeca por <code>sk-ant-</code>.
+          </div>
+        </div>
+
         <div id="importProgresso" style="display:none;margin-top:12px">
           <div style="background:#f1f5f9;border-radius:var(--radius);padding:16px;text-align:center">
             <div class="spinner" style="margin:0 auto 10px"></div>
@@ -2155,6 +2171,7 @@ Router.register('orcamento-sintetico', async () => {
   async function executarImportar() {
     const fileInput  = document.getElementById('importArquivo');
     const modoInput  = document.getElementById('importModo');
+    const keyInput   = document.getElementById('importAnthropicKey');
     const progDiv    = document.getElementById('importProgresso');
     const progTexto  = document.getElementById('importProgressoTexto');
     const resultDiv  = document.getElementById('importResultado');
@@ -2201,6 +2218,8 @@ Router.register('orcamento-sintetico', async () => {
       const fd = new FormData();
       fd.append('arquivo', arquivo);
       fd.append('modo_merge', modo);
+      const chaveAnthropic = String(keyInput?.value || '').trim();
+      if (chaveAnthropic) fd.append('anthropic_api_key', chaveAnthropic);
 
       const res = await API.osSint.importar(id_orc, fd);
 
