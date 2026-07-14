@@ -727,7 +727,14 @@ async function extractPdfTextPages(buffer) {
   try {
     pdfParse = require('pdf-parse');
   } catch (err) {
-    throw httpError(500, `Leitor de PDF nao instalado no backend: ${err.message}`);
+    try {
+      pdfParse = require('../embedded/pdf-parse');
+    } catch (fallbackErr) {
+      throw httpError(
+        500,
+        `Leitor de PDF nao instalado no backend: ${err.message}. Fallback embutido indisponivel: ${fallbackErr.message}`,
+      );
+    }
   }
 
   if (typeof pdfParse === 'function') {
