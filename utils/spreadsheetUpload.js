@@ -82,7 +82,7 @@ function parseXlsxBuffer(buffer) {
   const sst = sharedStrings(files);
   const rows = [];
   const rowRe = /<row[^>]*>([\s\S]*?)<\/row>/g;
-  const cellRe = /<c([^>]*)>([\s\S]*?)<\/c>/g;
+  const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
   let rowMatch;
   while ((rowMatch = rowRe.exec(sheet))) {
     const row = [];
