@@ -113,5 +113,9 @@ module.exports = function(db) {
     res.json(await orcamentosService.importarSinteticoExcel(db, req.params.id, req.body, req.headers['content-type']));
   }));
 
+  router.post('/:id/importar-sintetico', express.raw({ type: () => true, limit: '60mb' }), asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.importarSinteticoIA(db, req.params.id, req.body, req.headers['content-type']));
+  }));
+
   return router;
 };

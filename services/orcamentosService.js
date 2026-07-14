@@ -1,10 +1,154 @@
 const repo = require('../repositories/orcamentosRepository');
 const { parseMultipart, parseXlsxBuffer } = require('../utils/spreadsheetUpload');
 
+const PROMPT_IMPORTAR_SINTETICO = `Voce e engenheiro orcamentista senior especializado em obras de construcao civil brasileiras.
+
+Recebera o conteudo textual de um orcamento sintetico extraido de PDF, CSV ou texto.
+Interprete esse conteudo e responda SOMENTE com JSON puro, sem markdown.
+
+Regras obrigatorias:
+1. Preserve as descricoes originais dos servicos.
+2. Identifique secoes/grupos de servicos como tipo_linha="section".
+3. Identifique linhas de servico como tipo_linha="item".
+4. Preserve codigos SINAPI, SICRO, SEINFRA ou outros quando existirem.
+5. Se quantidade ou custo_unitario nao estiver disponivel, use 0.
+6. Normalize unidades usuais: M2 para m2, M3 para m3, KG para kg, UN para un.
+
+Formato:
+{
+  "titulo": "Nome do orcamento ou null",
+  "observacoes": "Notas curtas",
+  "linhas": [
+    {
+      "item_num": "1",
+      "tipo_linha": "section",
+      "codigo": "",
+      "fonte": "",
+      "descricao": "SERVICOS PRELIMINARES",
+      "unidade": "",
+      "quantidade": 0,
+      "custo_unitario": 0
+    },
+    {
+      "item_num": "1.1",
+      "tipo_linha": "item",
+      "codigo": "103689",
+      "fonte": "SINAPI",
+      "descricao": "FORNECIMENTO E INSTALACAO DE PLACA DE OBRA...",
+      "unidade": "m2",
+      "quantidade": 2.88,
+      "custo_unitario": 462.36
+    }
+  ]
+}
+
+Conteudo:
+{{conteudo}}`;
+
 function httpError(status, message) {
   const err = new Error(message);
   err.status = status;
   return err;
+}
+
+function configValue(name, fallback = '') {
+  return String(process.env[name] || fallback || '').trim();
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 180000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+function cleanJson(text = '') {
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error('A IA retornou resposta vazia.');
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  let body = fenced ? fenced[1].trim() : raw;
+  if (!body.startsWith('{')) {
+    const objectMatch = body.match(/\{[\s\S]*\}/);
+    if (objectMatch) body = objectMatch[0];
+  }
+  try {
+    return JSON.parse(body);
+  } catch (_) {
+    const withoutTrailingCommas = body.replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(withoutTrailingCommas);
+  }
+}
+
+async function callClaude(messages, maxTokens = 8000) {
+  const apiKey = configValue('ANTHROPIC_API_KEY');
+  if (!apiKey) {
+    throw httpError(500, 'ANTHROPIC_API_KEY nao configurada no ambiente do servidor. Configure a variavel no Hostinger para importar PDF/arquivos via IA.');
+  }
+  const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022'),
+      max_tokens: maxTokens,
+      messages,
+    }),
+  }, 180000);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const detail = data?.error?.message || JSON.stringify(data).slice(0, 300);
+    throw httpError(resp.status, `Erro na API Anthropic: ${detail}`);
+  }
+  const text = (data.content || []).find(block => block.type === 'text')?.text || '';
+  if (!text) throw httpError(502, 'A API Anthropic respondeu sem texto.');
+  return text;
+}
+
+function normalizeAiRows(data = {}) {
+  if (Array.isArray(data.linhas)) return data.linhas;
+  const rows = [];
+  for (const sec of data.secoes || []) {
+    rows.push({
+      item_num: '',
+      tipo_linha: 'section',
+      descricao: sec.descricao || 'SECAO',
+      codigo: '',
+      fonte: '',
+      unidade: '',
+      quantidade: 0,
+      custo_unitario: 0,
+    });
+    for (const sub of sec.subsecoes || []) {
+      if (sub.descricao) {
+        rows.push({
+          item_num: '',
+          tipo_linha: 'section',
+          descricao: sub.descricao,
+          codigo: '',
+          fonte: '',
+          unidade: '',
+          quantidade: 0,
+          custo_unitario: 0,
+        });
+      }
+      for (const item of sub.itens || []) {
+        rows.push({
+          item_num: '',
+          tipo_linha: 'item',
+          codigo: item.codigo || '',
+          fonte: item.fonte || '',
+          descricao: item.descricao || '',
+          unidade: item.unidade || '',
+          quantidade: item.quantidade || 0,
+          custo_unitario: item.custo_unitario || 0,
+        });
+      }
+    }
+  }
+  return rows;
 }
 
 function validateCreate(data = {}) {
@@ -415,6 +559,92 @@ async function importarSinteticoExcel(db, idOrcamento, body, contentType) {
   return repo.importarSinteticoRows(db, idOrcamento, parsed, modo, file.originalname);
 }
 
+async function importarSinteticoIA(db, idOrcamento, body, contentType) {
+  const orcamento = await repo.getOrcamento(db, idOrcamento);
+  if (!orcamento) throw httpError(404, 'Orcamento nao encontrado.');
+
+  let uploadData;
+  try {
+    uploadData = parseMultipart(body, contentType);
+  } catch (err) {
+    throw httpError(400, err.message);
+  }
+
+  const modo = String(uploadData.fields?.modo_merge || 'substituir');
+  const file = uploadData.file;
+  if (!file?.buffer) throw httpError(400, 'Nenhum arquivo enviado. Envie PDF, Excel ou CSV.');
+
+  const filename = String(file.originalname || '').trim();
+  const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+
+  if (['xlsx', 'xlsm', 'xls'].includes(ext)) {
+    let parsed;
+    try {
+      parsed = parseExcelRows(file.buffer);
+    } catch (err) {
+      throw httpError(400, `Falha ao ler a planilha: ${err.message}`);
+    }
+    if (!parsed.length) throw httpError(400, 'Nenhuma linha de orcamento foi identificada na planilha.');
+    const result = await repo.importarSinteticoRows(db, idOrcamento, parsed, modo, filename);
+    return {
+      ...result,
+      extracao: 'Planilha importada pelo parser direto do backend Node. A IA nao foi necessaria para este arquivo.',
+      observacoes_ia: '',
+    };
+  }
+
+  if (['csv', 'txt'].includes(ext)) {
+    const conteudo = file.buffer.toString('utf8').replace(/\0/g, '').slice(0, 60000);
+    if (!conteudo.trim()) throw httpError(400, 'O arquivo parece vazio.');
+    const aiText = await callClaude([{
+      role: 'user',
+      content: PROMPT_IMPORTAR_SINTETICO.replace('{{conteudo}}', conteudo),
+    }], 8000);
+    const estrutura = cleanJson(aiText);
+    const rows = normalizeAiRows(estrutura).filter(row => String(row.descricao || '').trim());
+    if (!rows.length) throw httpError(422, 'A IA nao conseguiu identificar linhas de orcamento no arquivo.');
+    const result = await repo.importarSinteticoRows(db, idOrcamento, rows, modo, filename);
+    return {
+      ...result,
+      titulo_detectado: estrutura.titulo || filename,
+      extracao: 'Arquivo de texto/CSV interpretado via IA.',
+      observacoes_ia: estrutura.observacoes || '',
+    };
+  }
+
+  if (ext === 'pdf') {
+    const aiText = await callClaude([{
+      role: 'user',
+      content: [
+        {
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: file.buffer.toString('base64'),
+          },
+        },
+        {
+          type: 'text',
+          text: PROMPT_IMPORTAR_SINTETICO.replace('{{conteudo}}', 'Interprete o PDF anexado e extraia o orcamento sintetico completo.'),
+        },
+      ],
+    }], 12000);
+    const estrutura = cleanJson(aiText);
+    const rows = normalizeAiRows(estrutura).filter(row => String(row.descricao || '').trim());
+    if (!rows.length) throw httpError(422, 'A IA nao conseguiu identificar linhas de orcamento no PDF.');
+    const result = await repo.importarSinteticoRows(db, idOrcamento, rows, modo, filename);
+    return {
+      ...result,
+      titulo_detectado: estrutura.titulo || filename,
+      extracao: 'PDF interpretado via IA Anthropic.',
+      observacoes_ia: estrutura.observacoes || '',
+    };
+  }
+
+  throw httpError(400, `Formato nao suportado: ${ext || 'sem extensao'}. Use PDF, Excel, CSV ou TXT.`);
+}
+
 module.exports = {
   listOrcamentos: repo.listOrcamentos,
   getOrcamento,
@@ -432,6 +662,7 @@ module.exports = {
   restoreSintetico,
   recalcularCustos: repo.recalcularCustos,
   vincularComposicoesAutomaticamente: repo.vincularComposicoesAutomaticamente,
+  importarSinteticoIA,
   importarSinteticoExcel,
   exportarOrcamentoExcel,
   exportarOrcamentoPdf,
