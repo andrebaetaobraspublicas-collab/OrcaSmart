@@ -338,10 +338,10 @@ Router.register('orcamento-sintetico', async () => {
                 ⬇ Exportar ▾
               </button>
               <div id="exportarMenuOS" style="
-                display:none;position:absolute;right:0;top:calc(100% + 4px);
+                display:none;position:fixed;right:auto;top:auto;
                 background:var(--c-surface);border:1px solid var(--c-border);
                 border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.12);
-                z-index:50;min-width:180px;padding:4px 0;white-space:nowrap">
+                z-index:10020;min-width:180px;max-width:calc(100vw - 24px);padding:4px 0;white-space:nowrap">
                 <a id="menuExcelOS" href="#"
                    style="display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:.82rem;text-decoration:none;color:var(--c-text)">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="#15803d" stroke-width="1.8"/><path d="M8 8l4 4 4-4M8 16l4-4 4 4" stroke="#15803d" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -737,21 +737,47 @@ Router.register('orcamento-sintetico', async () => {
     const btnExp  = document.getElementById('btnExportarOS');
     const menuExp = document.getElementById('exportarMenuOS');
     if (btnExp && menuExp) {
+      const fecharMenuExportar = () => { menuExp.style.display = 'none'; };
+      const posicionarMenuExportar = () => {
+        const rect = btnExp.getBoundingClientRect();
+        menuExp.style.display = 'block';
+        const largura = Math.max(180, menuExp.offsetWidth || 180);
+        const altura = menuExp.offsetHeight || 96;
+        const margem = 12;
+        const left = Math.max(margem, Math.min(rect.right - largura, window.innerWidth - largura - margem));
+        const topAbaixo = rect.bottom + 6;
+        const topAcima = rect.top - altura - 6;
+        const top = topAbaixo + altura + margem <= window.innerHeight ? topAbaixo : Math.max(margem, topAcima);
+        menuExp.style.left = `${left}px`;
+        menuExp.style.top = `${top}px`;
+      };
+
       btnExp.addEventListener('click', (e) => {
         e.stopPropagation();
         const open = menuExp.style.display !== 'none';
-        menuExp.style.display = open ? 'none' : 'block';
+        if (open) {
+          fecharMenuExportar();
+        } else {
+          posicionarMenuExportar();
+        }
       });
-      document.addEventListener('click', () => { if (menuExp) menuExp.style.display = 'none'; });
+      menuExp.addEventListener('click', (e) => e.stopPropagation());
+      document.addEventListener('click', fecharMenuExportar);
+      window.addEventListener('resize', () => {
+        if (menuExp.style.display !== 'none') posicionarMenuExportar();
+      });
+      window.addEventListener('scroll', () => {
+        if (menuExp.style.display !== 'none') posicionarMenuExportar();
+      }, true);
 
       document.getElementById('menuExcelOS')?.addEventListener('click', (e) => {
         e.preventDefault();
-        menuExp.style.display = 'none';
+        fecharMenuExportar();
         iniciarExportacao('excel');
       });
       document.getElementById('menuPdfOS')?.addEventListener('click', (e) => {
         e.preventDefault();
-        menuExp.style.display = 'none';
+        fecharMenuExportar();
         iniciarExportacao('pdf');
       });
     }
