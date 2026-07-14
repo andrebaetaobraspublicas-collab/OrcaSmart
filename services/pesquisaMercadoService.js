@@ -238,6 +238,7 @@ async function callOpenAIMarketResearch(termo, tipo, uf, mes, ano) {
 async function callAnthropicMarketResearch(termo, tipo, uf, mes, ano) {
   const apiKey = configValue('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY nao configurada no ambiente do servidor.');
+  const model = configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').toLowerCase();
   const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -246,7 +247,7 @@ async function callAnthropicMarketResearch(termo, tipo, uf, mes, ano) {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022'),
+      model,
       max_tokens: 4000,
       messages: [{ role: 'user', content: marketPrompt(termo, tipo, uf, mes, ano, false) }],
     }),

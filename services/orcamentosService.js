@@ -84,6 +84,7 @@ async function callClaude(messages, maxTokens = 8000) {
   if (!apiKey) {
     throw httpError(500, 'ANTHROPIC_API_KEY nao configurada no ambiente do servidor. Configure a variavel no Hostinger para importar PDF/arquivos via IA.');
   }
+  const model = configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').toLowerCase();
   const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -92,7 +93,7 @@ async function callClaude(messages, maxTokens = 8000) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: configValue('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022'),
+      model,
       max_tokens: maxTokens,
       messages,
     }),
