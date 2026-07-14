@@ -19,7 +19,14 @@ Object.assign(API, {
         method: 'POST',
         body: formData,
       }).then(async r => {
-        const data = await r.json().catch(() => ({ erro: 'Resposta inválida.' }));
+        const text = await r.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (_) {
+          const resumo = text ? text.replace(/\s+/g, ' ').slice(0, 500) : 'sem corpo de resposta';
+          data = { erro: `Resposta inválida do servidor (${r.status}). ${resumo}` };
+        }
         if (!r.ok) throw new Error(data.erro || `Erro ${r.status}`);
         return data;
       });
@@ -29,7 +36,14 @@ Object.assign(API, {
         method: 'POST',
         body: formData,
       }).then(async r => {
-        const data = await r.json().catch(() => ({ erro: 'Resposta inválida.' }));
+        const text = await r.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (_) {
+          const resumo = text ? text.replace(/\s+/g, ' ').slice(0, 500) : 'sem corpo de resposta';
+          data = { erro: `Resposta inválida do servidor (${r.status}). ${resumo}` };
+        }
         if (!r.ok) throw new Error(data.erro || `Erro ${r.status}`);
         return data;
       });

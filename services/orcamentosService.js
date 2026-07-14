@@ -851,9 +851,24 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
   if (ext === 'pdf') {
     let localParsed = null;
     try {
+      console.log('[ORCAMENTO_IMPORT_PDF] iniciando parser local', JSON.stringify({ idOrcamento, filename, bytes: file.buffer.length }));
       const pages = await extractPdfTextPages(file.buffer);
       localParsed = parseSyntheticBudgetFromPdfPages(pages);
+      console.log('[ORCAMENTO_IMPORT_PDF] parser local concluido', JSON.stringify({
+        idOrcamento,
+        filename,
+        pages: pages.length,
+        budgetPages: localParsed.pages,
+        rows: localParsed.rows.length,
+        items: localParsed.rows.filter(row => row.tipo_linha === 'item').length,
+      }));
     } catch (err) {
+      console.error('[ORCAMENTO_IMPORT_PDF] parser local falhou', JSON.stringify({
+        idOrcamento,
+        filename,
+        bytes: file.buffer.length,
+        error: err && err.message ? err.message : String(err),
+      }));
       localParsed = { rows: [], pages: [], error: err.message };
     }
 
@@ -865,6 +880,13 @@ async function importarSinteticoIA(db, idOrcamento, body, contentType) {
         extracao: `PDF pesquisavel importado pelo parser direto do backend Node. Paginas usadas: ${(localParsed.pages || []).join(', ')}.`,
         observacoes_ia: 'A IA nao foi necessaria: cronograma, resumo, composicoes analiticas e cotacoes foram ignorados antes da importacao.',
       };
+    }
+
+    if (file.buffer.length > 2 * 1024 * 1024) {
+      throw httpError(
+        422,
+        `Nao foi possivel interpretar este PDF pelo parser local e o fallback por IA foi bloqueado para evitar timeout. Detalhe: ${localParsed?.error || 'nenhuma linha de orcamento sintetico identificada.'}`
+      );
     }
 
     const aiText = await callClaude([{
