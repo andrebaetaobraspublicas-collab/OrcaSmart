@@ -270,6 +270,83 @@ async function buscarComposicaoParaItem(db, item, contexto) {
   return base[0] || null;
 }
 
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+async function buildComposicaoCandidatesForAutoLink(db, itens) {
+  const codigosSet = new Set();
+  const fontesSet = new Set();
+
+  for (const item of itens || []) {
+    const fonteNorm = normalizarFonte(item.fonte);
+    if (!fonteNorm || fonteNorm === 'USUARIO') continue;
+    codigoVariantesComposicao(item.codigo, item.fonte)
+      .forEach(codigo => codigosSet.add(String(codigo || '').trim()));
+    fonteAliases(item.fonte)
+      .forEach(fonte => fontesSet.add(String(fonte || '').trim().toUpperCase()));
+  }
+
+  const codigos = [...codigosSet].filter(Boolean);
+  const fontes = [...fontesSet].filter(Boolean);
+  const cache = new Map();
+  if (!codigos.length || !fontes.length) return cache;
+
+  const hasTenant = await tableExists(db, 'tenant_composicoes');
+  const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
+  const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
+  const selects = [];
+
+  if (hasCatalog) selects.push(compSelectForAuto('CAST(c.id_composicao AS TEXT)', "'catalog'", 'catalog.composicoes', hasOverrides));
+  if (hasTenant) {
+    const tenantPk = tenantSyntheticPk('tenant_composicoes');
+    const tenantIdExpr = isMysqlRuntime() ? `CONCAT('tenant:', c.${tenantPk})` : "'tenant:' || c.rowid";
+    selects.push(compSelectForAuto(tenantIdExpr, "'tenant'", 'tenant_composicoes'));
+  }
+  if (!hasCatalog && (await tableExists(db, 'composicoes'))) {
+    selects.push(compSelectForAuto('CAST(c.id_composicao AS TEXT)', "'main'", 'composicoes', false));
+  }
+  if (!selects.length) return cache;
+
+  const qFonte = fontes.map(() => '?').join(',');
+  for (const chunk of chunkArray(codigos, 500)) {
+    const qCod = chunk.map(() => '?').join(',');
+    const rows = await all(db, `
+      SELECT *
+      FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
+      WHERE codigo IN (${qCod}) AND UPPER(COALESCE(fonte,'')) IN (${qFonte})`, [
+      ...chunk,
+      ...fontes,
+    ]).catch(() => []);
+
+    for (const row of rows) {
+      row.scope = row._tenant_scope || row.scope || '';
+      const key = String(row.codigo || '').trim().toUpperCase();
+      if (!key) continue;
+      if (!cache.has(key)) cache.set(key, []);
+      cache.get(key).push(row);
+    }
+  }
+
+  return cache;
+}
+
+function escolherComposicaoParaItemNoCache(item, contexto, cache) {
+  const fonteNorm = normalizarFonte(item.fonte);
+  if (!fonteNorm || fonteNorm === 'USUARIO') return null;
+  const fontes = new Set(fonteAliases(item.fonte).map(f => String(f || '').trim().toUpperCase()));
+  const candidatos = [];
+  for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
+    const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
+    rows.forEach((row) => {
+      if (fontes.has(String(row.fonte || '').trim().toUpperCase())) candidatos.push(row);
+    });
+  }
+  return escolherComposicaoCandidata(candidatos, contexto);
+}
+
 const selectBase = `
   SELECT o.*, ob.nome_obra, ob.uf AS obra_uf,
          db.mes AS data_base_mes, db.ano AS data_base_ano,
@@ -830,12 +907,13 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
   let vinculados = 0;
   let semCorrespondencia = 0;
   const detalhes = [];
+  const candidatosCache = await buildComposicaoCandidatesForAutoLink(db, itens);
 
   for (const item of itens) {
-    const comp = await buscarComposicaoParaItem(db, item, contexto);
+    const comp = escolherComposicaoParaItemNoCache(item, contexto, candidatosCache);
     if (!comp) {
       semCorrespondencia += 1;
-      detalhes.push({ id_item: item.id_item, codigo: item.codigo, fonte: item.fonte, status: 'nao_encontrada' });
+      if (detalhes.length < 100) detalhes.push({ id_item: item.id_item, codigo: item.codigo, fonte: item.fonte, status: 'nao_encontrada' });
       continue;
     }
     const custoAtual = toNum(item.custo_unitario, 0);
@@ -861,7 +939,7 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
       item.id_item,
     ]);
     vinculados += 1;
-    detalhes.push({
+    if (detalhes.length < 100) detalhes.push({
       id_item: item.id_item,
       codigo: item.codigo,
       fonte: item.fonte,
@@ -872,13 +950,11 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
     });
   }
 
-  const rows = await listSintetico(db, idOrcamento);
   return {
     vinculados,
     sem_correspondencia: semCorrespondencia,
     verificados: itens.length,
     detalhes,
-    itens: rows || [],
     mensagem: vinculados
       ? `${vinculados} linha(s) vinculada(s) a composicoes cadastradas. O sistema priorizou a data-base ${contexto.mes_ref} e aceitou referencias compativeis quando nao havia mes exato.`
       : `Nenhuma composicao correspondente foi encontrada para os codigos informados, mesmo buscando referencias compativeis a partir da data-base ${contexto.mes_ref}.`,

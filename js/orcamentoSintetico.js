@@ -1819,7 +1819,7 @@ Router.register('orcamento-sintetico', async () => {
       const res = await API.osSint.vincularAuto(id_orc);
       if (res?.vinculados > 0) {
         undoState = { label: 'vinculo automatico', itens: before, bdiPct };
-        itens = res.itens || await API.osSint.list(id_orc);
+        itens = await API.osSint.list(id_orc);
         rebuildTable();
         atualizarUndoBtn();
         Toast.success(res.mensagem || `${res.vinculados} linha(s) vinculada(s).`);
