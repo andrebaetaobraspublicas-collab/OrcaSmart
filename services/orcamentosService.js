@@ -709,6 +709,20 @@ function findTotalValueCol(headers) {
   ], ['unit', 'unitario', 'quantidade', 'qtd']);
 }
 
+function findItemNumCol(headers) {
+  const normalized = (headers || []).map(h => normalizeHeader(h));
+  const exact = normalized.findIndex(h => h && [
+    'item',
+    'item no',
+    'item n',
+    'numero item',
+    'num item',
+    'n item',
+  ].includes(h));
+  if (exact >= 0) return exact;
+  return normalized.findIndex(h => h && (h.includes('item') || h === 'num' || h === 'numero'));
+}
+
 function findDescriptionCol(headers) {
   const normalized = (headers || []).map(h => normalizeHeader(h));
   let idx = normalized.findIndex(h => h && (h === 'descricao' || h.includes('descricao') || h.startsWith('descr') || h.includes('servico') || h.startsWith('serv')));
@@ -737,24 +751,28 @@ function parseExcelRows(buffer) {
     const custo = findCostUnitCol(headers);
     const precoUnit = findPriceUnitCol(headers);
     const valorTotal = findTotalValueCol(headers);
-    if (desc >= 0 && (qtd >= 0 || custo >= 0)) {
+    const unidade = findCol(headers, ['unidade', 'unid', 'und']);
+    if (desc < 0 && unidade > 0 && (qtd >= 0 || custo >= 0 || precoUnit >= 0 || valorTotal >= 0)) {
+      desc = unidade - 1;
+    }
+    if (desc >= 0 && (qtd >= 0 || custo >= 0 || precoUnit >= 0 || valorTotal >= 0)) {
       headerIndex = i;
       map = {
         codigo: findCol(headers, ['codigo', 'cod']),
         fonte: findCol(headers, ['fonte', 'base']),
         descricao: desc,
-        unidade: findCol(headers, ['unidade', 'unid', 'und']),
+        unidade,
         quantidade: qtd,
         custo,
         precoUnit,
         valorTotal,
-        itemNum: findCol(headers, ['item', 'n', 'num']),
+        itemNum: findItemNumCol(headers),
       };
       break;
     }
   }
 
-  if (map && map.descricao < 2 && rows[headerIndex] && rows[headerIndex].length > 2) {
+  if (map && map.descricao < 2 && rows[headerIndex] && normalizeHeader(rows[headerIndex][map.descricao]).includes('item') && rows[headerIndex].length > 2) {
     map.descricao = 2;
   }
 
@@ -763,7 +781,28 @@ function parseExcelRows(buffer) {
     headerIndex = -1;
   }
 
-  return rows.slice(headerIndex + 1).map(row => {
+  const prefixSections = headerIndex > 0
+    ? rows.slice(0, headerIndex).map((row) => {
+      const nonEmpty = row.map(cellText).filter(Boolean);
+      if (!nonEmpty.length) return null;
+      if (nonEmpty.length <= 2) {
+        return {
+          item_num: '',
+          codigo: '',
+          fonte: '',
+          descricao: nonEmpty.join(' - '),
+          unidade: '',
+          quantidade: 0,
+          custo_unitario: 0,
+          bdi_percentual_linha: null,
+          tipo_linha: 'section',
+        };
+      }
+      return null;
+    }).filter(Boolean)
+    : [];
+
+  const parsedRows = rows.slice(headerIndex + 1).map(row => {
     const get = idx => (idx >= 0 ? row[idx] : '');
     let descricao = cellText(get(map.descricao));
     const quantidade = repo.toNum(get(map.quantidade), 0);
@@ -789,7 +828,7 @@ function parseExcelRows(buffer) {
     const hasCost = Math.abs(Number(custo) || 0) > 0;
     const sectionRef = itemNum || codigo;
     const looksSection = descricao && !hasQuantity && !hasCost && !unidade
-      && /^[0-9]+\.?$/.test(sectionRef)
+      && (!sectionRef || /^[0-9]+\.?$/.test(sectionRef))
       && descricao.length > 2;
     return {
       item_num: itemNum,
@@ -803,6 +842,7 @@ function parseExcelRows(buffer) {
       tipo_linha: looksSection ? 'section' : 'item',
     };
   }).filter(Boolean);
+  return [...prefixSections, ...parsedRows];
 }
 
 function normalizeUnit(value = '') {
