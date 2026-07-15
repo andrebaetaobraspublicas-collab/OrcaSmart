@@ -661,6 +661,54 @@ function findCol(headers, candidates) {
   return -1;
 }
 
+function findColStrict(headers, candidates, reject = []) {
+  const normalized = (headers || []).map(h => normalizeHeader(h));
+  const rejects = reject.map(r => normalizeHeader(r)).filter(Boolean);
+  const accepts = candidates.map(c => normalizeHeader(c)).filter(Boolean);
+  const allowed = h => h && !rejects.some(r => h === r || h.includes(r));
+  for (const cand of accepts) {
+    const idx = normalized.findIndex(h => allowed(h) && h === cand);
+    if (idx >= 0) return idx;
+  }
+  for (const cand of accepts) {
+    const idx = normalized.findIndex(h => allowed(h) && h.includes(cand));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function findCostUnitCol(headers) {
+  return findColStrict(headers, [
+    'custo unit',
+    'custo unitario',
+    'custo unit r',
+    'custo unitario r',
+    'custo direto unit',
+  ], ['valor total', 'preco total', 'total']);
+}
+
+function findPriceUnitCol(headers) {
+  return findColStrict(headers, [
+    'preco unit',
+    'preco unitario',
+    'preco unit r',
+    'preco unitario r',
+    'valor unit',
+    'valor unitario',
+  ], ['valor total', 'preco total', 'total']);
+}
+
+function findTotalValueCol(headers) {
+  const normalized = (headers || []).map(h => normalizeHeader(h));
+  const idxValor = normalized.findIndex(h => h && (h === 'valor r' || h === 'valor' || h.includes('valor total')));
+  if (idxValor >= 0) return idxValor;
+  return findColStrict(headers, [
+    'preco total',
+    'valor total',
+    'total',
+  ], ['unit', 'unitario', 'quantidade', 'qtd']);
+}
+
 function findDescriptionCol(headers) {
   const normalized = (headers || []).map(h => normalizeHeader(h));
   let idx = normalized.findIndex(h => h && (h === 'descricao' || h.includes('descricao') || h.startsWith('descr') || h.includes('servico') || h.startsWith('serv')));
@@ -686,7 +734,9 @@ function parseExcelRows(buffer) {
     let desc = findDescriptionCol(headers);
     if (desc < 0) desc = findCol(headers, ['item']);
     const qtd = findCol(headers, ['quantidade', 'qtd', 'qtde']);
-    const custo = findCol(headers, ['custo unit', 'preco unit', 'valor unit', 'unitario']);
+    const custo = findCostUnitCol(headers);
+    const precoUnit = findPriceUnitCol(headers);
+    const valorTotal = findTotalValueCol(headers);
     if (desc >= 0 && (qtd >= 0 || custo >= 0)) {
       headerIndex = i;
       map = {
@@ -696,6 +746,8 @@ function parseExcelRows(buffer) {
         unidade: findCol(headers, ['unidade', 'unid', 'und']),
         quantidade: qtd,
         custo,
+        precoUnit,
+        valorTotal,
         itemNum: findCol(headers, ['item', 'n', 'num']),
       };
       break;
@@ -707,7 +759,7 @@ function parseExcelRows(buffer) {
   }
 
   if (headerIndex < 0) {
-    map = { itemNum: 0, codigo: 1, fonte: -1, descricao: 2, unidade: 3, quantidade: 4, custo: 5 };
+    map = { itemNum: 0, codigo: 1, fonte: -1, descricao: 2, unidade: 3, quantidade: 4, custo: 5, precoUnit: -1, valorTotal: -1 };
     headerIndex = -1;
   }
 
@@ -715,7 +767,9 @@ function parseExcelRows(buffer) {
     const get = idx => (idx >= 0 ? row[idx] : '');
     let descricao = cellText(get(map.descricao));
     const quantidade = repo.toNum(get(map.quantidade), 0);
-    const custo = repo.toNum(get(map.custo), 0);
+    const custoPlanilha = repo.toNum(get(map.custo), 0);
+    const precoUnitPlanilha = repo.toNum(get(map.precoUnit), 0);
+    const valorTotalPlanilha = repo.toNum(get(map.valorTotal), 0);
     const codigo = cellText(get(map.codigo));
     const unidade = cellText(get(map.unidade));
     const itemNum = cellText(get(map.itemNum));
@@ -726,6 +780,12 @@ function parseExcelRows(buffer) {
     }
     if (!descricao && !codigo && !nonEmpty.length) return null;
     const hasQuantity = Math.abs(Number(quantidade) || 0) > 0;
+    let custo = custoPlanilha;
+    if (!custo && precoUnitPlanilha) custo = precoUnitPlanilha;
+    if (!custo && valorTotalPlanilha && hasQuantity) custo = valorTotalPlanilha / quantidade;
+    const bdiPercentual = custoPlanilha > 0 && precoUnitPlanilha > 0 && Math.abs(precoUnitPlanilha - custoPlanilha) > 0.0001
+      ? ((precoUnitPlanilha / custoPlanilha) - 1) * 100
+      : null;
     const hasCost = Math.abs(Number(custo) || 0) > 0;
     const sectionRef = itemNum || codigo;
     const looksSection = descricao && !hasQuantity && !hasCost && !unidade
@@ -739,6 +799,7 @@ function parseExcelRows(buffer) {
       unidade,
       quantidade,
       custo_unitario: custo,
+      bdi_percentual_linha: bdiPercentual,
       tipo_linha: looksSection ? 'section' : 'item',
     };
   }).filter(Boolean);

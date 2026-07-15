@@ -1039,7 +1039,9 @@ async function importarSinteticoRows(db, idOrcamento, parsedRows = [], modo = 's
       it.unidade || '',
       toNum(it.quantidade, 0),
       toNum(it.custo_unitario, 0),
-      null,
+      it.bdi_percentual_linha === null || it.bdi_percentual_linha === undefined || it.bdi_percentual_linha === ''
+        ? null
+        : toNum(it.bdi_percentual_linha, null),
     ]);
   }
 
