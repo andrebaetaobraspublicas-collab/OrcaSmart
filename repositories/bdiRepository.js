@@ -296,7 +296,8 @@ async function calcBdi(db, pid, options = {}) {
   const L = soma('L');
   const ano = anoPerfil(p);
   const grupos = { AC, S, R, DF, L };
-  const calculo = ano < 2026
+  const isSimples = p.regime_tributario === 'Simples Nacional';
+  const calculo = ano < 2026 && !isSimples
     ? (() => {
       const K = bdiRules.fatorK(grupos);
       const T = soma('T');

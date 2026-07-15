@@ -170,6 +170,22 @@ async function testarPersistenciaRepository() {
     const ac = memoria.componentes.find(c => c.grupo === 'AC');
     assert.strictEqual(ac.descricao, 'Administração Central');
     assert.strictEqual(ac.base_legal, 'TCU Acórdão 2622/2013');
+
+    const simples2023 = await repo.createPerfil(db, {
+      nome_perfil: 'teste2',
+      regime_tributario: 'Simples Nacional',
+      regime_previdenciario: 'Onerado',
+      ano_orcamento: 2023,
+      simples_faixa: 4,
+      simples_rbt12: 1600000,
+      iss_percentual_manual: 3,
+      percentual_mat_ivaeq: 0.2,
+    });
+    assert.ok(simples2023.bdi_percentual > 0);
+    perto(simples2023.simples_aliquota_efetiva, 11.51375);
+    const memoriaSimples2023 = await repo.memoria(db, simples2023.id_perfil_bdi);
+    assert.ok(memoriaSimples2023.totais_grupo.T > 0);
+    assert.ok(memoriaSimples2023.totais_grupo.bdi > 0);
   } finally {
     await new Promise(resolve => db.close(resolve));
   }
