@@ -13,6 +13,11 @@ const TENANT_PK = {
   obras: 'id_obra',
   orcamento_sintetico: 'id_item',
   orcamentos: 'id_orcamento',
+  riscos_analises: 'id_analise',
+  riscos_servicos: 'id_risco_servico',
+  riscos_eventos: 'id_evento_risco',
+  riscos_simulacoes: 'id_simulacao',
+  riscos_bdi_aplicacoes: 'id_aplicacao_risco',
   tenant_referential_overrides: 'id_override',
 };
 

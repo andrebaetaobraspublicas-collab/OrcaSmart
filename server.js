@@ -44,6 +44,7 @@ const {
   createTenantMysqlRuntime,
 } = require('./utils/mysqlTenantRuntime');
 const { ensureMysqlBdiSchema, recalcularMysqlBdiValores } = require('./utils/bdiMysqlSchema');
+const { ensureMysqlRiscosSchema } = require('./utils/riscosMysqlSchema');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1009,6 +1010,7 @@ app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy))
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));
 app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
+app.use('/api/riscos-contingencia', require('./routes/riscosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
   { all: allMaster, get: getMaster, run: runMaster },
@@ -1151,6 +1153,7 @@ async function initializeMysqlPilot() {
     bootState.mysql.socketPath = result.socketPath || null;
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
+      await ensureMysqlRiscosSchema(mysqlConfig());
       setTimeout(() => {
         recalcularMysqlBdiValores(mysqlConfig())
           .then((bdiRecalc) => {

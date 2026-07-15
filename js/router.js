@@ -36,6 +36,7 @@ const Router = {
       'curva-abc-insumos':     'Curva ABC — Insumos',
       'municipios':            'Municípios — Alíquotas ISS / IBS / CBS',
       'eventograma':           'Eventograma — Tabela de Eventos Geradores de Pagamento',
+      'riscos-contingencia':   'Riscos e Contingência Orçamentária',
       'dimensionamento-pavimentos': 'Dimensionamento de Pavimentos',
       'administracao-canteiro': 'Calculadora de Administracao Local e Canteiro',
       'calculadora-estrutural': 'Calculadora Estrutural',

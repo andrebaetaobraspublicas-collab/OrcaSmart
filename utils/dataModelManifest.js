@@ -36,6 +36,11 @@ const TENANT_TABLES = [
   'obras',
   'orcamento_sintetico',
   'orcamentos',
+  'riscos_analises',
+  'riscos_servicos',
+  'riscos_eventos',
+  'riscos_simulacoes',
+  'riscos_bdi_aplicacoes',
 ];
 
 const USER_OVERRIDE_DOMAINS = [

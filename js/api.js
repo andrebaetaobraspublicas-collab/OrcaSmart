@@ -147,6 +147,23 @@ const API = {
     duplicate: (id)          => API.post(`/orcamentos/${id}/duplicar`),
   },
 
+  riscosContingencia: {
+    analises: () => API.get('/riscos-contingencia/analises'),
+    get: id => API.get(`/riscos-contingencia/analises/${id}`),
+    create: data => API.post('/riscos-contingencia/analises', data),
+    update: (id, data) => API.put(`/riscos-contingencia/analises/${id}`, data),
+    delete: id => API.delete(`/riscos-contingencia/analises/${id}`),
+    updateServico: (id, data) => API.put(`/riscos-contingencia/servicos/${id}`, data),
+    createEvento: (id, data) => API.post(`/riscos-contingencia/analises/${id}/eventos`, data),
+    updateEvento: (id, data) => API.put(`/riscos-contingencia/eventos/${id}`, data),
+    deleteEvento: id => API.delete(`/riscos-contingencia/eventos/${id}`),
+    valorEsperado: id => API.get(`/riscos-contingencia/analises/${id}/valor-esperado`),
+    tornado: id => API.get(`/riscos-contingencia/analises/${id}/tornado`),
+    saveSimulation: (id, data) => API.post(`/riscos-contingencia/analises/${id}/simulacoes`, data),
+    aplicarBdi: (id, data) => API.post(`/riscos-contingencia/analises/${id}/aplicar-bdi`, data),
+    exportUrl: (id, formato) => `${API.BASE}/riscos-contingencia/analises/${id}/exportar/${formato}`,
+  },
+
   // Unidades
   unidades: {
     list:   ()          => API.get('/unidades'),

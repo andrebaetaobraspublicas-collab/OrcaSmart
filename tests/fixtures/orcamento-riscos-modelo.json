@@ -1,0 +1,7 @@
+[
+  { "ITEM": "1", "CÓDIGO": "", "FONTE": "", "DESCRIÇÃO DOS SERVIÇOS": "INFRAESTRUTURA", "UNID.": "", "QUANTIDADE": "", "CUSTO UNIT (R$)": "", "PREÇO UNIT (R$)": "", "VALOR (R$)": "" },
+  { "ITEM": "1.1", "CÓDIGO": "ESC-001", "FONTE": "SINAPI", "DESCRIÇÃO DOS SERVIÇOS": "Escavação mecanizada", "UNID.": "m3", "QUANTIDADE": "100", "CUSTO UNIT (R$)": "50,00", "PREÇO UNIT (R$)": "60,00", "VALOR (R$)": "5.000,00" },
+  { "ITEM": "1.2", "CÓDIGO": "CON-001", "FONTE": "SINAPI", "DESCRIÇÃO DOS SERVIÇOS": "Concreto estrutural", "UNID.": "m3", "QUANTIDADE": "50", "CUSTO UNIT (R$)": "500,00", "PREÇO UNIT (R$)": "620,00", "VALOR (R$)": "25.000,00" },
+  { "ITEM": "1.3", "CÓDIGO": "ACO-001", "FONTE": "SINAPI", "DESCRIÇÃO DOS SERVIÇOS": "Armadura CA-50", "UNID.": "kg", "QUANTIDADE": "2000", "CUSTO UNIT (R$)": "8,00", "PREÇO UNIT (R$)": "10,00", "VALOR (R$)": "16.000,00" },
+  { "ITEM": "", "CÓDIGO": "", "FONTE": "", "DESCRIÇÃO DOS SERVIÇOS": "SUBTOTAL INFRAESTRUTURA", "UNID.": "", "QUANTIDADE": "", "CUSTO UNIT (R$)": "", "PREÇO UNIT (R$)": "", "VALOR (R$)": "46.000,00", "TIPO_LINHA": "subtotal" }
+]

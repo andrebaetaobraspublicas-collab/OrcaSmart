@@ -7,6 +7,13 @@ const {
 } = require('./tenantForeignKeySanitizer');
 
 const ensured = new Set();
+const RISK_TABLES = [
+  'riscos_analises',
+  'riscos_servicos',
+  'riscos_eventos',
+  'riscos_simulacoes',
+  'riscos_bdi_aplicacoes',
+];
 
 function all(db, sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -79,6 +86,14 @@ async function missingRuntimeOverrideTables(db) {
   return missing;
 }
 
+async function missingRiskTables(db) {
+  const missing = [];
+  for (const table of RISK_TABLES) {
+    if (!(await tableExists(db, table))) missing.push(table);
+  }
+  return missing;
+}
+
 async function hasBackupForeignKeyRefs(db, tenantTables = null) {
   const tenantSet = tenantTables
     ? new Set((tenantTables || []).map(table => String(table).toLowerCase()))
@@ -95,7 +110,10 @@ async function hasBackupForeignKeyRefs(db, tenantTables = null) {
 
 async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   if (key && ensured.has(key)) {
-    const missing = await missingRuntimeOverrideTables(db);
+    const missing = [
+      ...(await missingRuntimeOverrideTables(db)),
+      ...(await missingRiskTables(db)),
+    ];
     const needsFkRepair = await hasBackupForeignKeyRefs(db, TENANT_TABLES);
     if (!missing.length && !needsFkRepair) return false;
     ensured.delete(key);
@@ -104,6 +122,108 @@ async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   await repairTenantBackupForeignKeys(db, TENANT_TABLES);
   await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES, TENANT_TABLES);
   await ensureRuntimeOverrideTables(db, catalogPath);
+
+  await run(db, `CREATE TABLE IF NOT EXISTS riscos_analises (
+    id_analise INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_orcamento INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    regime_execucao TEXT NOT NULL DEFAULT 'preco_unitario',
+    criterio_alocacao TEXT NOT NULL DEFAULT 'nao_definido',
+    justificativa_variacao_quantidade TEXT,
+    justificativa_percentil TEXT,
+    metodo_escopo TEXT NOT NULL DEFAULT 'abc_a',
+    extrapolar INTEGER NOT NULL DEFAULT 0,
+    iteracoes INTEGER NOT NULL DEFAULT 10000,
+    percentil_alvo REAL NOT NULL DEFAULT 80,
+    semente INTEGER NOT NULL DEFAULT 20260715,
+    incluir_eventos INTEGER NOT NULL DEFAULT 1,
+    incluir_quantitativos INTEGER NOT NULL DEFAULT 1,
+    observacoes TEXT,
+    status TEXT NOT NULL DEFAULT 'Em elaboracao',
+    resultado_json TEXT,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TEXT
+  )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_riscos_analises_orcamento ON riscos_analises (id_orcamento)');
+
+  await run(db, `CREATE TABLE IF NOT EXISTS riscos_servicos (
+    id_risco_servico INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_analise INTEGER NOT NULL,
+    id_item_orcamento INTEGER,
+    item_num TEXT,
+    codigo TEXT,
+    fonte TEXT,
+    descricao TEXT NOT NULL,
+    unidade TEXT,
+    quantidade REAL NOT NULL DEFAULT 0,
+    custo_unitario REAL NOT NULL DEFAULT 0,
+    valor_base REAL NOT NULL DEFAULT 0,
+    classificacao_abc TEXT,
+    percentual_abc REAL NOT NULL DEFAULT 0,
+    percentual_acumulado REAL NOT NULL DEFAULT 0,
+    selecionado INTEGER NOT NULL DEFAULT 0,
+    tipo_risco TEXT NOT NULL DEFAULT 'variacao_custo_unitario',
+    responsavel TEXT NOT NULL DEFAULT 'contratado',
+    incluir_contingencia INTEGER NOT NULL DEFAULT 1,
+    distribuicao TEXT NOT NULL DEFAULT 'triangular',
+    nivel_qualitativo TEXT DEFAULT 'medio',
+    minimo REAL NOT NULL DEFAULT -5,
+    mais_provavel REAL NOT NULL DEFAULT 5,
+    maximo REAL NOT NULL DEFAULT 10,
+    media REAL,
+    desvio_padrao REAL,
+    probabilidade REAL NOT NULL DEFAULT 100,
+    grupo_correlacao TEXT,
+    composicao_json TEXT,
+    justificativa TEXT,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TEXT
+  )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_riscos_servicos_analise ON riscos_servicos (id_analise)');
+
+  await run(db, `CREATE TABLE IF NOT EXISTS riscos_eventos (
+    id_evento_risco INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_analise INTEGER NOT NULL,
+    descricao TEXT NOT NULL,
+    categoria TEXT,
+    probabilidade REAL NOT NULL DEFAULT 0,
+    impacto_minimo REAL NOT NULL DEFAULT 0,
+    impacto_mais_provavel REAL NOT NULL DEFAULT 0,
+    impacto_maximo REAL NOT NULL DEFAULT 0,
+    distribuicao_impacto TEXT NOT NULL DEFAULT 'triangular',
+    responsavel TEXT NOT NULL DEFAULT 'contratado',
+    incluir_contingencia INTEGER NOT NULL DEFAULT 1,
+    estrategia_mitigacao TEXT,
+    observacao TEXT,
+    grupo_correlacao TEXT,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TEXT
+  )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_riscos_eventos_analise ON riscos_eventos (id_analise)');
+
+  await run(db, `CREATE TABLE IF NOT EXISTS riscos_simulacoes (
+    id_simulacao INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_analise INTEGER NOT NULL,
+    metodo TEXT NOT NULL DEFAULT 'monte_carlo',
+    parametros_json TEXT,
+    resumo_json TEXT NOT NULL,
+    amostras_json TEXT,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_riscos_simulacoes_analise ON riscos_simulacoes (id_analise, criado_em)');
+
+  await run(db, `CREATE TABLE IF NOT EXISTS riscos_bdi_aplicacoes (
+    id_aplicacao_risco INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_analise INTEGER NOT NULL,
+    id_perfil_bdi TEXT,
+    modo TEXT NOT NULL,
+    taxa_contingencia REAL NOT NULL DEFAULT 0,
+    risco_anterior REAL NOT NULL DEFAULT 0,
+    risco_novo REAL NOT NULL DEFAULT 0,
+    observacao TEXT,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_riscos_bdi_analise ON riscos_bdi_aplicacoes (id_analise)');
 
   if (await tableExists(db, 'tenant_perfis_bdi')) {
     await ensureColumn(db, 'tenant_perfis_bdi', 'redutor_setorial_ivaeq', 'REAL DEFAULT 0.5');
@@ -139,7 +259,10 @@ async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   await ensureColumn(db, 'obras', 'redutor_compras_governamentais', 'REAL DEFAULT 0');
 
   if (key) {
-    const missing = await missingRuntimeOverrideTables(db);
+    const missing = [
+      ...(await missingRuntimeOverrideTables(db)),
+      ...(await missingRiskTables(db)),
+    ];
     if (!missing.length) ensured.add(key);
   }
   return true;

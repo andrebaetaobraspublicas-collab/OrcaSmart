@@ -10,6 +10,7 @@
         "init-db": "python database/init.py",
         "start:python": "python server.py",
         "test:bdi": "node tests/bdiRules.test.js",
+        "test:riscos": "node tests/riscosEngine.test.js",
         "init-db:node": "node database/init.js",
         "build:shared-catalog": "node scripts/buildSharedCatalog.js --force",
         "build:tenant-template": "node scripts/buildTenantTemplate.js --force",
