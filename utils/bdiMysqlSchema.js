@@ -111,7 +111,9 @@ async function normalizarRegimesPrevidenciariosCatalogo(connection) {
     SET quartil='Personalizado'
     WHERE COALESCE(quartil,'')=''
       AND (LOWER(COALESCE(nome_perfil,'')) LIKE '%personalizado%'
-        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%')`);
+        OR LOWER(COALESCE(nome_perfil,'')) LIKE '%personalisado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalisado%')`);
 
   const [simples] = await connection.query(`
     SELECT *
@@ -209,7 +211,9 @@ async function normalizarRegimesPrevidenciariosTenant(connection) {
     SET quartil='Personalizado'
     WHERE COALESCE(quartil,'')=''
       AND (LOWER(COALESCE(nome_perfil,'')) LIKE '%personalizado%'
-        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%')`);
+        OR LOWER(COALESCE(nome_perfil,'')) LIKE '%personalisado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalisado%')`);
   return {
     normalizados: normalizados.affectedRows || 0,
     personalizados: personalizados.affectedRows || 0,

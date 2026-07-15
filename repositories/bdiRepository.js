@@ -159,7 +159,8 @@ function quartilPayload(d = {}) {
   if (d.quartil) return d.quartil;
   const nome = String(d.nome_perfil || '').toLowerCase();
   const descricao = String(d.descricao || '').toLowerCase();
-  return nome.includes('personalizado') || descricao.includes('personalizado') ? 'Personalizado' : null;
+  const texto = `${nome} ${descricao}`;
+  return texto.includes('personalizado') || texto.includes('personalisado') ? 'Personalizado' : null;
 }
 
 function aplicarFiltrosBdi(where, params, query = {}, alias = 'b') {
@@ -359,18 +360,48 @@ async function recalcAndGet(db, pid, options = {}) {
   return getPerfil(db, pid);
 }
 
+async function preencherBdiFaltanteNaLista(db, rows = []) {
+  const atualizadas = [];
+  for (const row of rows || []) {
+    const bdiAtual = toNum(row?.bdi_percentual, 0);
+    if (bdiAtual > 0) {
+      atualizadas.push(row);
+      continue;
+    }
+    try {
+      const id = row.id_perfil_bdi;
+      const calculo = await calcBdi(db, id, { persist: true, persistCatalog: true });
+      if (calculo?.bdi > 0) {
+        atualizadas.push({
+          ...row,
+          bdi_percentual: calculo.bdi,
+          ivaeq_percentual: calculo.IVAeq,
+          simples_aliquota_efetiva: calculo.simples?.aliquota_efetiva ?? row.simples_aliquota_efetiva,
+          simples_faixa: calculo.simples?.faixa ?? row.simples_faixa,
+        });
+        continue;
+      }
+    } catch (_err) {
+      // Mantem o registro original se o recalculo oportunista falhar.
+    }
+    atualizadas.push(row);
+  }
+  return atualizadas;
+}
+
 async function listPerfis(db, query = {}) {
   if (await useTenantCatalogRead(db)) {
     const hasOverrides = await hasTenantReferentialOverrides(db);
     const catalog = buildPerfilListSelect(query, 'catalog', hasOverrides);
     const tenant = buildPerfilListSelect(query, 'tenant');
-    return all(db, `
+    const rows = await all(db, `
       SELECT * FROM (
         ${catalog.sql}
         UNION ALL
         ${tenant.sql}
       ) AS perfis_bdi_unificados
       ORDER BY tipo_obra, nome_perfil`, [...catalog.params, ...tenant.params]);
+    return preencherBdiFaltanteNaLista(db, rows);
   }
 
   let sql = `
@@ -383,7 +414,8 @@ async function listPerfis(db, query = {}) {
   aplicarFiltrosBdi(where, params, query, 'b');
   if (where.length) sql += ` AND ${where.join(' AND ')}`;
   sql += ' GROUP BY b.id_perfil_bdi ORDER BY b.tipo_obra, b.nome_perfil';
-  return all(db, sql, params);
+  const rows = await all(db, sql, params);
+  return preencherBdiFaltanteNaLista(db, rows);
 }
 
 function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = true) {

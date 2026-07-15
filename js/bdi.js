@@ -267,16 +267,21 @@ Router.register('bdi', async () => {
   function renderCardBdi(p) {
     const bdi = parseFloat(p.bdi_percentual)||0;
     const corReg = isSimples(p) ? 'badge-gray' : 'badge-info';
+    const textoPersonalizado = `${p.nome_perfil || ''} ${p.descricao || ''} ${p.quartil || ''}`.toLowerCase();
+    const personalizado = textoPersonalizado.includes('personalizado') || textoPersonalizado.includes('personalisado');
+    const indicadorBg = personalizado ? 'var(--c-warning)' : (bdi > 0 ? 'var(--c-primary)' : 'var(--c-bg)');
+    const indicadorFg = bdi > 0 || personalizado ? '#fff' : 'var(--c-text-3)';
+    const indicadorFg2 = bdi > 0 || personalizado ? 'rgba(255,255,255,.85)' : 'var(--c-text-3)';
     return `
       <div class="section-card">
         <div style="padding:18px 20px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
           <!-- BDI indicator -->
           <div style="min-width:100px;text-align:center;padding:14px 12px;
-               background:${bdi>0?'var(--c-primary)':'var(--c-bg)'};border-radius:12px">
-            <div style="font-size:1.8rem;font-weight:800;color:${bdi>0?'#fff':'var(--c-text-3)'}">
+               background:${indicadorBg};border-radius:12px">
+            <div style="font-size:1.8rem;font-weight:800;color:${indicadorFg}">
               ${bdi>0 ? Utils.num(bdi,2)+'%' : '—'}
             </div>
-            <div style="font-size:.7rem;color:${bdi>0?'rgba(255,255,255,.8)':'var(--c-text-3)'};margin-top:2px">BDI</div>
+            <div style="font-size:.7rem;color:${indicadorFg2};margin-top:2px">BDI</div>
           </div>
           <!-- Info -->
           <div style="flex:1;min-width:200px">
