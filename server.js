@@ -43,8 +43,7 @@ const {
 const {
   createTenantMysqlRuntime,
 } = require('./utils/mysqlTenantRuntime');
-const { ensureMysqlBdiSchema } = require('./utils/bdiMysqlSchema');
-const bdiService = require('./services/bdiService');
+const { ensureMysqlBdiSchema, recalcularMysqlBdiValores } = require('./utils/bdiMysqlSchema');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1153,7 +1152,7 @@ async function initializeMysqlPilot() {
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
       setTimeout(() => {
-        bdiService.recalcularTodos(masterDb, { persist: true, persistCatalog: true })
+        recalcularMysqlBdiValores(mysqlConfig())
           .then((bdiRecalc) => {
             console.log('[bdi] Perfis BDI recalculados:', JSON.stringify({
               catalogo: bdiRecalc.catalogo.recalculados,
