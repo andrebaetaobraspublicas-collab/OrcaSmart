@@ -56,7 +56,7 @@ Router.register('bdi', async () => {
   let perfis = [], perfilAtivo = null, compsAtivas = [];
   let orcamentosRef = [];
   let parametrosAnuais = {};
-  const filtros = { ano:'', tipo:'', regime:'', quartil:'', faixa_simples:'' };
+  const filtros = { ano:'', tipo:'', simples:'', regime_previdenciario:'', quartil:'', faixa_simples:'' };
 
   function anoPerfil(p) {
     const ano = parseInt(p.ano_orcamento);
@@ -66,14 +66,27 @@ Router.register('bdi', async () => {
   }
 
   function cprbPerfil(p) {
-    const desonerado = (p.regime_tributario || '') === 'Desonerado' || p.regime_previdenciario === 'Desonerado';
-    if (!desonerado) return 0;
+    if (regimePrevidenciarioEfetivo(p) !== 'Desonerado') return 0;
     const ano = anoPerfil(p);
     if (ano <= 2024) return 4.5;
     if (ano === 2025) return 3.6;
     if (ano === 2026) return 2.7;
     if (ano === 2027) return 1.8;
     return 0;
+  }
+
+  function isSimples(p={}) {
+    return p.regime_tributario === 'Simples Nacional';
+  }
+
+  function regimePrevidenciarioEfetivo(p={}) {
+    if (p.regime_previdenciario === 'Desonerado') return 'Desonerado';
+    if (p.regime_previdenciario === 'Onerado') return 'Onerado';
+    return p.regime_tributario === 'Desonerado' ? 'Desonerado' : 'Onerado';
+  }
+
+  function simplesLabel(p={}) {
+    return isSimples(p) ? 'Simples Nacional' : 'N&atilde;o optante';
   }
 
   function parametrosAno(anoInformado) {
@@ -88,7 +101,7 @@ Router.register('bdi', async () => {
   }
 
   function formulaBdiTexto(p) {
-    if (p.regime_tributario === 'Simples Nacional') {
+    if (isSimples(p)) {
       return 'BDI Simples = [ K / (1 - T) ] - 1, com IVAeq = 0';
     }
     return 'BDI = [ K × (1 + IVAeq) / (1 - T) ] - 1';
@@ -97,7 +110,7 @@ Router.register('bdi', async () => {
   function descricaoPadraoBdi(p) {
     const ano = anoPerfil(p);
     const tipo = (p.tipo_obra || 'obras').toLowerCase();
-    const regime = p.regime_tributario === 'Desonerado'
+    const regime = regimePrevidenciarioEfetivo(p) === 'Desonerado'
       ? 'com desoneração da folha'
       : 'sem desoneração da folha';
     return `BDI para ${tipo} ${regime} - Ano de ${ano}`;
@@ -105,7 +118,7 @@ Router.register('bdi', async () => {
 
   function ivaeqCalculadoPerfil(p, K=1) {
     const ano = anoPerfil(p);
-    if (ano === 2026 || p.regime_tributario === 'Simples Nacional') return 0;
+    if (ano === 2026 || isSimples(p)) return 0;
     const padrao = parametrosAno(ano);
     const manual = Number(p.usa_iva_manual) === 1 || p.usa_iva_manual === true;
     const ivaNominal = manual
@@ -147,10 +160,10 @@ Router.register('bdi', async () => {
 
       <!-- Cards resumo -->
       <div class="cards-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
-        ${bdiCard('Normal',    perfis.filter(p=>p.regime_tributario==='Normal').length,    '📋','blue')}
-        ${bdiCard('Desonerado',perfis.filter(p=>p.regime_tributario==='Desonerado').length,'🏷️','green')}
-        ${bdiCard('Simples',   perfis.filter(p=>p.regime_tributario==='Simples Nacional').length,'📝','yellow')}
-        ${bdiCard('Reforma Trib.', perfis.filter(p=>p.usa_reforma_tributaria).length,     '⚖️','red')}
+        ${bdiCard('N&atilde;o optante', perfis.filter(p=>!isSimples(p)).length, 'N','blue')}
+        ${bdiCard('Simples',     perfis.filter(p=>isSimples(p)).length,  'S','yellow')}
+        ${bdiCard('Onerado',     perfis.filter(p=>regimePrevidenciarioEfetivo(p)==='Onerado').length, 'O','green')}
+        ${bdiCard('Desonerado',  perfis.filter(p=>regimePrevidenciarioEfetivo(p)==='Desonerado').length, 'D','red')}
       </div>
 
       <div class="section-card" style="margin-bottom:16px">
@@ -163,17 +176,21 @@ Router.register('bdi', async () => {
             <option value="">Todos os tipos de obra</option>
             ${TIPOS_OBRA.map(t=>`<option value="${t}" ${filtros.tipo===t?'selected':''}>${t}</option>`).join('')}
           </select>
-          <select class="form-control" id="filtroRegimeBdi" style="max-width:230px">
-            <option value="">Todos os regimes</option>
-            <option value="Normal" ${filtros.regime==='Normal'?'selected':''}>Onerado</option>
-            <option value="Desonerado" ${filtros.regime==='Desonerado'?'selected':''}>Desonerado</option>
-            <option value="Simples Nacional" ${filtros.regime==='Simples Nacional'?'selected':''}>Simples Nacional</option>
+          <select class="form-control" id="filtroSimplesBdi" style="max-width:230px">
+            <option value="">Simples: todos</option>
+            <option value="nao" ${filtros.simples==='nao'?'selected':''}>N&atilde;o optante</option>
+            <option value="simples" ${filtros.simples==='simples'?'selected':''}>Optante pelo Simples</option>
+          </select>
+          <select class="form-control" id="filtroRegimePrevBdi" style="max-width:250px">
+            <option value="">Regime previdenciário: todos</option>
+            <option value="Onerado" ${filtros.regime_previdenciario==='Onerado'?'selected':''}>Onerado</option>
+            <option value="Desonerado" ${filtros.regime_previdenciario==='Desonerado'?'selected':''}>Desonerado</option>
           </select>
           <select class="form-control" id="filtroQuartilBdi" style="max-width:230px">
             <option value="">Todos os quartis</option>
             ${BDI_QUARTIS.map(q=>`<option value="${q}" ${filtros.quartil===q?'selected':''}>${q}</option>`).join('')}
           </select>
-          <select class="form-control" id="filtroFaixaSimplesBdi" style="max-width:260px;${filtros.regime==='Simples Nacional'?'':'display:none'}">
+          <select class="form-control" id="filtroFaixaSimplesBdi" style="max-width:260px;${filtros.simples==='simples'?'':'display:none'}">
             <option value="">Todas as faixas do Simples</option>
             ${BDI_SIMPLES_FAIXAS.map(fx=>`<option value="${fx.id}" ${String(filtros.faixa_simples)===String(fx.id)?'selected':''}>${fx.label}</option>`).join('')}
           </select>
@@ -200,15 +217,16 @@ Router.register('bdi', async () => {
     document.getElementById('btnNovoBdiEmpty')?.addEventListener('click', ()=>abrirForm(null, true));
     document.getElementById('filtroAnoBdi')?.addEventListener('change', e=>{ filtros.ano = e.target.value; carregar(); });
     document.getElementById('filtroTipoBdi')?.addEventListener('change', e=>{ filtros.tipo = e.target.value; carregar(); });
-    document.getElementById('filtroRegimeBdi')?.addEventListener('change', e=>{
-      filtros.regime = e.target.value;
-      if (filtros.regime !== 'Simples Nacional') filtros.faixa_simples = '';
+    document.getElementById('filtroSimplesBdi')?.addEventListener('change', e=>{
+      filtros.simples = e.target.value;
+      if (filtros.simples !== 'simples') filtros.faixa_simples = '';
       carregar();
     });
+    document.getElementById('filtroRegimePrevBdi')?.addEventListener('change', e=>{ filtros.regime_previdenciario = e.target.value; carregar(); });
     document.getElementById('filtroQuartilBdi')?.addEventListener('change', e=>{ filtros.quartil = e.target.value; carregar(); });
     document.getElementById('filtroFaixaSimplesBdi')?.addEventListener('change', e=>{ filtros.faixa_simples = e.target.value; carregar(); });
     document.getElementById('btnLimparFiltrosBdi')?.addEventListener('click', ()=>{
-      Object.assign(filtros, { ano:'', tipo:'', regime:'', quartil:'', faixa_simples:'' });
+      Object.assign(filtros, { ano:'', tipo:'', simples:'', regime_previdenciario:'', quartil:'', faixa_simples:'' });
       carregar();
     });
     document.querySelectorAll('[data-bact]').forEach(btn=>{
@@ -234,8 +252,7 @@ Router.register('bdi', async () => {
 
   function renderCardBdi(p) {
     const bdi = parseFloat(p.bdi_percentual)||0;
-    const corReg = p.regime_tributario==='Desonerado' ? 'badge-warning' :
-                   p.regime_tributario==='Simples Nacional' ? 'badge-gray' : 'badge-info';
+    const corReg = isSimples(p) ? 'badge-gray' : 'badge-info';
     return `
       <div class="section-card">
         <div style="padding:18px 20px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
@@ -251,8 +268,8 @@ Router.register('bdi', async () => {
           <div style="flex:1;min-width:200px">
             <div class="fw-700" style="font-size:1rem;margin-bottom:6px">${Utils.esc(p.nome_perfil)}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-              <span class="badge ${corReg}">${p.regime_tributario}</span>
-              ${p.regime_previdenciario?`<span class="badge badge-gray">${p.regime_previdenciario}</span>`:''}
+              <span class="badge ${corReg}">${simplesLabel(p)}</span>
+              <span class="badge badge-gray">${regimePrevidenciarioEfetivo(p)}</span>
               ${p.tipo_obra?`<span class="badge badge-gray">${p.tipo_obra}</span>`:''}
               <span class="badge badge-gray">Ano ${anoPerfil(p)}</span>
               ${p.quartil?`<span class="badge badge-gray">${Utils.esc(p.quartil)}</span>`:''}
@@ -261,7 +278,7 @@ Router.register('bdi', async () => {
               ${Utils.statusBadge(p.situacao)}
             </div>
             <div class="text-sm text-2">${Utils.trunc(p.descricao || descricaoPadraoBdi(p),100)}</div>
-            ${p.regime_tributario==='Simples Nacional' ? `
+            ${isSimples(p) ? `
               <div class="text-xs text-2 mt-1">IRPJ e CSLL não integram o cálculo do BDI; podem ser tratados na taxa de lucro a critério do usuário.</div>
             ` : ''}
           </div>
@@ -294,6 +311,7 @@ Router.register('bdi', async () => {
         nome_perfil: 'BDI personalizado',
         tipo_obra: 'Outro',
         regime_tributario: 'Normal',
+        regime_previdenciario: 'Onerado',
         quartil: 'Personalizado',
         ano_orcamento: 2026,
         vigencia: '2026',
@@ -330,18 +348,17 @@ Router.register('bdi', async () => {
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Regime Tributário</label>
+            <label class="form-label">Simples Nacional</label>
             <select class="form-control" id="fp_reg">
-              <option value="Normal"           ${ (p.regime_tributario||'Normal')==='Normal'?'selected':''}>Normal (INSS patronal)</option>
-              <option value="Desonerado"       ${p.regime_tributario==='Desonerado'?'selected':''}>Desonerado (CPRB)</option>
-              <option value="Simples Nacional" ${p.regime_tributario==='Simples Nacional'?'selected':''}>Simples Nacional</option>
+              <option value="Normal"           ${ !isSimples(p)?'selected':''}>N&atilde;o optante pelo Simples</option>
+              <option value="Simples Nacional" ${isSimples(p)?'selected':''}>Optante pelo Simples</option>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">Regime previdenciário</label>
             <select class="form-control" id="fp_reg_prev">
-              <option value="Onerado" ${ (p.regime_previdenciario||'Onerado')==='Onerado'?'selected':''}>Onerado</option>
-              <option value="Desonerado" ${p.regime_previdenciario==='Desonerado'?'selected':''}>Desonerado</option>
+              <option value="Onerado" ${ regimePrevidenciarioEfetivo(p)==='Onerado'?'selected':''}>Onerado</option>
+              <option value="Desonerado" ${regimePrevidenciarioEfetivo(p)==='Desonerado'?'selected':''}>Desonerado</option>
             </select>
           </div>
           <div class="form-group">
@@ -424,7 +441,7 @@ Router.register('bdi', async () => {
               ${orcamentoOptions}
             </select>
           </div>
-          <div class="form-group span-2" id="fp_simples_alert" style="${p.regime_tributario==='Simples Nacional'?'':'display:none'}">
+          <div class="form-group span-2" id="fp_simples_alert" style="${isSimples(p)?'':'display:none'}">
             <div style="padding:10px;background:var(--c-warning-l);border-radius:8px;color:var(--c-text)">
               <div class="fw-600 text-sm">Simples Nacional</div>
               <div class="text-xs text-2">IRPJ e CSLL não entram no cálculo do BDI. A critério do usuário, esses tributos podem ser considerados dentro da taxa de lucro.</div>
@@ -576,12 +593,12 @@ Router.register('bdi', async () => {
         <div class="page-header-left">
           <h1>${Utils.esc(p.nome_perfil)}</h1>
           <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-            <span class="badge badge-info">${p.regime_tributario}</span>
-            ${p.regime_previdenciario?`<span class="badge badge-gray">${p.regime_previdenciario}</span>`:''}
+            <span class="badge badge-info">${simplesLabel(p)}</span>
+            <span class="badge badge-gray">${regimePrevidenciarioEfetivo(p)}</span>
             <span class="badge badge-gray">Ano ${anoPerfil(p)}</span>
             <span class="badge badge-gray">CPRB ${Utils.num(cprbPerfil(p),4)}%</span>
             ${p.simples_faixa?`<span class="badge badge-warning">${Utils.esc(p.simples_faixa_label || (p.simples_faixa+'ª faixa'))}</span>`:''}
-            ${p.regime_tributario==='Simples Nacional'?`<span class="badge badge-warning">Alíquota efetiva ${Utils.num(p.simples_aliquota_efetiva || 0,4)}%</span>`:''}
+            ${isSimples(p)?`<span class="badge badge-warning">Alíquota efetiva ${Utils.num(p.simples_aliquota_efetiva || 0,4)}%</span>`:''}
             ${anoPerfil(p) >= 2027 ? `<span class="badge badge-warning">CBS ${Utils.num(p.cbs_percentual || 0,4)}%</span>` : ''}
             ${anoPerfil(p) >= 2027 ? `<span class="badge badge-warning">IBS ${Utils.num(p.ibs_percentual || 0,4)}%</span>` : ''}
             ${anoPerfil(p) >= 2027 ? `<span class="badge badge-warning">IVAeq ${Utils.num(p.ivaeq_percentual || ivaeqCalculadoPerfil(p),4)}%</span>` : ''}
@@ -794,16 +811,16 @@ Router.register('bdi', async () => {
       add('COFINS', 'Cofins', 'Transição tributária', 'PV', tg.COFINS || 0);
       add('ISS', 'ISS - Imposto Sobre Serviços', 'LC 116/2003', 'PV', tg.ISS || 0);
       add('CPRB', 'CPRB - Contribuição Previdenciária s/ Receita Bruta', 'Lei 12.546/2011', 'PV', tg.CPRB || 0);
-      add('CBS', 'CBS - Contribuição sobre Bens e Serviços', 'Reforma Tributária', p.regime_tributario==='Simples Nacional'?'DAS':'IVA nominal', tg.CBS || 0);
-      add('IBS', 'IBS - Imposto sobre Bens e Serviços', 'Reforma Tributária', p.regime_tributario==='Simples Nacional'?'DAS':'IVA nominal', tg.IBS || 0);
-      if (p.regime_tributario !== 'Simples Nacional') {
+      add('CBS', 'CBS - Contribuição sobre Bens e Serviços', 'Reforma Tributária', isSimples(p)?'DAS':'IVA nominal', tg.CBS || 0);
+      add('IBS', 'IBS - Imposto sobre Bens e Serviços', 'Reforma Tributária', isSimples(p)?'DAS':'IVA nominal', tg.IBS || 0);
+      if (!isSimples(p)) {
         add('IVAeq', 'IVA equivalente aplicado ao BDI', 'Calculado', 'Multiplicador', tg.IVAeq || 0);
       }
       if (!rows.length) return '';
       return `<div style="margin-bottom:12px">
         <div style="background:${gdef.bg};border:1px solid ${gdef.cor}33;border-radius:8px 8px 0 0;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
           <div class="fw-700 text-sm" style="color:${gdef.cor}">T — Tributos</div>
-          <div class="fw-700" style="color:${gdef.cor}">T ${Utils.num(tg.T||0,4)}%${p.regime_tributario !== 'Simples Nacional' && (tg.IVAeq||0)>0 ? ` · IVAeq ${Utils.num(tg.IVAeq,4)}%` : ''}</div>
+          <div class="fw-700" style="color:${gdef.cor}">T ${Utils.num(tg.T||0,4)}%${!isSimples(p) && (tg.IVAeq||0)>0 ? ` · IVAeq ${Utils.num(tg.IVAeq,4)}%` : ''}</div>
         </div>
         <div style="border:1px solid ${gdef.cor}33;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
           <table style="font-size:.8rem;width:100%">
@@ -835,10 +852,10 @@ Router.register('bdi', async () => {
         <!-- Cabeçalho -->
         <div style="background:var(--c-bg);border-radius:8px;padding:12px 16px;margin-bottom:16px;border:1px solid var(--c-border)">
           <div class="fw-700 text-sm">${Utils.esc(p.nome_perfil)}</div>
-          <div class="text-xs text-2 mt-1">${p.regime_tributario} · ${p.tipo_obra||'—'} · Vigência: ${p.vigencia||'—'}
+          <div class="text-xs text-2 mt-1">${simplesLabel(p)} · ${regimePrevidenciarioEfetivo(p)} · ${p.tipo_obra||'—'} · Vigência: ${p.vigencia||'—'}
             ${p.usa_reforma_tributaria?' · ⚖️ Reforma Tributária':''}</div>
         </div>
-        ${p.regime_tributario==='Simples Nacional' ? `
+        ${isSimples(p) ? `
           <div style="background:var(--c-warning-l);border:1px solid #f59e0b44;border-radius:8px;padding:10px 12px;margin-bottom:12px">
             <div class="fw-700 text-sm" style="color:var(--c-warning)">Simples Nacional</div>
             <div class="text-xs text-2">RBT12 ${Utils.moeda(tg.simples?.rbt12||0)} · ${tg.simples?.faixa||'—'}ª faixa · alíquota efetiva ${Utils.num(tg.simples?.aliquota_efetiva||0,4)}%. IRPJ (${Utils.num(tg.simples?.original?.irpj||0,4)}%) e CSLL (${Utils.num(tg.simples?.original?.csll||0,4)}%) ficam fora de T e são absorvidos pela taxa de lucro bruto.</div>
@@ -895,7 +912,7 @@ Router.register('bdi', async () => {
           <div style="color:#64748b">── Substituindo ──────────────────────────────────────────────────</div>
           <div>K=${Utils.num(tg.K,8)} · AC=${Utils.num(tg.AC,4)}% · SG=${Utils.num(tg.S,4)}% · R=${Utils.num(tg.R,4)}% · DF=${Utils.num(tg.DF,4)}% · L=${Utils.num(tg.L,4)}%</div>
           <div>PIS=${Utils.num(tg.PIS||0,4)}% · Cofins=${Utils.num(tg.COFINS||0,4)}% · ISS=${Utils.num(tg.ISS||0,4)}% · CPRB=${Utils.num(tg.CPRB||0,4)}% · CBS=${Utils.num(tg.CBS||0,4)}% · IBS=${Utils.num(tg.IBS||0,4)}% · T=${Utils.num(tg.T,4)}%</div>
-          ${anoPerfil(p) >= 2027 && p.regime_tributario!=='Simples Nacional' ? `<div style="color:#94a3b8">f = (1 - redutor setorial) × (1 - redutor governamental) = ${Utils.num((tg.FATOR_EFETIVO||0)/100,6)} · IVA aplicável ${Utils.num(tg.IVA_APLICAVEL||0,4)}%<br>IVAeq = max(0; IVA nominal × ((K × f - %MATcd) / K)) = ${Utils.num(tg.IVAeq||0,4)}% · %MATcd ${Utils.num(tg.PERCENTUAL_MATCD||0,4)}%</div>` : ''}
+          ${anoPerfil(p) >= 2027 && !isSimples(p) ? `<div style="color:#94a3b8">f = (1 - redutor setorial) × (1 - redutor governamental) = ${Utils.num((tg.FATOR_EFETIVO||0)/100,6)} · IVA aplicável ${Utils.num(tg.IVA_APLICAVEL||0,4)}%<br>IVAeq = max(0; IVA nominal × ((K × f - %MATcd) / K)) = ${Utils.num(tg.IVAeq||0,4)}% · %MATcd ${Utils.num(tg.PERCENTUAL_MATCD||0,4)}%</div>` : ''}
           <div style="color:#94a3b8">Ano ${f.ano || tg.ano || anoPerfil(p)} · T exclui IRPJ e CSLL.</div>
           <div>${Utils.esc(f.texto || '')}</div>
           <div style="color:#64748b">── Resultado ─────────────────────────────────────────────────────</div>

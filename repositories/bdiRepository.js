@@ -131,8 +131,7 @@ function normalizarPerfilBdi(row) {
 }
 
 function cprbPerfil(p) {
-  const desonerado = p?.regime_tributario === 'Desonerado' || p?.regime_previdenciario === 'Desonerado';
-  if (!desonerado) return 0;
+  if (!bdiRules.contratoDesonerado(p)) return 0;
   const ano = anoPerfil(p);
   if (ano <= 2024) return 4.5;
   if (ano === 2025) return 3.6;
@@ -146,11 +145,50 @@ function ivaeqPerfil(p, grupos = {}) {
   ).IVAeq;
 }
 
+function regimeTributarioPayload(d = {}) {
+  const regime = d.regime_tributario || 'Normal';
+  return regime === 'Desonerado' ? 'Normal' : regime;
+}
+
+function regimePrevidenciarioPayload(d = {}) {
+  if (d.regime_previdenciario === 'Desonerado' || d.regime_previdenciario === 'Onerado') return d.regime_previdenciario;
+  return d.regime_tributario === 'Desonerado' ? 'Desonerado' : 'Onerado';
+}
+
+function aplicarFiltrosBdi(where, params, query = {}, alias = 'b') {
+  const prefix = alias ? `${alias}.` : '';
+  if (query.tipo) { where.push(`${prefix}tipo_obra=?`); params.push(query.tipo); }
+  if (query.ano) { where.push(`${prefix}ano_orcamento=?`); params.push(query.ano); }
+  if (query.quartil) { where.push(`${prefix}quartil=?`); params.push(query.quartil); }
+  if (query.faixa_simples) { where.push(`${prefix}simples_faixa=?`); params.push(query.faixa_simples); }
+  if (query.q) { where.push(`${prefix}nome_perfil LIKE ?`); params.push(`%${query.q}%`); }
+
+  if (query.simples) {
+    const valor = String(query.simples).toLowerCase();
+    if (['simples', 'sim', '1', 'true', 's'].includes(valor)) {
+      where.push(`${prefix}regime_tributario='Simples Nacional'`);
+    } else if (['nao', 'não', 'normal', '0', 'false', 'n'].includes(valor)) {
+      where.push(`COALESCE(${prefix}regime_tributario,'Normal')<>'Simples Nacional'`);
+    }
+  } else if (query.regime) {
+    where.push(`${prefix}regime_tributario=?`);
+    params.push(query.regime);
+  }
+
+  if (query.regime_previdenciario) {
+    if (query.regime_previdenciario === 'Desonerado') {
+      where.push(`(COALESCE(${prefix}regime_previdenciario,'')='Desonerado' OR (COALESCE(${prefix}regime_previdenciario,'')='' AND ${prefix}regime_tributario='Desonerado'))`);
+    } else if (query.regime_previdenciario === 'Onerado') {
+      where.push(`COALESCE(${prefix}regime_previdenciario, CASE WHEN ${prefix}regime_tributario='Desonerado' THEN 'Desonerado' ELSE 'Onerado' END)='Onerado'`);
+    }
+  }
+}
+
 function perfilPayload(d) {
   return [
     String(d.nome_perfil || '').trim(),
     d.tipo_obra || null,
-    d.regime_tributario || 'Normal',
+    regimeTributarioPayload(d),
     d.descricao || null,
     d.usa_reforma_tributaria ? 1 : 0,
     d.vigencia || null,
@@ -166,7 +204,7 @@ function perfilPayload(d) {
     toNum(d.ivaeq_percentual, 0),
     d.iss_percentual_manual === '' || d.iss_percentual_manual == null ? null : toNum(d.iss_percentual_manual, 0),
     d.id_orcamento_ivaeq || null,
-    d.regime_previdenciario || 'Onerado',
+    regimePrevidenciarioPayload(d),
     d.simples_faixa || null,
     d.simples_faixa_label || null,
     d.simples_receita_limite || null,
@@ -321,19 +359,15 @@ async function listPerfis(db, query = {}) {
       ORDER BY tipo_obra, nome_perfil`, [...catalog.params, ...tenant.params]);
   }
 
-  const { tipo, regime, ano, quartil, faixa_simples, q } = query;
   let sql = `
     SELECT b.*, COUNT(c.id_componente) AS qtd_componentes
     FROM perfis_bdi b
     LEFT JOIN componentes_bdi c ON c.id_perfil_bdi=b.id_perfil_bdi AND c.ativo=1
     WHERE 1=1`;
   const params = [];
-  if (tipo) { sql += ' AND b.tipo_obra=?'; params.push(tipo); }
-  if (regime) { sql += ' AND b.regime_tributario=?'; params.push(regime); }
-  if (ano) { sql += ' AND b.ano_orcamento=?'; params.push(ano); }
-  if (quartil) { sql += ' AND b.quartil=?'; params.push(quartil); }
-  if (faixa_simples) { sql += ' AND b.simples_faixa=?'; params.push(faixa_simples); }
-  if (q) { sql += ' AND b.nome_perfil LIKE ?'; params.push(`%${q}%`); }
+  const where = [];
+  aplicarFiltrosBdi(where, params, query, 'b');
+  if (where.length) sql += ` AND ${where.join(' AND ')}`;
   sql += ' GROUP BY b.id_perfil_bdi ORDER BY b.tipo_obra, b.nome_perfil';
   return all(db, sql, params);
 }
@@ -347,12 +381,7 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
   const params = [];
   if (isTenant) where.push("COALESCE(b.tenant_override_status,'active')='active'");
   else where.push(visibleCatalogClause('b', hasOverrides));
-  if (query.tipo) { where.push('b.tipo_obra=?'); params.push(query.tipo); }
-  if (query.regime) { where.push('b.regime_tributario=?'); params.push(query.regime); }
-  if (query.ano) { where.push('b.ano_orcamento=?'); params.push(query.ano); }
-  if (query.quartil) { where.push('b.quartil=?'); params.push(query.quartil); }
-  if (query.faixa_simples) { where.push('b.simples_faixa=?'); params.push(query.faixa_simples); }
-  if (query.q) { where.push('b.nome_perfil LIKE ?'); params.push(`%${query.q}%`); }
+  aplicarFiltrosBdi(where, params, query, 'b');
   return {
     sql: `
       SELECT ${idExpr} AS id_perfil_bdi, b.nome_perfil, b.tipo_obra, b.regime_tributario,

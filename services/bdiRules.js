@@ -39,8 +39,14 @@ function parametrosDoAno(ano) {
   return PARAMETROS_TRIBUTARIOS[anoCalculo(ano)];
 }
 
+function regimePrevidenciarioEfetivo(perfil = {}) {
+  if (perfil.regime_previdenciario === 'Desonerado') return 'Desonerado';
+  if (perfil.regime_previdenciario === 'Onerado') return 'Onerado';
+  return perfil.regime_tributario === 'Desonerado' ? 'Desonerado' : 'Onerado';
+}
+
 function contratoDesonerado(perfil = {}) {
-  return perfil.regime_tributario === 'Desonerado' || perfil.regime_previdenciario === 'Desonerado';
+  return regimePrevidenciarioEfetivo(perfil) === 'Desonerado';
 }
 
 function fatorK({ AC = 0, S = 0, R = 0, DF = 0, L = 0 } = {}) {
@@ -230,6 +236,8 @@ module.exports = {
   PARAMETROS_TRIBUTARIOS,
   SIMPLES_ANEXO_IV,
   parametrosDoAno,
+  regimePrevidenciarioEfetivo,
+  contratoDesonerado,
   fatorK,
   redutoresPerfil,
   aliquotasIva,

@@ -83,6 +83,117 @@ async function tableExists(connection, table) {
   return rows.length > 0;
 }
 
+function previdenciarioEfetivo(perfil = {}) {
+  if (perfil.regime_previdenciario === 'Desonerado') return 'Desonerado';
+  if (perfil.regime_previdenciario === 'Onerado') return 'Onerado';
+  return perfil.regime_tributario === 'Desonerado' ? 'Desonerado' : 'Onerado';
+}
+
+function nomeComRegimePrevidenciario(nome = '', regime = 'Onerado') {
+  const limpo = String(nome || 'BDI Simples Nacional')
+    .replace(/\s+-\s+(Onerado|Desonerado)$/i, '')
+    .trim();
+  return `${limpo} - ${regime}`;
+}
+
+async function normalizarRegimesPrevidenciariosCatalogo(connection) {
+  if (!await tableExists(connection, 'perfis_bdi')) return { normalizados: 0, simplesCriados: 0 };
+
+  const [normalizados] = await connection.execute(`
+    UPDATE perfis_bdi
+    SET regime_previdenciario='Desonerado'
+    WHERE regime_tributario='Desonerado'
+      AND COALESCE(regime_previdenciario,'') <> 'Desonerado'`);
+
+  const [simples] = await connection.query(`
+    SELECT *
+    FROM perfis_bdi
+    WHERE regime_tributario='Simples Nacional'
+    ORDER BY id_perfil_bdi`);
+  let simplesCriados = 0;
+
+  for (const perfil of simples) {
+    const atual = previdenciarioEfetivo(perfil);
+    const alvo = atual === 'Desonerado' ? 'Onerado' : 'Desonerado';
+    const [existentes] = await connection.execute(`
+      SELECT id_perfil_bdi
+      FROM perfis_bdi
+      WHERE regime_tributario='Simples Nacional'
+        AND COALESCE(tipo_obra,'')=COALESCE(?, '')
+        AND COALESCE(ano_orcamento,0)=COALESCE(?, 0)
+        AND COALESCE(quartil,'')=COALESCE(?, '')
+        AND COALESCE(simples_faixa,0)=COALESCE(?, 0)
+        AND COALESCE(regime_previdenciario, CASE WHEN regime_tributario='Desonerado' THEN 'Desonerado' ELSE 'Onerado' END)=?
+      LIMIT 1`,
+    [perfil.tipo_obra, perfil.ano_orcamento, perfil.quartil, perfil.simples_faixa, alvo]);
+    if (existentes.length) continue;
+
+    const [insert] = await connection.execute(`
+      INSERT INTO perfis_bdi
+      (nome_perfil,tipo_obra,regime_tributario,descricao,bdi_percentual,situacao,usa_reforma_tributaria,
+       vigencia,observacoes,ano_orcamento,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,quartil,
+       cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,credito_bdi_ivaeq,
+       regime_previdenciario,simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,
+       simples_irpj_percentual,simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,
+       usa_iva_manual,simples_rbt12)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      nomeComRegimePrevidenciario(perfil.nome_perfil, alvo),
+      perfil.tipo_obra,
+      'Simples Nacional',
+      perfil.descricao,
+      perfil.bdi_percentual,
+      perfil.situacao,
+      perfil.usa_reforma_tributaria,
+      perfil.vigencia,
+      perfil.observacoes,
+      perfil.ano_orcamento,
+      perfil.ivaeq_percentual,
+      perfil.iss_percentual_manual,
+      perfil.id_orcamento_ivaeq,
+      perfil.quartil,
+      perfil.cbs_percentual,
+      perfil.ibs_percentual,
+      perfil.fator_efetivo_ivaeq,
+      perfil.percentual_mat_ivaeq,
+      perfil.credito_bdi_ivaeq,
+      alvo,
+      perfil.simples_faixa,
+      perfil.simples_faixa_label,
+      perfil.simples_receita_limite,
+      perfil.simples_aliquota_efetiva,
+      perfil.simples_irpj_percentual,
+      perfil.simples_csll_percentual,
+      perfil.redutor_setorial_ivaeq,
+      perfil.redutor_governamental_ivaeq,
+      perfil.usa_iva_manual,
+      perfil.simples_rbt12,
+    ]);
+
+    const novoId = insert.insertId;
+    await connection.execute(`
+      INSERT INTO componentes_bdi
+      (id_perfil_bdi,grupo,codigo,descricao,base_legal,percentual,incide_sobre,ativo,ordem,observacoes)
+      SELECT ?,grupo,codigo,descricao,base_legal,percentual,incide_sobre,ativo,ordem,observacoes
+      FROM componentes_bdi
+      WHERE id_perfil_bdi=?`,
+    [novoId, perfil.id_perfil_bdi]);
+    simplesCriados += 1;
+  }
+
+  return { normalizados: normalizados.affectedRows || 0, simplesCriados };
+}
+
+async function normalizarRegimesPrevidenciariosTenant(connection) {
+  if (!await tableExists(connection, 'tenant_perfis_bdi')) return { normalizados: 0 };
+  const [normalizados] = await connection.execute(`
+    UPDATE tenant_perfis_bdi
+    SET regime_previdenciario='Desonerado'
+    WHERE regime_tributario='Desonerado'
+      AND COALESCE(regime_previdenciario,'') <> 'Desonerado'`);
+  return { normalizados: normalizados.affectedRows || 0 };
+}
+
 async function recalcularCatalogo(connection) {
   if (!await tableExists(connection, 'perfis_bdi')) return { lidos: 0, recalculados: 0, erros: [] };
   const [perfis] = await connection.query(`
@@ -155,7 +266,12 @@ async function recalcularTenant(connection) {
 async function recalcularMysqlBdiValores(config) {
   const connection = await createMysqlConnection(config);
   try {
+    const sincronizacao = {
+      catalogo: await normalizarRegimesPrevidenciariosCatalogo(connection),
+      tenant: await normalizarRegimesPrevidenciariosTenant(connection),
+    };
     return {
+      sincronizacao,
       catalogo: await recalcularCatalogo(connection),
       tenant: await recalcularTenant(connection),
     };
@@ -164,4 +280,10 @@ async function recalcularMysqlBdiValores(config) {
   }
 }
 
-module.exports = { BDI_COLUMNS, ensureMysqlBdiSchema, recalcularMysqlBdiValores };
+module.exports = {
+  BDI_COLUMNS,
+  ensureMysqlBdiSchema,
+  recalcularMysqlBdiValores,
+  normalizarRegimesPrevidenciariosCatalogo,
+  normalizarRegimesPrevidenciariosTenant,
+};

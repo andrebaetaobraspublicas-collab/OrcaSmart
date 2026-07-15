@@ -105,6 +105,22 @@ async function testarRegras() {
   perto(simplesFaixa6Referencia.simples.aliquota_efetiva, 15.75);
   perto(simplesFaixa6Referencia.CBS, 3.9375);
   perto(simplesFaixa6Referencia.T, 3.9375);
+
+  const simples2027Onerado = rules.calcularBdi({
+    ano_orcamento: 2027,
+    regime_tributario: 'Simples Nacional',
+    regime_previdenciario: 'Onerado',
+    simples_faixa: 6,
+  }, grupos);
+  const simples2027Desonerado = rules.calcularBdi({
+    ano_orcamento: 2027,
+    regime_tributario: 'Simples Nacional',
+    regime_previdenciario: 'Desonerado',
+    simples_faixa: 6,
+  }, grupos);
+  perto(simples2027Onerado.CPRB, 0);
+  perto(simples2027Desonerado.CPRB, 1.8);
+  assert.ok(simples2027Desonerado.bdi > simples2027Onerado.bdi);
 }
 
 async function testarPersistenciaRepository() {
