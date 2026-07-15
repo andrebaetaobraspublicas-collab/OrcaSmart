@@ -1,7 +1,7 @@
 /* js/reformaTributaria.js - Calculadora BDIPro incorporada */
 
 Router.register('reforma-tributaria', async () => {
-  const src = 'embedded/bdipro.html?v=20260712-bdipro-sem-manual';
+  const src = 'embedded/bdipro.html?v=20260715-bdi-personalizado-simples-alert';
   document.getElementById('pageContent').innerHTML = `
     <div class="rt-bdipro-shell">
       <div class="rt-bdipro-framebar">
@@ -126,11 +126,13 @@ Router.register('reforma-tributaria', async () => {
     if (data.type !== 'orcasmart:bdi-personalizado') return;
     try {
       const perfil = await cadastrarBdiPersonalizado(data.payload || {});
+      alert('BDI personalizado incluído no módulo BDI.');
       notify('success', 'BDI personalizado incluído no módulo BDI.');
       sendResult(data.requestId, { ok: true, perfil });
     } catch (err) {
       const message = err?.message || 'Não foi possível incluir o BDI personalizado.';
       notify('error', message);
+      alert(message);
       sendResult(data.requestId, { ok: false, error: message });
     }
   };

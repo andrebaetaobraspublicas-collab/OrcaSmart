@@ -596,6 +596,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
           <div class="kpi"><div class="l">IVA equivalente</div><div class="v" id="simKpiIvaeq">—</div></div>
           <div class="kpi price-kpi"><div class="l">Preço de venda</div><div class="v" id="simKpiPreco">—</div></div>
         </section>
+        <div class="actions" style="margin:0 0 16px;padding:0;background:transparent;border:0">
+          <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizadoTopo" type="button">➕ Incluir BDI personalizado</button>
+        </div>
 
         <section class="maincard sim-summary">
           <h2>Resumo automático</h2>
@@ -1323,6 +1326,7 @@ function exportarWordSimples(){baixarSimples('relatorio_bdipro_simples.doc','app
 function exportarPdfSimples(){const w=window.open('','_blank');if(w){w.document.write(relatorioSimplesHtml()+`<script>setTimeout(()=>print(),300)<\/script>`);w.document.close()}}
 function aplicarSimplesNoPrincipal(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());window.__SimplesBDIResult={ano:res.ano,ivaeq:res.ivaeq,bdi:res.bdi,totalTribEfetivo:res.T,origem:'Simples Nacional',detalhe:res};alert('IVA equivalente do Simples Nacional aplicado ao cálculo paramétrico do BDIPro.');showScreen('param')}
 document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('#screenSimples input,#screenSimples select,#screenSimples textarea').forEach(el=>{el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){if(el.id==='simTipoObra'||el.id==='simQuartilBdi')aplicarParametrosBdiSimples();recalcularSimples()})});document.querySelectorAll('#screenSimples .sim-tab').forEach(btn=>{btn.addEventListener('click',function(){document.querySelectorAll('#screenSimples .sim-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('#screenSimples .tab-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');const panel=$sim('simTab_'+btn.dataset.tab);if(panel)panel.classList.add('active');recalcularSimples()})});$sim('simExportCsv')?.addEventListener('click',exportarCsvSimples);$sim('simExportWord')?.addEventListener('click',exportarWordSimples);$sim('simExportPdf')?.addEventListener('click',exportarPdfSimples);$sim('simAplicarPrincipal')?.addEventListener('click',aplicarSimplesNoPrincipal);$sim('simSalvarBdiPersonalizado')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
+document.addEventListener('DOMContentLoaded',function(){$sim('simSalvarBdiPersonalizadoTopo')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
 window.initSimples=initSimples;
 
 const transicao=[
