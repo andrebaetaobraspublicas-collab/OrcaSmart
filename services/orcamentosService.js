@@ -382,9 +382,11 @@ td{border:1px solid #dbe3ef;padding:5px;vertical-align:top}.num{text-align:right
 
 function pdfText(value) {
   return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x20-\x7E]/g, ' ')
+    .normalize('NFC')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, '-')
+    .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -393,13 +395,91 @@ function pdfEscape(value) {
   return pdfText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
-function buildSimplePdf(lines) {
+function pdfApproxWidth(text, size) {
+  return pdfText(text).length * size * 0.48;
+}
+
+function pdfWrap(text, width, size, maxLines = 2) {
+  const words = pdfText(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  const limit = Math.max(10, Math.floor(width / (size * 0.60)));
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= limit) {
+      line = next;
+    } else {
+      if (line) lines.push(line);
+      line = word;
+    }
+  });
+  if (line) lines.push(line);
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    kept[maxLines - 1] = `${kept[maxLines - 1].slice(0, Math.max(0, limit - 3)).trim()}...`;
+    return kept;
+  }
+  return lines.length ? lines : [''];
+}
+
+function buildProfessionalPdf(orcamento, dados) {
   const pageWidth = 842;
   const pageHeight = 595;
-  const lineHeight = 13;
-  const maxLinesPerPage = 38;
+  const margin = 30;
+  const tableLeft = margin;
+  const tableTop = 420;
+  const footerY = 30;
+  const rowBottomLimit = 54;
+  const cols = [
+    { key: 'item', title: 'ITEM', width: 42, align: 'left' },
+    { key: 'codigo', title: 'CODIGO', width: 78, align: 'left' },
+    { key: 'fonte', title: 'FONTE', width: 50, align: 'left' },
+    { key: 'descricao', title: 'DESCRICAO DOS SERVICOS', width: 258, align: 'left' },
+    { key: 'unidade', title: 'UN', width: 34, align: 'center' },
+    { key: 'quantidade', title: 'QTD.', width: 62, align: 'right' },
+    { key: 'custoUnitario', title: 'CUSTO UNIT.', width: 74, align: 'right' },
+    { key: 'bdi', title: 'BDI', width: 42, align: 'right' },
+    { key: 'precoUnitario', title: 'PRECO UNIT.', width: 74, align: 'right' },
+    { key: 'valor', title: 'VALOR', width: 80, align: 'right' },
+  ];
+  const tableWidth = cols.reduce((sum, col) => sum + col.width, 0);
+  const sectionTotals = new Map();
+  let activeSection = null;
+  (dados.linhas || []).forEach((linha) => {
+    if (linha.tipo === 'section') {
+      activeSection = linha.item || `section-${sectionTotals.size + 1}`;
+      sectionTotals.set(activeSection, 0);
+    } else if (activeSection) {
+      sectionTotals.set(activeSection, (sectionTotals.get(activeSection) || 0) + Number(linha.valor || 0));
+    }
+  });
+  const rows = (dados.linhas || []).map((linha, idx) => {
+    const section = linha.tipo === 'section';
+    const descLines = section ? [pdfText(linha.descricao || 'Secao')] : pdfWrap(linha.descricao, cols[3].width - 8, 7.2, 2);
+    return {
+      ...linha,
+      valor: section ? (sectionTotals.get(linha.item || '') || 0) : linha.valor,
+      zebra: idx % 2 === 0,
+      section,
+      descLines,
+      height: section ? 22 : Math.max(22, 11 + (descLines.length * 8)),
+    };
+  });
   const pages = [];
-  for (let i = 0; i < lines.length; i += maxLinesPerPage) pages.push(lines.slice(i, i + maxLinesPerPage));
+  let current = [];
+  let y = tableTop - 24;
+  rows.forEach((row) => {
+    if (y - row.height < rowBottomLimit && current.length) {
+      pages.push(current);
+      current = [];
+      y = tableTop - 24;
+    }
+    current.push(row);
+    y -= row.height;
+  });
+  if (current.length) pages.push(current);
+  if (!pages.length) pages.push([]);
+
   const objects = [];
   const addObj = (body) => {
     objects.push(body);
@@ -407,56 +487,158 @@ function buildSimplePdf(lines) {
   };
   const catalogId = addObj('<< /Type /Catalog /Pages 2 0 R >>');
   objects.push(null);
-  const fontId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const fontId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const fontBoldId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
   const pageIds = [];
-  pages.forEach((pageLines) => {
-    const commands = ['BT', '/F1 9 Tf', '1 0 0 1 36 560 Tm'];
-    pageLines.forEach((line, idx) => {
-      if (idx > 0) commands.push(`0 -${lineHeight} Td`);
-      commands.push(`(${pdfEscape(line).slice(0, 150)}) Tj`);
-    });
+
+  const money = (value) => `R$ ${fmtMoeda(value)}`;
+  const num = (value, digits = 3) => fmtNum(value, digits);
+  const cleanStatus = pdfText(orcamento.status || 'Em elaboracao');
+  const generatedAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+  const drawText = (commands, text, x, yText, size = 8, opts = {}) => {
+    const font = opts.bold ? 'F2' : 'F1';
+    const color = opts.color || '0.05 0.12 0.23';
+    let tx = x;
+    if (opts.align === 'right') tx = x - pdfApproxWidth(text, size);
+    if (opts.align === 'center') tx = x - (pdfApproxWidth(text, size) / 2);
+    commands.push('BT');
+    commands.push(`${color} rg`);
+    commands.push(`/${font} ${size} Tf`);
+    commands.push(`1 0 0 1 ${tx.toFixed(2)} ${yText.toFixed(2)} Tm`);
+    commands.push(`(${pdfEscape(text)}) Tj`);
     commands.push('ET');
+  };
+  const drawRect = (commands, x, yRect, w, h, fill, stroke = '') => {
+    commands.push('q');
+    if (fill) commands.push(`${fill} rg`);
+    if (stroke) commands.push(`${stroke} RG`);
+    commands.push(`${x.toFixed(2)} ${yRect.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re ${fill && stroke ? 'B' : fill ? 'f' : 'S'}`);
+    commands.push('Q');
+  };
+  const drawLine = (commands, x1, y1, x2, y2, color = '0.80 0.85 0.92', width = 0.4) => {
+    commands.push('q');
+    commands.push(`${color} RG`);
+    commands.push(`${width} w`);
+    commands.push(`${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
+    commands.push('Q');
+  };
+  const drawHeader = (commands, pageNo, totalPages) => {
+    drawRect(commands, 0, 552, pageWidth, 43, '0.04 0.16 0.33');
+    drawText(commands, 'OrcaPRO', margin, 573, 16, { bold: true, color: '1 1 1' });
+    drawText(commands, 'Orcamento sintetico', margin, 558, 8.5, { color: '0.74 0.84 0.96' });
+    drawText(commands, `Pagina ${pageNo} de ${totalPages}`, pageWidth - margin, 566, 8, { align: 'right', color: '0.86 0.92 1' });
+
+    drawText(commands, pdfText(orcamento.nome_orcamento || 'Orcamento'), margin, 528, 16, { bold: true });
+    drawText(commands, `Obra: ${pdfText(orcamento.nome_obra || '-')}`, margin, 512, 8.5, { color: '0.29 0.36 0.46' });
+    drawText(commands, `Versao: ${pdfText(orcamento.versao || '-')}  |  Status: ${cleanStatus}  |  Emitido em: ${generatedAt}`, margin, 499, 8, { color: '0.38 0.44 0.55' });
+
+    const cardY = 445;
+    const cardW = 184;
+    const cards = [
+      ['CUSTO DIRETO', money(dados.custoDireto)],
+      ['BDI', money(dados.valorBdi)],
+      ['TOTAL DO ORCAMENTO', money(dados.total)],
+      ['BDI GLOBAL', `${fmtNum(orcamento.bdi_percentual, 2)}%`],
+    ];
+    cards.forEach((card, idx) => {
+      const x = margin + (idx * (cardW + 12));
+      drawRect(commands, x, cardY, cardW, 45, idx === 2 ? '0.88 0.95 1' : '0.97 0.99 1', '0.82 0.88 0.95');
+      drawText(commands, card[0], x + 10, cardY + 29, 7, { bold: true, color: '0.39 0.46 0.58' });
+      drawText(commands, card[1], x + 10, cardY + 12, 12, { bold: true, color: idx === 2 ? '0.02 0.31 0.62' : '0.05 0.12 0.23' });
+    });
+  };
+  const drawTableHeader = (commands) => {
+    let x = tableLeft;
+    drawRect(commands, tableLeft, tableTop - 20, tableWidth, 20, '0.91 0.95 0.99', '0.75 0.82 0.91');
+    cols.forEach((col) => {
+      drawText(commands, col.title, x + 4, tableTop - 13, 6.5, { bold: true, color: '0.13 0.23 0.38' });
+      x += col.width;
+    });
+    drawLine(commands, tableLeft, tableTop - 20, tableLeft + tableWidth, tableTop - 20, '0.08 0.16 0.28', 0.8);
+  };
+  const drawItemRow = (commands, row, yRow) => {
+    const bg = row.zebra ? '0.98 0.99 1' : '1 1 1';
+    drawRect(commands, tableLeft, yRow - row.height, tableWidth, row.height, bg, '0.86 0.90 0.95');
+    let x = tableLeft;
+    const values = {
+      item: row.item || '',
+      codigo: row.codigo || '',
+      fonte: row.fonte || '',
+      unidade: row.unidade || '',
+      quantidade: num(row.quantidade, 3),
+      custoUnitario: fmtMoeda(row.custoUnitario),
+      bdi: `${fmtNum(row.bdi, 2)}%`,
+      precoUnitario: fmtMoeda(row.precoUnitario),
+      valor: fmtMoeda(row.valor),
+    };
+    cols.forEach((col, idx) => {
+      if (col.key === 'descricao') {
+        row.descLines.forEach((line, lineIdx) => {
+          drawText(commands, line, x + 4, yRow - 9 - (lineIdx * 8), 7.2, { color: '0.05 0.12 0.23' });
+        });
+      } else {
+        const text = values[col.key] || '';
+        const tx = col.align === 'right' ? x + col.width - 4 : col.align === 'center' ? x + (col.width / 2) : x + 4;
+        drawText(commands, text, tx, yRow - 10, idx >= 5 ? 6.7 : 7.0, { align: col.align, color: '0.10 0.18 0.30' });
+      }
+      x += col.width;
+    });
+  };
+  const drawSectionRow = (commands, row, yRow) => {
+    drawRect(commands, tableLeft, yRow - row.height, tableWidth, row.height, '0.06 0.12 0.23');
+    drawText(commands, row.item || '', tableLeft + 8, yRow - 14, 8, { bold: true, color: '1 1 1' });
+    drawText(commands, row.descLines[0] || 'Secao', tableLeft + 58, yRow - 14, 8.5, { bold: true, color: '1 1 1' });
+    drawText(commands, money(row.valor || 0), tableLeft + tableWidth - 10, yRow - 14, 8, { bold: true, align: 'right', color: '1 1 1' });
+  };
+  const drawFooter = (commands, pageNo, totalPages) => {
+    drawLine(commands, margin, footerY + 12, pageWidth - margin, footerY + 12, '0.82 0.87 0.94', 0.5);
+    drawText(commands, 'OrcaPRO - Calculadora de Obras', margin, footerY, 7, { color: '0.45 0.51 0.60' });
+    drawText(commands, `Pagina ${pageNo}/${totalPages}`, pageWidth - margin, footerY, 7, { align: 'right', color: '0.45 0.51 0.60' });
+  };
+
+  pages.forEach((pageRows, pageIdx) => {
+    const commands = [];
+    drawHeader(commands, pageIdx + 1, pages.length);
+    drawTableHeader(commands);
+    let yRow = tableTop - 24;
+    pageRows.forEach((row) => {
+      if (row.section) drawSectionRow(commands, row, yRow);
+      else drawItemRow(commands, row, yRow);
+      yRow -= row.height;
+    });
+    if (pageIdx === pages.length - 1) {
+      const totalY = Math.max(rowBottomLimit + 12, yRow - 54);
+      drawRect(commands, tableLeft + tableWidth - 260, totalY, 260, 44, '0.94 0.97 1', '0.74 0.82 0.92');
+      drawText(commands, 'TOTAL GERAL DO ORCAMENTO', tableLeft + tableWidth - 248, totalY + 27, 8, { bold: true, color: '0.13 0.23 0.38' });
+      drawText(commands, money(dados.total), tableLeft + tableWidth - 12, totalY + 11, 13, { bold: true, align: 'right', color: '0.02 0.31 0.62' });
+    }
+    drawFooter(commands, pageIdx + 1, pages.length);
     const stream = commands.join('\n');
-    const contentId = addObj(`<< /Length ${Buffer.byteLength(stream, 'ascii')} >>\nstream\n${stream}\nendstream`);
-    const pageId = addObj(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    const contentId = addObj(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`);
+    const pageId = addObj(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentId} 0 R >>`);
     pageIds.push(pageId);
   });
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
   const chunks = ['%PDF-1.4\n'];
   const offsets = [0];
   objects.forEach((body, idx) => {
-    offsets[idx + 1] = Buffer.byteLength(chunks.join(''), 'ascii');
+    offsets[idx + 1] = Buffer.byteLength(chunks.join(''), 'latin1');
     chunks.push(`${idx + 1} 0 obj\n${body}\nendobj\n`);
   });
-  const xrefOffset = Buffer.byteLength(chunks.join(''), 'ascii');
+  const xrefOffset = Buffer.byteLength(chunks.join(''), 'latin1');
   chunks.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`);
   for (let i = 1; i <= objects.length; i += 1) chunks.push(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
   chunks.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
-  return Buffer.from(chunks.join(''), 'ascii');
+  return Buffer.from(chunks.join(''), 'latin1');
 }
 
 async function exportarOrcamentoPdf(db, idOrcamento) {
   const { orcamento, dados } = await carregarExportacao(db, idOrcamento);
-  const lines = [
-    'OrcaSmart - Orcamento Sintetico',
-    `Orcamento: ${orcamento.nome_orcamento || ''}`,
-    `Obra: ${orcamento.nome_obra || ''} | Versao: ${orcamento.versao || ''} | Status: ${orcamento.status || ''}`,
-    `Custo direto: R$ ${fmtMoeda(dados.custoDireto)} | BDI: R$ ${fmtMoeda(dados.valorBdi)} | Total: R$ ${fmtMoeda(dados.total)}`,
-    '',
-    'Item   Codigo       Fonte     Un.     Qtd.        Custo Unit.    BDI       Preco Unit.    Valor',
-    '-'.repeat(120),
-  ];
-  dados.linhas.forEach((linha) => {
-    if (linha.tipo === 'section') {
-      lines.push(`${linha.item}  ${linha.descricao}`);
-      return;
-    }
-    lines.push(`${linha.item.padEnd(6)} ${linha.codigo.slice(0, 12).padEnd(12)} ${linha.fonte.slice(0, 8).padEnd(8)} ${linha.unidade.slice(0, 5).padEnd(5)} ${fmtNum(linha.quantidade, 3).padStart(10)} ${fmtMoeda(linha.custoUnitario).padStart(14)} ${fmtNum(linha.bdi, 2).padStart(7)}% ${fmtMoeda(linha.precoUnitario).padStart(14)} ${fmtMoeda(linha.valor).padStart(14)}  ${linha.descricao}`);
-  });
   return {
     filename: `${sanitizeFilename(orcamento.nome_orcamento)}.pdf`,
     contentType: 'application/pdf',
-    buffer: buildSimplePdf(lines),
+    buffer: buildProfessionalPdf(orcamento, dados),
   };
 }
 
