@@ -353,16 +353,31 @@ async function calcBdi(db, pid, options = {}) {
 }
 
 async function recalcAndGet(db, pid, options = {}) {
-  await calcBdi(db, pid, {
+  const calculo = await calcBdi(db, pid, {
     ...options,
     persistCatalog: options.persistCatalog === true || options.forceCatalog === true,
   });
-  return getPerfil(db, pid);
+  const perfil = await getPerfil(db, pid);
+  if (!perfil || !calculo) return perfil;
+  return {
+    ...perfil,
+    bdi_percentual: calculo.bdi,
+    ivaeq_percentual: calculo.IVAeq,
+    simples_aliquota_efetiva: calculo.simples?.aliquota_efetiva ?? perfil.simples_aliquota_efetiva,
+    simples_faixa: calculo.simples?.faixa ?? perfil.simples_faixa,
+    simples_rbt12: calculo.simples?.rbt12 ?? perfil.simples_rbt12,
+    simples_irpj_percentual: calculo.simples?.original?.irpj ?? perfil.simples_irpj_percentual,
+    simples_csll_percentual: calculo.simples?.original?.csll ?? perfil.simples_csll_percentual,
+  };
 }
 
-async function atualizarBdiNaLista(db, rows = []) {
+async function preencherBdiFaltanteNaLista(db, rows = []) {
   const atualizadas = [];
   for (const row of rows || []) {
+    if (toNum(row?.bdi_percentual, 0) > 0) {
+      atualizadas.push(row);
+      continue;
+    }
     try {
       const id = row.id_perfil_bdi;
       const calculo = await calcBdi(db, id, { persist: true, persistCatalog: true });
@@ -377,7 +392,7 @@ async function atualizarBdiNaLista(db, rows = []) {
         continue;
       }
     } catch (_err) {
-      // Mantem o registro original se o recalculo oportunista falhar.
+      // Mantem o registro original se a correção oportunista falhar.
     }
     atualizadas.push(row);
   }
@@ -396,7 +411,7 @@ async function listPerfis(db, query = {}) {
         ${tenant.sql}
       ) AS perfis_bdi_unificados
       ORDER BY tipo_obra, nome_perfil`, [...catalog.params, ...tenant.params]);
-    return atualizarBdiNaLista(db, rows);
+    return preencherBdiFaltanteNaLista(db, rows);
   }
 
   let sql = `
@@ -410,7 +425,7 @@ async function listPerfis(db, query = {}) {
   if (where.length) sql += ` AND ${where.join(' AND ')}`;
   sql += ' GROUP BY b.id_perfil_bdi ORDER BY b.tipo_obra, b.nome_perfil';
   const rows = await all(db, sql, params);
-  return atualizarBdiNaLista(db, rows);
+  return preencherBdiFaltanteNaLista(db, rows);
 }
 
 function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = true) {
@@ -718,7 +733,7 @@ async function createComponente(db, data, options = {}) {
     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     [data.id_perfil_bdi, data.grupo || 'Outros', data.codigo || null, String(data.descricao).trim(), data.base_legal || null,
       toNum(data.percentual, 0), data.incide_sobre || 'CD', data.ativo === 0 ? 0 : 1, data.ordem || 99, data.observacoes || null]);
-  await calcBdi(db, data.id_perfil_bdi);
+  await calcBdi(db, data.id_perfil_bdi, { persist: true, persistCatalog: options.forceCatalog === true });
   return one(db, 'SELECT * FROM componentes_bdi WHERE id_componente=?', [result.lastID]);
 }
 
@@ -754,7 +769,7 @@ async function updateComponente(db, id, data, options = {}) {
     WHERE id_componente=?`,
     [data.grupo || 'Outros', data.codigo || null, String(data.descricao || '').trim(), data.base_legal || null,
       toNum(data.percentual, 0), data.incide_sobre || 'CD', data.ativo === 0 ? 0 : 1, data.ordem || 0, data.observacoes || null, id]);
-  await calcBdi(db, before.id_perfil_bdi);
+  await calcBdi(db, before.id_perfil_bdi, { persist: true, persistCatalog: options.forceCatalog === true });
   return one(db, 'SELECT * FROM componentes_bdi WHERE id_componente=?', [id]);
 }
 
@@ -786,7 +801,7 @@ async function deleteComponente(db, id, options = {}) {
   const before = await one(db, 'SELECT id_perfil_bdi FROM componentes_bdi WHERE id_componente=?', [id]);
   const result = await run(db, 'DELETE FROM componentes_bdi WHERE id_componente=?', [id]);
   if (!result.changes) return false;
-  if (before) await calcBdi(db, before.id_perfil_bdi);
+  if (before) await calcBdi(db, before.id_perfil_bdi, { persist: true, persistCatalog: options.forceCatalog === true });
   return true;
 }
 

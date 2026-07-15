@@ -200,12 +200,18 @@ async function testarPersistenciaRepository() {
     });
     assert.strictEqual(personalizado.quartil, 'Personalizado');
     assert.ok(personalizado.bdi_percentual > 0);
-    await run(db, 'UPDATE perfis_bdi SET bdi_percentual=3.17 WHERE id_perfil_bdi=?', [personalizado.id_perfil_bdi]);
+    const bdiPersonalizadoOriginal = personalizado.bdi_percentual;
+    await run(db, 'UPDATE perfis_bdi SET bdi_percentual=0 WHERE id_perfil_bdi=?', [personalizado.id_perfil_bdi]);
     const personalizadosListados = await repo.listPerfis(db, { quartil: 'Personalizado' });
     const personalizadoListado = personalizadosListados.find(p => p.id_perfil_bdi === personalizado.id_perfil_bdi);
     assert.ok(personalizadoListado);
     assert.ok(personalizadoListado.bdi_percentual > 0);
-    assert.notStrictEqual(Number(personalizadoListado.bdi_percentual).toFixed(2), '3.17');
+    perto(personalizadoListado.bdi_percentual, bdiPersonalizadoOriginal, 0.01);
+    await run(db, 'UPDATE perfis_bdi SET bdi_percentual=3.17 WHERE id_perfil_bdi=?', [personalizado.id_perfil_bdi]);
+    await run(db, "UPDATE componentes_bdi SET percentual=12 WHERE id_perfil_bdi=? AND grupo='AC'", [personalizado.id_perfil_bdi]);
+    const personalizadoRecalculado = await repo.recalcAndGet(db, personalizado.id_perfil_bdi, { persist: false });
+    assert.ok(personalizadoRecalculado.bdi_percentual > 0);
+    assert.notStrictEqual(Number(personalizadoRecalculado.bdi_percentual).toFixed(2), '3.17');
   } finally {
     await new Promise(resolve => db.close(resolve));
   }

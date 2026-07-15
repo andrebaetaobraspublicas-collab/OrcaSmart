@@ -608,7 +608,7 @@ Router.register('bdi', async () => {
   /* ═══════════════════════ DETALHE — EDITOR DE COMPONENTES ══════════════════ */
   async function abrirDetalhe(pid) {
     try {
-      perfilAtivo  = perfis.find(p=>p.id_perfil_bdi==pid) || await API.bdi.perfis.get(pid);
+      perfilAtivo  = await API.bdi.perfis.get(pid);
       compsAtivas  = await API.bdi.perfis.comps(pid);
     } catch(e) { Toast.error(e.message); return; }
     renderDetalhe();
