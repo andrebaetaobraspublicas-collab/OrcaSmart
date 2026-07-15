@@ -184,9 +184,12 @@ function calcularSimples(perfil = {}, grupos = {}) {
   const rbt12Informado = Math.max(0, num(perfil.simples_rbt12));
   const faixa = faixaSimples(rbt12Informado, perfil.simples_faixa);
   const rbt12Calculo = rbt12Informado > 0 ? rbt12Informado : (faixa?.limite || 0);
-  const aliquotaEfetiva = rbt12Calculo > 0 && faixa
+  const aliquotaPadrao = rbt12Calculo > 0 && faixa
     ? Math.max(0, ((rbt12Calculo * faixa.nominal / 100) - faixa.deducao) / rbt12Calculo * 100)
     : Math.max(0, num(perfil.simples_aliquota_efetiva));
+  const usaEfetivaManual = Number(perfil.usa_simples_efetiva_manual) === 1 || perfil.usa_simples_efetiva_manual === true;
+  const aliquotaManual = Math.max(0, num(perfil.simples_aliquota_efetiva));
+  const aliquotaEfetiva = usaEfetivaManual && aliquotaManual > 0 ? aliquotaManual : aliquotaPadrao;
   const parcelasOriginais = decomporSimples(aliquotaEfetiva, faixa);
   const parcelas = transformarSimples(parcelasOriginais, ano);
   const CPRB = contratoDesonerado(perfil) ? parametrosDoAno(ano).cprb : 0;
@@ -219,6 +222,8 @@ function calcularSimples(perfil = {}, grupos = {}) {
       aliquota_nominal: faixa?.nominal || 0,
       parcela_deduzir: faixa?.deducao || 0,
       aliquota_efetiva: aliquotaEfetiva,
+      aliquota_padrao: aliquotaPadrao,
+      manual: usaEfetivaManual,
       original: parcelasOriginais,
       transformado: parcelas,
     },

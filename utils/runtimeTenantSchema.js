@@ -110,6 +110,7 @@ async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
     await ensureColumn(db, 'tenant_perfis_bdi', 'redutor_governamental_ivaeq', 'REAL DEFAULT 0');
     await ensureColumn(db, 'tenant_perfis_bdi', 'usa_iva_manual', 'INTEGER DEFAULT 0');
     await ensureColumn(db, 'tenant_perfis_bdi', 'simples_rbt12', 'REAL DEFAULT 0');
+    await ensureColumn(db, 'tenant_perfis_bdi', 'usa_simples_efetiva_manual', 'INTEGER DEFAULT 0');
   }
 
   await run(db, `

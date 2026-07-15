@@ -6,6 +6,7 @@ const BDI_COLUMNS = Object.freeze({
   redutor_governamental_ivaeq: 'DECIMAL(20,8) NULL DEFAULT 0.0',
   usa_iva_manual: 'BIGINT NULL DEFAULT 0',
   simples_rbt12: 'DECIMAL(20,8) NULL DEFAULT 0.0',
+  usa_simples_efetiva_manual: 'BIGINT NULL DEFAULT 0',
 });
 
 async function ensureTableColumns(connection, table) {
@@ -71,6 +72,7 @@ async function recalcularPerfilMysql(connection, perfil, componentes, updateSql,
     calculo.simples?.original?.csll ?? toNum(perfil.simples_csll_percentual, 0),
     calculo.simples?.faixa ?? perfil.simples_faixa ?? null,
     calculo.simples?.rbt12 ?? toNum(perfil.simples_rbt12, 0),
+    calculo.simples?.manual ? 1 : 0,
     ...updateParams,
   ]);
 }
@@ -135,8 +137,8 @@ async function normalizarRegimesPrevidenciariosCatalogo(connection) {
        cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,credito_bdi_ivaeq,
        regime_previdenciario,simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,
        simples_irpj_percentual,simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,
-       usa_iva_manual,simples_rbt12)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       nomeComRegimePrevidenciario(perfil.nome_perfil, alvo),
       perfil.tipo_obra,
@@ -168,6 +170,7 @@ async function normalizarRegimesPrevidenciariosCatalogo(connection) {
       perfil.redutor_governamental_ivaeq,
       perfil.usa_iva_manual,
       perfil.simples_rbt12,
+      perfil.usa_simples_efetiva_manual || 0,
     ]);
 
     const novoId = insert.insertId;
@@ -214,7 +217,8 @@ async function recalcularCatalogo(connection) {
         componentes,
         `UPDATE perfis_bdi
          SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
-             simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?, simples_rbt12=?
+             simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?, simples_rbt12=?,
+             usa_simples_efetiva_manual=?
          WHERE id_perfil_bdi=?`,
         [perfil.id_perfil_bdi],
       );
@@ -251,7 +255,7 @@ async function recalcularTenant(connection) {
         `UPDATE tenant_perfis_bdi
          SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
              simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?, simples_rbt12=?,
-             tenant_updated_at=CURRENT_TIMESTAMP
+             usa_simples_efetiva_manual=?, tenant_updated_at=CURRENT_TIMESTAMP
          WHERE tenant_id=? AND id_tenant_perfis_bdi=?`,
         [perfil.tenant_id, perfil.id_tenant_perfis_bdi],
       );

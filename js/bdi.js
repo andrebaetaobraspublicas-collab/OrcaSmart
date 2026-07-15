@@ -56,6 +56,7 @@ Router.register('bdi', async () => {
   let perfis = [], perfilAtivo = null, compsAtivas = [];
   let orcamentosRef = [];
   let parametrosAnuais = {};
+  let simplesAnexoIv = [];
   const filtros = { ano:'', tipo:'', simples:'', regime_previdenciario:'', quartil:'', faixa_simples:'' };
 
   function anoPerfil(p) {
@@ -92,6 +93,18 @@ Router.register('bdi', async () => {
   function parametrosAno(anoInformado) {
     const ano = Math.max(2026, Math.min(2033, parseInt(anoInformado) || 2026));
     return parametrosAnuais[ano] || { cbs:0, ibs:0, iss:0 };
+  }
+
+  function calcularAliquotaEfetivaSimples(rbt12, faixaId) {
+    const receitaInformada = parseFloat(String(rbt12 ?? '').replace(',', '.')) || 0;
+    let faixa = receitaInformada > 0
+      ? simplesAnexoIv.find(fx => receitaInformada <= Number(fx.limite || 0))
+      : null;
+    if (!faixa) faixa = simplesAnexoIv.find(fx => String(fx.id) === String(faixaId));
+    if (!faixa) return 0;
+    const receita = receitaInformada > 0 ? receitaInformada : Number(faixa.limite || 0);
+    if (!receita) return 0;
+    return Math.max(0, ((receita * Number(faixa.nominal || 0) / 100) - Number(faixa.deducao || 0)) / receita * 100);
   }
 
   function fatorKComponentes(componentes=[]) {
@@ -139,6 +152,7 @@ Router.register('bdi', async () => {
       ]);
       perfis = lista;
       if (parametros?.anuais) parametrosAnuais = parametros.anuais;
+      if (parametros?.simples_anexo_iv) simplesAnexoIv = parametros.simples_anexo_iv;
       renderLista();
     } catch(e) { Toast.error(e.message); }
   }
@@ -387,12 +401,12 @@ Router.register('bdi', async () => {
           <div class="form-group">
             <label class="form-label">CBS (%)</label>
             <input class="form-control js-ivaeq-param" id="fp_cbs" type="number" step="0.0001"
-              value="${ivaManualForm ? (p.cbs_percentual || 0) : parametrosForm.cbs}" ${ivaManualForm?'':'disabled'}>
+              value="${p.cbs_percentual ?? parametrosForm.cbs}">
           </div>
           <div class="form-group">
             <label class="form-label">IBS (%)</label>
             <input class="form-control js-ivaeq-param" id="fp_ibs" type="number" step="0.0001"
-              value="${ivaManualForm ? (p.ibs_percentual || 0) : parametrosForm.ibs}" ${ivaManualForm?'':'disabled'}>
+              value="${p.ibs_percentual ?? parametrosForm.ibs}">
           </div>
           <div class="form-group">
             <label class="form-label">Redutor setorial</label>
@@ -431,7 +445,7 @@ Router.register('bdi', async () => {
           </div>
           <div class="form-group">
             <label class="form-label">Alíquota efetiva Simples calculada (%)</label>
-            <input class="form-control" id="fp_simples_efetiva" type="number" step="0.0001" readonly
+            <input class="form-control" id="fp_simples_efetiva" type="number" step="0.0001"
               value="${p.simples_aliquota_efetiva || 0}">
           </div>
           <div class="form-group">
@@ -477,12 +491,11 @@ Router.register('bdi', async () => {
       const padrao = parametrosAno(ano);
       const cbsInput = document.getElementById('fp_cbs');
       const ibsInput = document.getElementById('fp_ibs');
-      if (!manual) {
+      const editandoIva = document.activeElement === cbsInput || document.activeElement === ibsInput;
+      if (!manual && !editandoIva) {
         cbsInput.value = padrao.cbs;
         ibsInput.value = padrao.ibs;
       }
-      cbsInput.disabled = !manual;
-      ibsInput.disabled = !manual;
       const pcalc = {
         ano_orcamento: ano,
         regime_tributario: document.getElementById('fp_reg')?.value,
@@ -499,14 +512,41 @@ Router.register('bdi', async () => {
       document.getElementById('fp_ivaeq').value = calc.toFixed(4);
       document.getElementById('fp_ivaeq_hint').textContent = `K ${Utils.num(K,6)} · f ${Utils.num(f,6)} · %MATcd ${Utils.num((parseFloat(pcalc.percentual_mat_ivaeq)||0)*100,4)}%`;
     };
+    const atualizarSimplesEfetivaForm = () => {
+      const input = document.getElementById('fp_simples_efetiva');
+      if (!input || input.dataset.manual === '1') return;
+      const rbt12 = document.getElementById('fp_simples_rbt12')?.value;
+      const faixa = document.getElementById('fp_simples_faixa')?.value;
+      input.value = calcularAliquotaEfetivaSimples(rbt12, faixa).toFixed(4);
+    };
     document.querySelectorAll('.js-ivaeq-param,#fp_ano').forEach(el => el.addEventListener('input', atualizarIvaeqForm));
+    document.querySelectorAll('#fp_cbs,#fp_ibs').forEach(el => el.addEventListener('input', () => {
+      const manual = document.getElementById('fp_iva_manual');
+      if (manual) manual.checked = true;
+    }));
+    document.querySelectorAll('#fp_simples_rbt12,#fp_simples_faixa').forEach(el => el.addEventListener('input', () => {
+      const input = document.getElementById('fp_simples_efetiva');
+      if (input) input.dataset.manual = '0';
+      atualizarSimplesEfetivaForm();
+    }));
+    document.getElementById('fp_simples_faixa')?.addEventListener('change', () => {
+      const input = document.getElementById('fp_simples_efetiva');
+      if (input) input.dataset.manual = '0';
+      atualizarSimplesEfetivaForm();
+    });
+    document.getElementById('fp_simples_efetiva')?.addEventListener('input', e => {
+      e.target.dataset.manual = '1';
+    });
     document.getElementById('fp_iva_manual')?.addEventListener('change', atualizarIvaeqForm);
     document.getElementById('fp_reg')?.addEventListener('change', e=>{
       const alert = document.getElementById('fp_simples_alert');
       if (alert) alert.style.display = e.target.value === 'Simples Nacional' ? '' : 'none';
       atualizarIvaeqForm();
     });
+    const simplesEfetivaInput = document.getElementById('fp_simples_efetiva');
+    if (simplesEfetivaInput) simplesEfetivaInput.dataset.manual = Number(p.usa_simples_efetiva_manual) === 1 ? '1' : '0';
     atualizarIvaeqForm();
+    atualizarSimplesEfetivaForm();
     document.getElementById('btnSalvBdi').addEventListener('click', ()=>salvarPerfil(id));
   }
 
@@ -519,6 +559,7 @@ Router.register('bdi', async () => {
       simples_faixa:         document.getElementById('fp_simples_faixa').value ? parseInt(document.getElementById('fp_simples_faixa').value) : null,
       simples_faixa_label:   document.getElementById('fp_simples_faixa').selectedOptions[0]?.textContent || null,
       simples_aliquota_efetiva: parseFloat(document.getElementById('fp_simples_efetiva').value) || 0,
+      usa_simples_efetiva_manual: document.getElementById('fp_simples_efetiva')?.dataset.manual === '1',
       simples_rbt12:         parseFloat(document.getElementById('fp_simples_rbt12').value) || 0,
       vigencia:              document.getElementById('fp_vig').value.trim() || null,
       ano_orcamento:         parseInt(document.getElementById('fp_ano').value) || null,

@@ -5,6 +5,8 @@ const { ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 module.exports = function bdiRoutes(db, options = {}) {
   const router = express.Router();
   const readDb = options.readDb || db;
+  const writeDbFor = req => (req.user && req.user.role === 'admin' ? readDb : db);
+  const writeOptionsFor = req => ({ readDb, forceCatalog: Boolean(req.user && req.user.role === 'admin') });
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
@@ -23,20 +25,20 @@ module.exports = function bdiRoutes(db, options = {}) {
   }));
 
   router.post('/perfis', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createPerfil(db, req.body || {}));
+    res.status(201).json(await service.createPerfil(writeDbFor(req), req.body || {}, writeOptionsFor(req)));
   }));
 
   router.put('/perfis/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updatePerfil(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await service.updatePerfil(writeDbFor(req), req.params.id, req.body || {}, writeOptionsFor(req)));
   }));
 
   router.delete('/perfis/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'perfil BDI referencial');
-    res.json(await service.deletePerfil(db, req.params.id));
+    res.json(await service.deletePerfil(writeDbFor(req), req.params.id, writeOptionsFor(req)));
   }));
 
   router.post('/perfis/:id/duplicar', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.duplicarPerfil(db, req.params.id, { readDb }));
+    res.status(201).json(await service.duplicarPerfil(writeDbFor(req), req.params.id, writeOptionsFor(req)));
   }));
 
   router.get('/perfis/:id/componentes', asyncHandler(async (req, res) => {
@@ -48,16 +50,16 @@ module.exports = function bdiRoutes(db, options = {}) {
   }));
 
   router.post('/componentes', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createComponente(db, req.body || {}, { readDb }));
+    res.status(201).json(await service.createComponente(writeDbFor(req), req.body || {}, writeOptionsFor(req)));
   }));
 
   router.put('/componentes/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updateComponente(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await service.updateComponente(writeDbFor(req), req.params.id, req.body || {}, writeOptionsFor(req)));
   }));
 
   router.delete('/componentes/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'componente BDI referencial');
-    res.json(await service.deleteComponente(db, req.params.id, { readDb }));
+    res.json(await service.deleteComponente(writeDbFor(req), req.params.id, writeOptionsFor(req)));
   }));
 
   return router;

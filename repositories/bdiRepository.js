@@ -215,6 +215,7 @@ function perfilPayload(d) {
     toNum(d.redutor_governamental_ivaeq, 0),
     d.usa_iva_manual ? 1 : 0,
     toNum(d.simples_rbt12, 0),
+    d.usa_simples_efetiva_manual ? 1 : 0,
   ];
 }
 
@@ -322,13 +323,15 @@ async function calcBdi(db, pid, options = {}) {
     if (tenantMode && scoped.scope === 'tenant') {
       await run(db, `UPDATE tenant_perfis_bdi
         SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
-            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?, tenant_updated_at=?
-        WHERE rowid=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, new Date().toISOString(), scoped.value]);
+            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?,
+            usa_simples_efetiva_manual=?, tenant_updated_at=?
+        WHERE rowid=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, calculo.simples?.manual ? 1 : 0, new Date().toISOString(), scoped.value]);
     } else {
       await run(db, `UPDATE perfis_bdi
         SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
-            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?
-        WHERE id_perfil_bdi=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, pid]);
+            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?,
+            usa_simples_efetiva_manual=?
+        WHERE id_perfil_bdi=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, calculo.simples?.manual ? 1 : 0, pid]);
     }
   }
   return {
@@ -396,6 +399,7 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
              ${isTenant ? 'b.redutor_governamental_ivaeq' : 'NULL'} AS redutor_governamental_ivaeq,
              ${isTenant ? 'b.usa_iva_manual' : '0'} AS usa_iva_manual,
              ${isTenant ? 'b.simples_rbt12' : 'b.simples_rbt12'} AS simples_rbt12,
+             ${isTenant ? 'b.usa_simples_efetiva_manual' : 'b.usa_simples_efetiva_manual'} AS usa_simples_efetiva_manual,
              COUNT(c.${isTenant ? 'rowid' : 'id_componente'}) AS qtd_componentes,
              ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
              ${isTenant ? 'b.tenant_catalog_id' : 'b.id_perfil_bdi'} AS _catalog_id
@@ -408,8 +412,8 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
   };
 }
 
-async function createPerfil(db, data) {
-  if (await hasTenantBdiOverrides(db)) {
+async function createPerfil(db, data, options = {}) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const result = await insertTenantPerfil(db, data, { action: data.tenant_override_action || 'create', catalogId: data.tenant_catalog_id || null });
     const defaults = [
       ['AC', 'AC1', 'Administração Central', 1],
@@ -435,8 +439,8 @@ async function createPerfil(db, data) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
   const defaults = [
     ['AC', 'AC1', 'Administração Central', 1],
     ['S', 'S1', 'Seguros e Garantias', 2],
@@ -452,7 +456,7 @@ async function createPerfil(db, data) {
 }
 
 async function updatePerfil(db, id, data, options = {}) {
-  if (await hasTenantBdiOverrides(db)) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const scoped = scopedPerfilId(id);
     if (scoped.scope === 'tenant') {
       const result = await updateTenantPerfil(db, scoped.value, data);
@@ -489,14 +493,14 @@ async function updatePerfil(db, id, data, options = {}) {
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
       simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
-      usa_iva_manual=?,simples_rbt12=?
+      usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?
     WHERE id_perfil_bdi=?`, [...perfilPayload(data), id]);
   if (!result.changes) return null;
   return recalcAndGet(db, id);
 }
 
-async function deletePerfil(db, id) {
-  if (await hasTenantBdiOverrides(db)) {
+async function deletePerfil(db, id, options = {}) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const scoped = scopedPerfilId(id);
     if (scoped.scope === 'tenant') {
       await run(db, "UPDATE tenant_componentes_bdi SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_perfil_bdi=?", [new Date().toISOString(), scoped.value]);
@@ -523,7 +527,7 @@ async function deletePerfil(db, id) {
 }
 
 async function duplicarPerfil(db, id, options = {}) {
-  const tenantMode = await hasTenantBdiOverrides(db);
+  const tenantMode = !options.forceCatalog && await hasTenantBdiOverrides(db);
   const scoped = scopedPerfilId(id);
   const readDb = options.readDb || db;
   const p = tenantMode ? await getPerfil(scoped.scope === 'tenant' ? db : readDb, id) : await one(db, 'SELECT * FROM perfis_bdi WHERE id_perfil_bdi=?', [id]);
@@ -540,8 +544,8 @@ async function duplicarPerfil(db, id, options = {}) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload({ ...p, nome_perfil: `Copia de ${p.nome_perfil}` }));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload({ ...p, nome_perfil: `Copia de ${p.nome_perfil}` }));
   const comps = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=?', [id]);
   for (const c of comps) {
     await run(db, `
@@ -561,8 +565,8 @@ async function insertTenantPerfil(db, data = {}, options = {}) {
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
      simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,
-     tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
+     usa_simples_efetiva_manual,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
   [
     ...perfilPayload(data),
     options.catalogId || data.tenant_catalog_id || null,
@@ -589,7 +593,7 @@ async function updateTenantPerfil(db, rowid, data = {}) {
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
       simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
-      usa_iva_manual=?,simples_rbt12=?,tenant_updated_at=?
+      usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?,tenant_updated_at=?
     WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`,
   [...perfilPayload(data), new Date().toISOString(), rowid]);
 }
@@ -653,7 +657,7 @@ async function listComponentes(db, idPerfil) {
 }
 
 async function createComponente(db, data, options = {}) {
-  if (await hasTenantBdiOverrides(db)) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const scopedPerfil = scopedPerfilId(data.id_perfil_bdi);
     let tenantPerfilId = scopedPerfil.scope === 'tenant' ? scopedPerfil.value : null;
     if (!tenantPerfilId) {
@@ -681,7 +685,7 @@ async function createComponente(db, data, options = {}) {
 }
 
 async function updateComponente(db, id, data, options = {}) {
-  if (await hasTenantBdiOverrides(db)) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const scoped = scopedComponenteId(id);
     if (scoped.scope === 'tenant') {
       const before = await one(db, 'SELECT id_perfil_bdi FROM tenant_componentes_bdi WHERE rowid=?', [scoped.value]);
@@ -717,7 +721,7 @@ async function updateComponente(db, id, data, options = {}) {
 }
 
 async function deleteComponente(db, id, options = {}) {
-  if (await hasTenantBdiOverrides(db)) {
+  if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const scoped = scopedComponenteId(id);
     let tenantRowid = scoped.scope === 'tenant' ? scoped.value : null;
     let tenantPerfilId = null;

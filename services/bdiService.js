@@ -25,22 +25,22 @@ async function getPerfil(db, id, options = {}) {
   return row;
 }
 
-async function createPerfil(db, data) {
+async function createPerfil(db, data, options = {}) {
   validarNomePerfil(data);
-  return repo.createPerfil(db, data || {});
+  return repo.createPerfil(db, data || {}, options);
 }
 
 async function updatePerfil(db, id, data, options = {}) {
   validarNomePerfil(data);
   const current = options.readDb ? await repo.getPerfil(options.readDb, id).catch(() => null) : null;
   const componentes = options.readDb ? await repo.listComponentes(options.readDb, id).catch(() => []) : [];
-  const row = await repo.updatePerfil(db, id, data || {}, { current, componentes });
+  const row = await repo.updatePerfil(db, id, data || {}, { current, componentes, forceCatalog: options.forceCatalog });
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
   return row;
 }
 
-async function deletePerfil(db, id) {
-  const deleted = await repo.deletePerfil(db, id);
+async function deletePerfil(db, id, options = {}) {
+  const deleted = await repo.deletePerfil(db, id, options);
   if (!deleted) throw httpError(404, 'Perfil nao encontrado.');
   return { mensagem: 'Perfil BDI excluido.' };
 }

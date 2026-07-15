@@ -121,6 +121,16 @@ async function testarRegras() {
   perto(simples2027Onerado.CPRB, 0);
   perto(simples2027Desonerado.CPRB, 1.8);
   assert.ok(simples2027Desonerado.bdi > simples2027Onerado.bdi);
+
+  const simplesManual = rules.calcularBdi({
+    ano_orcamento: 2028,
+    regime_tributario: 'Simples Nacional',
+    simples_rbt12: 1600000,
+    simples_aliquota_efetiva: 12.34,
+    usa_simples_efetiva_manual: 1,
+  }, grupos);
+  perto(simplesManual.simples.aliquota_efetiva, 12.34);
+  assert.strictEqual(simplesManual.simples.manual, true);
 }
 
 async function testarPersistenciaRepository() {
@@ -135,7 +145,8 @@ async function testarPersistenciaRepository() {
       credito_bdi_ivaeq REAL, regime_previdenciario TEXT, simples_faixa INTEGER,
       simples_faixa_label TEXT, simples_receita_limite REAL, simples_aliquota_efetiva REAL,
       simples_irpj_percentual REAL, simples_csll_percentual REAL, redutor_setorial_ivaeq REAL,
-      redutor_governamental_ivaeq REAL, usa_iva_manual INTEGER, simples_rbt12 REAL
+      redutor_governamental_ivaeq REAL, usa_iva_manual INTEGER, simples_rbt12 REAL,
+      usa_simples_efetiva_manual INTEGER
     )`);
     await run(db, `CREATE TABLE componentes_bdi (
       id_componente INTEGER PRIMARY KEY AUTOINCREMENT, id_perfil_bdi INTEGER, grupo TEXT,
@@ -176,7 +187,7 @@ async function testarPersistenciaTenant() {
       regime_previdenciario TEXT, simples_faixa INTEGER, simples_faixa_label TEXT,
       simples_receita_limite REAL, simples_aliquota_efetiva REAL, simples_irpj_percentual REAL,
       simples_csll_percentual REAL, redutor_setorial_ivaeq REAL, redutor_governamental_ivaeq REAL,
-      usa_iva_manual INTEGER, simples_rbt12 REAL, tenant_catalog_id INTEGER,
+      usa_iva_manual INTEGER, simples_rbt12 REAL, usa_simples_efetiva_manual INTEGER, tenant_catalog_id INTEGER,
       tenant_override_action TEXT, tenant_override_status TEXT, tenant_created_at TEXT, tenant_updated_at TEXT
     )`);
     await run(db, `CREATE TABLE tenant_componentes_bdi (

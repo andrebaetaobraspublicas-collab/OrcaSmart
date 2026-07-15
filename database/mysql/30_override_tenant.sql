@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS `tenant_perfis_bdi` (
   `redutor_governamental_ivaeq` DECIMAL(20,8) NULL,
   `usa_iva_manual` BIGINT NULL,
   `simples_rbt12` DECIMAL(20,8) NULL,
+  `usa_simples_efetiva_manual` BIGINT NULL DEFAULT 0,
   `tenant_catalog_id` BIGINT UNSIGNED NULL,
   `tenant_override_action` VARCHAR(255) NOT NULL DEFAULT 'create',
   `tenant_override_status` VARCHAR(255) NOT NULL DEFAULT 'active',
