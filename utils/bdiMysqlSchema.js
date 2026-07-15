@@ -106,6 +106,12 @@ async function normalizarRegimesPrevidenciariosCatalogo(connection) {
     SET regime_previdenciario='Desonerado'
     WHERE regime_tributario='Desonerado'
       AND COALESCE(regime_previdenciario,'') <> 'Desonerado'`);
+  const [personalizados] = await connection.execute(`
+    UPDATE perfis_bdi
+    SET quartil='Personalizado'
+    WHERE COALESCE(quartil,'')=''
+      AND (LOWER(COALESCE(nome_perfil,'')) LIKE '%personalizado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%')`);
 
   const [simples] = await connection.query(`
     SELECT *
@@ -184,7 +190,11 @@ async function normalizarRegimesPrevidenciariosCatalogo(connection) {
     simplesCriados += 1;
   }
 
-  return { normalizados: normalizados.affectedRows || 0, simplesCriados };
+  return {
+    normalizados: normalizados.affectedRows || 0,
+    personalizados: personalizados.affectedRows || 0,
+    simplesCriados,
+  };
 }
 
 async function normalizarRegimesPrevidenciariosTenant(connection) {
@@ -194,7 +204,16 @@ async function normalizarRegimesPrevidenciariosTenant(connection) {
     SET regime_previdenciario='Desonerado'
     WHERE regime_tributario='Desonerado'
       AND COALESCE(regime_previdenciario,'') <> 'Desonerado'`);
-  return { normalizados: normalizados.affectedRows || 0 };
+  const [personalizados] = await connection.execute(`
+    UPDATE tenant_perfis_bdi
+    SET quartil='Personalizado'
+    WHERE COALESCE(quartil,'')=''
+      AND (LOWER(COALESCE(nome_perfil,'')) LIKE '%personalizado%'
+        OR LOWER(COALESCE(descricao,'')) LIKE '%personalizado%')`);
+  return {
+    normalizados: normalizados.affectedRows || 0,
+    personalizados: personalizados.affectedRows || 0,
+  };
 }
 
 async function recalcularCatalogo(connection) {

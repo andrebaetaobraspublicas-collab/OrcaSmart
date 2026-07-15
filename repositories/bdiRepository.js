@@ -155,6 +155,13 @@ function regimePrevidenciarioPayload(d = {}) {
   return d.regime_tributario === 'Desonerado' ? 'Desonerado' : 'Onerado';
 }
 
+function quartilPayload(d = {}) {
+  if (d.quartil) return d.quartil;
+  const nome = String(d.nome_perfil || '').toLowerCase();
+  const descricao = String(d.descricao || '').toLowerCase();
+  return nome.includes('personalizado') || descricao.includes('personalizado') ? 'Personalizado' : null;
+}
+
 function aplicarFiltrosBdi(where, params, query = {}, alias = 'b') {
   const prefix = alias ? `${alias}.` : '';
   if (query.tipo) { where.push(`${prefix}tipo_obra=?`); params.push(query.tipo); }
@@ -195,7 +202,7 @@ function perfilPayload(d) {
     d.observacoes || null,
     d.situacao || 'Ativo',
     d.ano_orcamento || null,
-    d.quartil || null,
+    quartilPayload(d),
     toNum(d.cbs_percentual, 0),
     toNum(d.ibs_percentual, 0),
     toNum(d.fator_efetivo_ivaeq, 0.5),
@@ -345,7 +352,10 @@ async function calcBdi(db, pid, options = {}) {
 }
 
 async function recalcAndGet(db, pid, options = {}) {
-  await calcBdi(db, pid, options);
+  await calcBdi(db, pid, {
+    ...options,
+    persistCatalog: options.persistCatalog === true || options.forceCatalog === true,
+  });
   return getPerfil(db, pid);
 }
 

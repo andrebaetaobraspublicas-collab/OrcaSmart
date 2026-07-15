@@ -186,6 +186,20 @@ async function testarPersistenciaRepository() {
     const memoriaSimples2023 = await repo.memoria(db, simples2023.id_perfil_bdi);
     assert.ok(memoriaSimples2023.totais_grupo.T > 0);
     assert.ok(memoriaSimples2023.totais_grupo.bdi > 0);
+
+    const personalizado = await repo.createPerfil(db, {
+      nome_perfil: 'BDI personalizado',
+      regime_tributario: 'Normal',
+      regime_previdenciario: 'Onerado',
+      ano_orcamento: 2028,
+      descricao: 'BDI personalizado com rubricas definidas pelo usuario.',
+      iss_percentual_manual: 5,
+      cbs_percentual: 8.7,
+      ibs_percentual: 0.1,
+      usa_iva_manual: 1,
+    });
+    assert.strictEqual(personalizado.quartil, 'Personalizado');
+    assert.ok(personalizado.bdi_percentual > 0);
   } finally {
     await new Promise(resolve => db.close(resolve));
   }
