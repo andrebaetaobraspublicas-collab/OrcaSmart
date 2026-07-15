@@ -17,7 +17,7 @@ A rota da SPA é `#riscos-contingencia` e as APIs ficam sob `/api/riscos-conting
 7. Monte Carlo em Web Worker, com progresso, cancelamento, semente e 1.000 a 100.000 iterações.
 8. Dashboard com KPIs, histograma, curva acumulada, percentis, ABC, tornado e contribuições.
 9. Relatório técnico exportável em PDF, Excel, CSV, JSON e Word.
-10. Aplicação da taxa ao BDI por substituição, soma ou somente relatório.
+10. Criação de um novo BDI personalizado, usando um perfil selecionado apenas como modelo.
 
 ## Regras contratuais
 
@@ -25,7 +25,8 @@ A rota da SPA é `#riscos-contingencia` e as APIs ficam sob `/api/riscos-conting
 - Variação de quantitativo em empreitada por preço unitário somente é incluída quando houver justificativa expressa.
 - Em preço global, contratação integrada e semi-integrada, a variação quantitativa pode ser modelada conforme a alocação informada.
 - O sistema não converte automaticamente imprecisão orçamentária em risco do contratado.
-- A aplicação por soma em BDI que já tenha rubrica de risco exige confirmação explícita de possível dupla contagem.
+- A aplicação nunca altera o perfil BDI padronizado usado como origem. O sistema sempre cria um novo perfil do usuário, classificado no quartil `Personalizado`.
+- A aplicação por soma, quando o modelo já possui rubrica de risco, exige confirmação explícita de possível dupla contagem.
 - Grupos de correlação são registrados, mas a versão inicial trata as variáveis como independentes e emite alerta.
 
 ## Fórmulas principais

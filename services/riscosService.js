@@ -129,33 +129,36 @@ async function saveSimulation(db, id, data) {
 async function applyToBdi(db, readDb, id, data) {
   const analysisData = await getAnalysis(db, id);
   const analysis = analysisData.analise;
-  const mode = String(data.modo || 'relatorio');
-  if (!['substituir', 'somar', 'relatorio'].includes(mode)) throw httpError(400, 'Modo de aplicacao ao BDI invalido.');
+  const mode = String(data.modo || 'substituir');
+  if (!['substituir', 'somar'].includes(mode)) throw httpError(400, 'Modo de aplicacao ao BDI invalido.');
   const rate = Math.max(0, Number(data.taxa_contingencia ?? analysis.resultado?.taxa_contingencia ?? analysisData.simulacao?.resumo?.taxa_contingencia ?? 0));
   if (!Number.isFinite(rate)) throw httpError(400, 'Taxa de contingencia invalida.');
-
-  if (mode === 'relatorio') {
-    const application = await repo.recordBdiApplication(db, {
-      id_analise: analysis.id_analise,
-      id_perfil_bdi: data.id_perfil_bdi || null,
-      modo: mode,
-      taxa_contingencia: rate,
-      risco_anterior: 0,
-      risco_novo: 0,
-      observacao: 'Contingencia mantida apenas no relatorio; nenhum perfil BDI foi alterado.',
-    });
-    return { sucesso: true, alterou_bdi: false, aplicacao: application };
-  }
 
   const profileId = requiredText(data.id_perfil_bdi, 'Perfil BDI');
   const profile = await bdiService.getPerfil(readDb, profileId, { persist: false });
   if (!profile) throw httpError(404, 'Perfil BDI nao encontrado.');
-  const components = await bdiService.listComponentes(readDb, profileId);
-  let riskComponent = components.find(component => component.grupo === 'R' && Number(component.ativo) === 1);
-  const previous = riskComponent ? Number(riskComponent.percentual || 0) : 0;
+  const sourceComponents = await bdiService.listComponentes(readDb, profileId);
+  const sourceRiskComponent = sourceComponents.find(component => component.grupo === 'R' && Number(component.ativo) === 1);
+  const previous = sourceRiskComponent ? Number(sourceRiskComponent.percentual || 0) : 0;
   if (previous > 0 && mode === 'somar' && !data.confirmar_dupla_contagem) {
     throw httpError(409, 'Atencao: ja existe rubrica de risco no BDI. Confirme que a contingencia nao esta sendo somada a riscos ja incluidos.');
   }
+
+  const personalizedName = String(data.nome_perfil_personalizado || '').trim()
+    || `BDI personalizado - ${analysis.nome} - analise ${analysis.id_analise}`;
+  const personalized = await bdiService.duplicarPerfil(db, profileId, {
+    readDb,
+    forceCatalog: false,
+    nomePerfil: personalizedName,
+    quartil: 'Personalizado',
+    descricao: `BDI personalizado criado pela analise de riscos #${analysis.id_analise}, a partir de ${profile.nome_perfil}.`,
+    observacoes: `Perfil padronizado de origem preservado: ${profile.nome_perfil}. ${data.observacao || ''}`.trim(),
+  });
+  if (!personalized?.id_perfil_bdi) throw httpError(500, 'Nao foi possivel criar o perfil BDI personalizado.');
+
+  const personalizedId = String(personalized.id_perfil_bdi);
+  const personalizedComponents = await bdiService.listComponentes(db, personalizedId);
+  let riskComponent = personalizedComponents.find(component => component.grupo === 'R' && Number(component.ativo) === 1);
   const next = engine.calculateBdiApplication(previous, rate, mode);
   const options = { readDb, forceCatalog: false };
   if (riskComponent) {
@@ -166,7 +169,7 @@ async function applyToBdi(db, readDb, id, data) {
     }, options);
   } else {
     riskComponent = await bdiService.createComponente(db, {
-      id_perfil_bdi: profileId,
+      id_perfil_bdi: personalizedId,
       grupo: 'R',
       codigo: 'R-CONT',
       descricao: 'Risco/Contingencia',
@@ -180,20 +183,19 @@ async function applyToBdi(db, readDb, id, data) {
   }
   const application = await repo.recordBdiApplication(db, {
     id_analise: analysis.id_analise,
-    id_perfil_bdi: profileId,
+    id_perfil_bdi: personalizedId,
     modo: mode,
     taxa_contingencia: rate,
     risco_anterior: previous,
     risco_novo: next,
     observacao: data.observacao || null,
   });
-  const resolvedProfileId = String(riskComponent?.id_componente || '').startsWith('tenant:')
-    ? `tenant:${riskComponent.id_perfil_bdi}`
-    : profileId;
   return {
     sucesso: true,
     alterou_bdi: true,
-    perfil_bdi: await bdiService.getPerfil(db, resolvedProfileId, { persist: false }).catch(() => null),
+    perfil_personalizado_criado: true,
+    perfil_origem_preservado: { id_perfil_bdi: profileId, nome_perfil: profile.nome_perfil },
+    perfil_bdi: await bdiService.getPerfil(db, personalizedId, { persist: false }).catch(() => personalized),
     componente_risco: riskComponent,
     aplicacao: application,
     alerta_dupla_contagem: previous > 0,

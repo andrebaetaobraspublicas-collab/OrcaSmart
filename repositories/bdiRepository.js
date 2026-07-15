@@ -7,19 +7,19 @@ function toNum(v, d = 0) {
 
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+    db.get(sql, params.map(value => value === undefined ? null : value), (err, row) => err ? reject(err) : resolve(row));
   });
 }
 
 function all(db, sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+    db.all(sql, params.map(value => value === undefined ? null : value), (err, rows) => err ? reject(err) : resolve(rows || []));
   });
 }
 
 function run(db, sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(err) {
+    db.run(sql, params.map(value => value === undefined ? null : value), function onRun(err) {
       err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes });
     });
   });
@@ -585,8 +585,16 @@ async function duplicarPerfil(db, id, options = {}) {
   const readDb = options.readDb || db;
   const p = tenantMode ? await getPerfil(scoped.scope === 'tenant' ? db : readDb, id) : await one(db, 'SELECT * FROM perfis_bdi WHERE id_perfil_bdi=?', [id]);
   if (!p) return null;
+  const duplicateData = {
+    ...p,
+    nome_perfil: options.nomePerfil || `Copia de ${p.nome_perfil}`,
+    quartil: options.quartil || p.quartil,
+    descricao: options.descricao ?? p.descricao,
+    observacoes: options.observacoes ?? p.observacoes,
+    tenant_catalog_id: null,
+  };
   if (tenantMode) {
-    const result = await insertTenantPerfil(db, { ...p, nome_perfil: `Copia de ${p.nome_perfil}`, tenant_catalog_id: null }, { action: 'create' });
+    const result = await insertTenantPerfil(db, duplicateData, { action: 'create' });
     const comps = await listComponentes(scoped.scope === 'tenant' ? db : readDb, id);
     await copyBdiComponentsToTenant(db, comps, result.lastID);
     return recalcAndGet(db, `tenant:${result.lastID}`);
@@ -598,7 +606,7 @@ async function duplicarPerfil(db, id, options = {}) {
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
      simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload({ ...p, nome_perfil: `Copia de ${p.nome_perfil}` }));
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(duplicateData));
   const comps = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=?', [id]);
   for (const c of comps) {
     await run(db, `

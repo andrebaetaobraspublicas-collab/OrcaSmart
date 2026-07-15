@@ -1,13 +1,13 @@
 function all(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.all(sql, params, (error, rows) => (error ? reject(error) : resolve(rows || []))));
+  return new Promise((resolve, reject) => db.all(sql, params.map(value => value === undefined ? null : value), (error, rows) => (error ? reject(error) : resolve(rows || []))));
 }
 
 function one(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.get(sql, params, (error, row) => (error ? reject(error) : resolve(row || null))));
+  return new Promise((resolve, reject) => db.get(sql, params.map(value => value === undefined ? null : value), (error, row) => (error ? reject(error) : resolve(row || null))));
 }
 
 function run(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.run(sql, params, function callback(error) {
+  return new Promise((resolve, reject) => db.run(sql, params.map(value => value === undefined ? null : value), function callback(error) {
     if (error) reject(error);
     else resolve({ lastID: this.lastID, changes: this.changes || 0 });
   }));

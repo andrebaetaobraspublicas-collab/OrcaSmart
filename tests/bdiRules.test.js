@@ -246,6 +246,15 @@ async function testarPersistenciaTenant() {
     const memoria = await repo.memoria(db, perfil.id_perfil_bdi);
     assert.strictEqual(memoria.totais_grupo.IVAeq, 0);
     assert.strictEqual(memoria.totais_grupo.simples.faixa, 4);
+    const personalizado = await repo.duplicarPerfil(db, perfil.id_perfil_bdi, {
+      nomePerfil: 'BDI personalizado da analise de riscos',
+      quartil: 'Personalizado',
+      descricao: 'Copia privada criada sem alterar o modelo.',
+    });
+    const origemPreservada = await repo.getPerfil(db, perfil.id_perfil_bdi);
+    assert.strictEqual(personalizado.quartil, 'Personalizado');
+    assert.strictEqual(personalizado.nome_perfil, 'BDI personalizado da analise de riscos');
+    assert.strictEqual(origemPreservada.nome_perfil, 'Simples tenant');
   } finally {
     await new Promise(resolve => db.close(resolve));
   }

@@ -404,17 +404,34 @@ const RiscosContingencia = {
   async renderBdi(){
     const a=this.state.atual.analise,r=this.state.atual.simulacao?.resumo||a.resultado||{},rate=Number(r.taxa_contingencia||0);
     if(!this.state.bdis.length){try{this.state.bdis=await API.get('/bdi/perfis');}catch(error){Toast.error(error.message);}}
-    const options=this.state.bdis.map(p=>`<option value="${this.esc(p.id_perfil_bdi)}">${this.esc(p.nome_perfil)} — R$ ${this.pct(p.bdi_percentual,4)}</option>`).join('');
-    this.panel('Aplicação ao BDI','Aplique a taxa como rubrica de Risco/Contingência, com registro da operação e alerta de dupla contagem.',`
-      <div class="risk-alert warning"><b>⚠</b><span>Atencao: ja pode existir rubrica de risco no BDI. Verifique se a contingencia calculada nao esta sendo somada a riscos ja incluidos.</span></div>
+    const options=this.state.bdis.map(p=>`<option value="${this.esc(p.id_perfil_bdi)}">${this.esc(p.nome_perfil)} — BDI ${this.pct(p.bdi_percentual,4)}</option>`).join('');
+    this.panel('Aplicação ao BDI','Crie um novo BDI personalizado usando o perfil selecionado apenas como modelo.',`
+      <div class="risk-alert info"><b>ℹ</b><span>O perfil BDI padronizado nunca será alterado. Ao confirmar, o sistema criará uma cópia personalizada exclusiva do usuário.</span></div>
+      <div class="risk-alert warning"><b>⚠</b><span>Se optar por somar, verifique se a contingência não representa riscos já existentes no perfil usado como modelo.</span></div>
       <div class="risk-kpis"><div class="risk-kpi primary"><span class="label">Taxa calculada</span><strong>${this.pct(rate,4)}</strong></div><div class="risk-kpi"><span class="label">Valor da contingencia</span><strong>${this.money(r.contingencia_monetaria)}</strong></div><div class="risk-kpi"><span class="label">Percentil</span><strong>P${this.num(r.percentil_alvo||a.percentil_alvo,1)}</strong></div><div class="risk-kpi"><span class="label">Aplicacoes registradas</span><strong>${this.state.atual.aplicacoes_bdi.length}</strong></div></div>
-      <div class="risk-grid"><div class="risk-field"><label>Perfil BDI</label><select class="form-control" id="riskBdiProfile"><option value="">Selecione...</option>${options}</select></div><div class="risk-field"><label>Modo de aplicacao</label><select class="form-control" id="riskBdiMode"><option value="substituir">Substituir rubrica de risco existente</option><option value="somar">Somar a rubrica de risco existente</option><option value="relatorio">Manter apenas no relatorio</option></select></div><div class="risk-field" style="grid-column:1/-1"><label>Observacao da aplicacao</label><textarea class="form-control" id="riskBdiNote" rows="2"></textarea></div></div>
-      <button class="btn btn-primary" id="riskApplyBdi" ${rate>0?'':'disabled'}>Aplicar contingencia</button>
+      <div class="risk-grid"><div class="risk-field"><label>Perfil BDI usado como modelo</label><select class="form-control" id="riskBdiProfile"><option value="">Selecione...</option>${options}</select></div><div class="risk-field"><label>Tratamento da rubrica de risco na cópia</label><select class="form-control" id="riskBdiMode"><option value="substituir">Substituir pelo valor da contingência</option><option value="somar">Somar à rubrica de risco copiada</option></select></div><div class="risk-field" style="grid-column:1/-1"><label>Observação da aplicação</label><textarea class="form-control" id="riskBdiNote" rows="2"></textarea></div></div>
+      <button class="btn btn-primary" id="riskApplyBdi" ${rate>0?'':'disabled'}>Criar BDI personalizado</button>
       <h3 style="margin-top:22px">Historico</h3><div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>Data</th><th>Perfil</th><th>Modo</th><th>Taxa</th><th>Risco anterior</th><th>Novo risco</th></tr></thead><tbody>${this.state.atual.aplicacoes_bdi.map(x=>`<tr><td>${this.esc(x.criado_em)}</td><td>${this.esc(x.id_perfil_bdi||'-')}</td><td>${this.esc(x.modo)}</td><td>${this.pct(x.taxa_contingencia,4)}</td><td>${this.pct(x.risco_anterior,4)}</td><td>${this.pct(x.risco_novo,4)}</td></tr>`).join('')||'<tr><td colspan="6">Nenhuma aplicacao registrada.</td></tr>'}</tbody></table></div>${this.footerActions('relatorio',null)}`);
     document.getElementById('riskApplyBdi').addEventListener('click',()=>this.applyBdi(false));this.bindFooter();
   },
 
-  async applyBdi(confirmed){const a=this.state.atual.analise,r=this.state.atual.simulacao?.resumo||a.resultado||{},mode=document.getElementById('riskBdiMode').value,profile=document.getElementById('riskBdiProfile').value;if(mode!=='relatorio'&&!profile)return Toast.warning('Selecione um perfil BDI.');try{await API.riscosContingencia.aplicarBdi(a.id_analise,{id_perfil_bdi:profile,modo:mode,taxa_contingencia:r.taxa_contingencia,observacao:document.getElementById('riskBdiNote').value,confirmar_dupla_contagem:confirmed});await this.loadAnalysis(a.id_analise);Toast.success(mode==='relatorio'?'Contingencia mantida no relatorio.':'Taxa aplicada ao BDI com sucesso.');}catch(error){if(!confirmed&&/ja existe rubrica de risco/i.test(error.message)){const ok=await Confirm.ask(error.message,'Possivel dupla contagem',{okText:'Confirmar soma',okClass:'btn btn-primary'});if(ok)return this.applyBdi(true);}Toast.error(error.message);}},
+  async applyBdi(confirmed){
+    const a=this.state.atual.analise,r=this.state.atual.simulacao?.resumo||a.resultado||{};
+    const mode=document.getElementById('riskBdiMode').value,profile=document.getElementById('riskBdiProfile').value;
+    if(!profile)return Toast.warning('Selecione um perfil BDI para usar como modelo.');
+    try{
+      const response=await API.riscosContingencia.aplicarBdi(a.id_analise,{id_perfil_bdi:profile,modo:mode,taxa_contingencia:r.taxa_contingencia,observacao:document.getElementById('riskBdiNote').value,confirmar_dupla_contagem:confirmed});
+      this.state.bdis=[];
+      await this.loadAnalysis(a.id_analise);
+      Toast.success(`BDI personalizado criado: ${response.perfil_bdi?.nome_perfil||response.perfil_bdi?.id_perfil_bdi||'novo perfil'}. O perfil padronizado foi preservado.`);
+    }catch(error){
+      if(!confirmed&&/ja existe rubrica de risco/i.test(error.message)){
+        const ok=await Confirm.ask(error.message,'Possível dupla contagem',{okText:'Criar e somar',okClass:'btn btn-primary'});
+        if(ok)return this.applyBdi(true);
+      }
+      Toast.error(error.message);
+    }
+  },
 
   footerActions(previous,next){return `<div class="risk-footer-actions"><button class="btn btn-ghost" data-risk-prev="${previous||''}" ${previous?'':'disabled'}>← Etapa anterior</button>${next?`<button class="btn btn-primary" data-risk-next="${next}">Proxima etapa →</button>`:'<span></span>'}</div>`;},
   bindFooter(){document.querySelector('[data-risk-prev]')?.addEventListener('click',event=>{if(!event.currentTarget.dataset.riskPrev)return;this.state.tab=event.currentTarget.dataset.riskPrev;this.renderShell();});document.querySelector('[data-risk-next]')?.addEventListener('click',event=>{this.state.tab=event.currentTarget.dataset.riskNext;this.renderShell();});},
