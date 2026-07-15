@@ -360,14 +360,9 @@ async function recalcAndGet(db, pid, options = {}) {
   return getPerfil(db, pid);
 }
 
-async function preencherBdiFaltanteNaLista(db, rows = []) {
+async function atualizarBdiNaLista(db, rows = []) {
   const atualizadas = [];
   for (const row of rows || []) {
-    const bdiAtual = toNum(row?.bdi_percentual, 0);
-    if (bdiAtual > 0) {
-      atualizadas.push(row);
-      continue;
-    }
     try {
       const id = row.id_perfil_bdi;
       const calculo = await calcBdi(db, id, { persist: true, persistCatalog: true });
@@ -401,7 +396,7 @@ async function listPerfis(db, query = {}) {
         ${tenant.sql}
       ) AS perfis_bdi_unificados
       ORDER BY tipo_obra, nome_perfil`, [...catalog.params, ...tenant.params]);
-    return preencherBdiFaltanteNaLista(db, rows);
+    return atualizarBdiNaLista(db, rows);
   }
 
   let sql = `
@@ -415,7 +410,7 @@ async function listPerfis(db, query = {}) {
   if (where.length) sql += ` AND ${where.join(' AND ')}`;
   sql += ' GROUP BY b.id_perfil_bdi ORDER BY b.tipo_obra, b.nome_perfil';
   const rows = await all(db, sql, params);
-  return preencherBdiFaltanteNaLista(db, rows);
+  return atualizarBdiNaLista(db, rows);
 }
 
 function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = true) {
