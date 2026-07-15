@@ -280,7 +280,7 @@ async function calcBdi(db, pid, options = {}) {
   const simplesIrpj = calculo.simples?.original?.irpj ?? toNum(p.simples_irpj_percentual, 0);
   const simplesCsll = calculo.simples?.original?.csll ?? toNum(p.simples_csll_percentual, 0);
   const simplesFaixa = calculo.simples?.faixa ?? p.simples_faixa ?? null;
-  if (persist && (!catalogRead || scoped.scope === 'tenant')) {
+  if (persist && (!catalogRead || scoped.scope === 'tenant' || options.persistCatalog === true)) {
     if (tenantMode && scoped.scope === 'tenant') {
       await run(db, `UPDATE tenant_perfis_bdi
         SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
@@ -366,7 +366,7 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
              ${isTenant ? 'b.redutor_setorial_ivaeq' : 'NULL'} AS redutor_setorial_ivaeq,
              ${isTenant ? 'b.redutor_governamental_ivaeq' : 'NULL'} AS redutor_governamental_ivaeq,
              ${isTenant ? 'b.usa_iva_manual' : '0'} AS usa_iva_manual,
-             ${isTenant ? 'b.simples_rbt12' : '0'} AS simples_rbt12,
+             ${isTenant ? 'b.simples_rbt12' : 'b.simples_rbt12'} AS simples_rbt12,
              COUNT(c.${isTenant ? 'rowid' : 'id_componente'}) AS qtd_componentes,
              ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
              ${isTenant ? 'b.tenant_catalog_id' : 'b.id_perfil_bdi'} AS _catalog_id
@@ -756,6 +756,49 @@ async function memoria(db, idPerfil, options = {}) {
   };
 }
 
+async function recalcularTodos(db, options = {}) {
+  const resultado = {
+    catalogo: { lidos: 0, recalculados: 0, erros: [] },
+    tenant: { lidos: 0, recalculados: 0, erros: [] },
+  };
+
+  const catalogos = await all(db, `
+    SELECT id_perfil_bdi
+    FROM perfis_bdi
+    WHERE COALESCE(situacao,'Ativo') <> 'Inativo'
+    ORDER BY id_perfil_bdi`).catch(() => []);
+  resultado.catalogo.lidos = catalogos.length;
+  for (const row of catalogos) {
+    try {
+      await calcBdi(db, row.id_perfil_bdi, { ...options, persist: true, persistCatalog: true });
+      resultado.catalogo.recalculados += 1;
+    } catch (err) {
+      resultado.catalogo.erros.push({ id: row.id_perfil_bdi, erro: err.message || String(err) });
+    }
+  }
+
+  const tenantMode = await hasTenantBdiOverrides(db);
+  if (tenantMode) {
+    const tenants = await all(db, `
+      SELECT rowid AS rowid, id_perfil_bdi
+      FROM tenant_perfis_bdi
+      WHERE COALESCE(tenant_override_status,'active')='active'
+        AND COALESCE(situacao,'Ativo') <> 'Inativo'
+      ORDER BY rowid`).catch(() => []);
+    resultado.tenant.lidos = tenants.length;
+    for (const row of tenants) {
+      try {
+        await calcBdi(db, `tenant:${row.rowid || row.id_perfil_bdi}`, { ...options, persist: true });
+        resultado.tenant.recalculados += 1;
+      } catch (err) {
+        resultado.tenant.erros.push({ id: row.rowid || row.id_perfil_bdi, erro: err.message || String(err) });
+      }
+    }
+  }
+
+  return resultado;
+}
+
 async function insertTenantComponente(db, data = {}) {
   const result = await run(db, `
     INSERT INTO tenant_componentes_bdi
@@ -848,4 +891,5 @@ module.exports = {
   updateComponente,
   deleteComponente,
   memoria,
+  recalcularTodos,
 };

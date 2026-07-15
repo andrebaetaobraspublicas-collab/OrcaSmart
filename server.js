@@ -44,6 +44,7 @@ const {
   createTenantMysqlRuntime,
 } = require('./utils/mysqlTenantRuntime');
 const { ensureMysqlBdiSchema } = require('./utils/bdiMysqlSchema');
+const bdiService = require('./services/bdiService');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1149,7 +1150,20 @@ async function initializeMysqlPilot() {
     bootState.mysql.databaseName = result.databaseName || null;
     bootState.mysql.connectionMode = result.connectionMode || null;
     bootState.mysql.socketPath = result.socketPath || null;
-    if (result.ok) await ensureMysqlBdiSchema(mysqlConfig());
+    if (result.ok) {
+      await ensureMysqlBdiSchema(mysqlConfig());
+      const bdiRecalc = await bdiService.recalcularTodos(masterDb, { persist: true, persistCatalog: true }).catch((err) => {
+        console.warn('[bdi] Falha ao recalcular perfis BDI no boot:', err.message || err);
+        return null;
+      });
+      if (bdiRecalc) {
+        console.log('[bdi] Perfis BDI recalculados:', JSON.stringify({
+          catalogo: bdiRecalc.catalogo.recalculados,
+          tenant: bdiRecalc.tenant.recalculados,
+          erros: bdiRecalc.catalogo.erros.length + bdiRecalc.tenant.erros.length,
+        }));
+      }
+    }
     if (!result.ok && result.missing && result.missing.length) {
       bootState.mysql.error = `Variaveis MySQL ausentes: ${result.missing.join(', ')}`;
     }

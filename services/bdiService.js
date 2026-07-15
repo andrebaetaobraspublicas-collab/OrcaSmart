@@ -93,4 +93,5 @@ module.exports = {
   updateComponente,
   deleteComponente,
   memoria,
+  recalcularTodos: repo.recalcularTodos,
 };

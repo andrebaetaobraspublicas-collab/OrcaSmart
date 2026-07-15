@@ -95,6 +95,16 @@ async function testarRegras() {
   assert.strictEqual(simples2033.ISS, 0);
   perto(simples2033.IBS, simples2033.simples.original.iss);
   assert.strictEqual(simples2033.IVAeq, 0);
+
+  const simplesFaixa6Referencia = rules.calcularBdi({
+    ano_orcamento: 2033,
+    regime_tributario: 'Simples Nacional',
+    simples_faixa: 6,
+  }, grupos);
+  perto(simplesFaixa6Referencia.simples.rbt12, 4800000);
+  perto(simplesFaixa6Referencia.simples.aliquota_efetiva, 15.75);
+  perto(simplesFaixa6Referencia.CBS, 3.9375);
+  perto(simplesFaixa6Referencia.T, 3.9375);
 }
 
 async function testarPersistenciaRepository() {

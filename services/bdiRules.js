@@ -175,10 +175,11 @@ function transformarSimples(parcelas, anoOriginal) {
 
 function calcularSimples(perfil = {}, grupos = {}) {
   const ano = Math.trunc(num(perfil.ano_orcamento, 2026));
-  const rbt12 = Math.max(0, num(perfil.simples_rbt12));
-  const faixa = faixaSimples(rbt12, perfil.simples_faixa);
-  const aliquotaEfetiva = rbt12 > 0 && faixa
-    ? Math.max(0, ((rbt12 * faixa.nominal / 100) - faixa.deducao) / rbt12 * 100)
+  const rbt12Informado = Math.max(0, num(perfil.simples_rbt12));
+  const faixa = faixaSimples(rbt12Informado, perfil.simples_faixa);
+  const rbt12Calculo = rbt12Informado > 0 ? rbt12Informado : (faixa?.limite || 0);
+  const aliquotaEfetiva = rbt12Calculo > 0 && faixa
+    ? Math.max(0, ((rbt12Calculo * faixa.nominal / 100) - faixa.deducao) / rbt12Calculo * 100)
     : Math.max(0, num(perfil.simples_aliquota_efetiva));
   const parcelasOriginais = decomporSimples(aliquotaEfetiva, faixa);
   const parcelas = transformarSimples(parcelasOriginais, ano);
@@ -206,7 +207,8 @@ function calcularSimples(perfil = {}, grupos = {}) {
     bdi: Math.max(0, bdi),
     regime_calculo: 'simples_das_unificado',
     simples: {
-      rbt12,
+      rbt12: rbt12Calculo,
+      rbt12_informado: rbt12Informado,
       faixa: faixa?.id || null,
       aliquota_nominal: faixa?.nominal || 0,
       parcela_deduzir: faixa?.deducao || 0,
