@@ -1152,17 +1152,19 @@ async function initializeMysqlPilot() {
     bootState.mysql.socketPath = result.socketPath || null;
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
-      const bdiRecalc = await bdiService.recalcularTodos(masterDb, { persist: true, persistCatalog: true }).catch((err) => {
-        console.warn('[bdi] Falha ao recalcular perfis BDI no boot:', err.message || err);
-        return null;
-      });
-      if (bdiRecalc) {
-        console.log('[bdi] Perfis BDI recalculados:', JSON.stringify({
-          catalogo: bdiRecalc.catalogo.recalculados,
-          tenant: bdiRecalc.tenant.recalculados,
-          erros: bdiRecalc.catalogo.erros.length + bdiRecalc.tenant.erros.length,
-        }));
-      }
+      setTimeout(() => {
+        bdiService.recalcularTodos(masterDb, { persist: true, persistCatalog: true })
+          .then((bdiRecalc) => {
+            console.log('[bdi] Perfis BDI recalculados:', JSON.stringify({
+              catalogo: bdiRecalc.catalogo.recalculados,
+              tenant: bdiRecalc.tenant.recalculados,
+              erros: bdiRecalc.catalogo.erros.length + bdiRecalc.tenant.erros.length,
+            }));
+          })
+          .catch((err) => {
+            console.warn('[bdi] Falha ao recalcular perfis BDI em background:', err.message || err);
+          });
+      }, 1000).unref?.();
     }
     if (!result.ok && result.missing && result.missing.length) {
       bootState.mysql.error = `Variaveis MySQL ausentes: ${result.missing.join(', ')}`;
