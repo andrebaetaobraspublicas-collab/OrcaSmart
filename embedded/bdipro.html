@@ -314,6 +314,8 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
 #screenParam .btn-primary:hover{filter:brightness(1.08)}
 #screenParam .btn-ghost{background:#fff;color:#334155;border:1px solid #cbd5e1}
 #screenParam .btn-ghost:hover{background:#f1f5f9}
+#screenParam .btn-bdi-save,#screenExato .btn-bdi-save,#screenSimples .btn-bdi-save{background:linear-gradient(180deg,#f59e0b,#d97706);color:#fff;border:0}
+#screenParam .btn-bdi-save:hover,#screenExato .btn-bdi-save:hover,#screenSimples .btn-bdi-save:hover{filter:brightness(1.06)}
 #screenParam .tabs{display:flex;gap:6px;flex-wrap:wrap;padding:14px 16px 0;border-bottom:1px solid var(--line)}
 #screenParam .tab{background:transparent;color:#64748b;border:0;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;padding:9px 13px;font-size:13px;font-weight:600}
 #screenParam .tab:hover{background:#f1f5f9;color:#334155}
@@ -639,6 +641,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
             <div class="box"><h3>Memória de cálculo</h3><div class="formula" id="simMemCompleta"></div></div>
           </div>
           <div class="actions">
+            <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizado" type="button">➕ Incluir BDI personalizado</button>
             <button class="btn green" id="simAplicarPrincipal">Aplicar IVAeq ao BDI principal</button>
             <button class="btn ghost" id="simExportCsv">Exportar Excel/CSV</button>
             <button class="btn ghost" id="simExportWord">Exportar Word</button>
@@ -852,6 +855,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       <div id="resultado" class="panel active">
         <h2>Memória de cálculo do cenário</h2>
         <div class="tablewrap"><table class="memo"><tbody id="memoria"></tbody></table></div>
+        <div class="actions" style="margin:14px 0 4px;padding:0;background:transparent;border:0">
+          <button class="btn-bdi-save" id="btnSalvarBdiParam" type="button">➕ Incluir BDI personalizado</button>
+        </div>
         <h3>Composição final do BDI</h3>
         <div id="bdiBreakdownParam"></div>
         <h3>Curva do BDI em função do %MATcd</h3>
@@ -1064,6 +1070,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
   <!-- RESULTADOS -->
   <section class="card">
     <h2>Resultados do cálculo exato</h2>
+    <div class="toolbar" style="margin-bottom:12px">
+      <button class="btn btn-bdi-save" id="btnSalvarBdiExato" type="button">➕ Incluir BDI personalizado</button>
+    </div>
     <div class="results">
       <div class="res blue"><div class="k">CD — Custo Direto</div><div class="v" id="rCD">—</div><div class="d">Σ custos parciais</div></div>
       <div class="res blue"><div class="k">Cr — Crédito de IVA</div><div class="v" id="rCr">—</div><div class="d">Σ (val. p/ crédito × alíquota da linha)</div></div>
@@ -1313,7 +1322,7 @@ function exportarCsvSimples(){const res=ultimoResultadoSimples||calculaBdiSimple
 function exportarWordSimples(){baixarSimples('relatorio_bdipro_simples.doc','application/msword;charset=utf-8',relatorioSimplesHtml())}
 function exportarPdfSimples(){const w=window.open('','_blank');if(w){w.document.write(relatorioSimplesHtml()+`<script>setTimeout(()=>print(),300)<\/script>`);w.document.close()}}
 function aplicarSimplesNoPrincipal(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());window.__SimplesBDIResult={ano:res.ano,ivaeq:res.ivaeq,bdi:res.bdi,totalTribEfetivo:res.T,origem:'Simples Nacional',detalhe:res};alert('IVA equivalente do Simples Nacional aplicado ao cálculo paramétrico do BDIPro.');showScreen('param')}
-document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('#screenSimples input,#screenSimples select,#screenSimples textarea').forEach(el=>{el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){if(el.id==='simTipoObra'||el.id==='simQuartilBdi')aplicarParametrosBdiSimples();recalcularSimples()})});document.querySelectorAll('#screenSimples .sim-tab').forEach(btn=>{btn.addEventListener('click',function(){document.querySelectorAll('#screenSimples .sim-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('#screenSimples .tab-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');const panel=$sim('simTab_'+btn.dataset.tab);if(panel)panel.classList.add('active');recalcularSimples()})});$sim('simExportCsv')?.addEventListener('click',exportarCsvSimples);$sim('simExportWord')?.addEventListener('click',exportarWordSimples);$sim('simExportPdf')?.addEventListener('click',exportarPdfSimples);$sim('simAplicarPrincipal')?.addEventListener('click',aplicarSimplesNoPrincipal)});
+document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('#screenSimples input,#screenSimples select,#screenSimples textarea').forEach(el=>{el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){if(el.id==='simTipoObra'||el.id==='simQuartilBdi')aplicarParametrosBdiSimples();recalcularSimples()})});document.querySelectorAll('#screenSimples .sim-tab').forEach(btn=>{btn.addEventListener('click',function(){document.querySelectorAll('#screenSimples .sim-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('#screenSimples .tab-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');const panel=$sim('simTab_'+btn.dataset.tab);if(panel)panel.classList.add('active');recalcularSimples()})});$sim('simExportCsv')?.addEventListener('click',exportarCsvSimples);$sim('simExportWord')?.addEventListener('click',exportarWordSimples);$sim('simExportPdf')?.addEventListener('click',exportarPdfSimples);$sim('simAplicarPrincipal')?.addEventListener('click',aplicarSimplesNoPrincipal);$sim('simSalvarBdiPersonalizado')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
 window.initSimples=initSimples;
 
 const transicao=[
@@ -1626,6 +1635,146 @@ function printRelatorio(){
   setTimeout(()=>{try{w.print()}catch(e){}},350);
 }
 
+/* ===================== INTEGRAÇÃO COM O MÓDULO BDI ===================== */
+function bdiProPercent(v){const n=Number(v);return Number.isFinite(n)?n*100:0}
+function bdiProQuartilLabel(v){return v==='q1'?'Primeiro quartil':(v==='q3'?'Terceiro quartil':'Personalizado')}
+function bdiProTipoObraModulo(tipo){
+  const nome=tabelaBdi[tipo]?.nome||tipo||'Outro';
+  const mapa={
+    edificios:'Construção de Edifícios',
+    rodovias:'Construção de Rodovias e Ferrovias',
+    saneamento:'Construção de Redes de Abastecimento de Água, Coleta de Esgoto e Construções Correlatas',
+    energia:'Construção e Manutenção de Estações e Redes de Distribuição de Energia Elétrica',
+    portuarias:'Obras Portuárias, Marítimas e Fluviais',
+    bdi_materiais:'BDI Reduzido para Materiais/Equipamentos'
+  };
+  return mapa[tipo]||nome||'Outro';
+}
+function bdiProIvaPorAno(ano, ivaNominalManual){
+  const anualRt=(transicao.find(x=>Number(x.ano)===Number(ano))||transicao[transicao.length-1]||{});
+  if(Number.isFinite(Number(ivaNominalManual))){
+    return {cbs:bdiProPercent(Number(ivaNominalManual)),ibs:0,iva:bdiProPercent(Number(ivaNominalManual))};
+  }
+  return {cbs:bdiProPercent(Number(anualRt.cbs||0)),ibs:bdiProPercent(Number(anualRt.ibs||0)),iva:bdiProPercent(Number(anualRt.iva||0))};
+}
+function bdiProCprbPadraoModulo(ano){
+  const a=Number(ano);
+  if(a===2026)return 0.027;
+  if(a===2027)return 0.018;
+  return 0;
+}
+function bdiProTributacaoPerfil(ano,res){
+  const cprb=Number(res.cprbEfetiva||0);
+  const cprbPadrao=bdiProCprbPadraoModulo(ano);
+  const usaCprbPadrao=cprb>0&&Math.abs(cprb-cprbPadrao)<0.000001;
+  const issManual=Math.max(0,Number(res.T||0)-Number(res.pisCofins||0)-(usaCprbPadrao?cprbPadrao:0));
+  return {
+    regime_previdenciario:usaCprbPadrao?'Desonerado':'Onerado',
+    iss_percentual_manual:bdiProPercent(issManual)
+  };
+}
+function bdiProComponentes(base){
+  return [
+    {grupo:'AC',codigo:'AC1',descricao:'Administração Central',percentual:bdiProPercent(base.ac),incide_sobre:'CD',ordem:1},
+    {grupo:'S', codigo:'S1', descricao:'Seguros e Garantias',percentual:bdiProPercent(base.sg),incide_sobre:'CD',ordem:2},
+    {grupo:'R', codigo:'R1', descricao:'Riscos',percentual:bdiProPercent(base.r),incide_sobre:'CD',ordem:3},
+    {grupo:'DF',codigo:'DF1',descricao:'Despesas Financeiras',percentual:bdiProPercent(base.df),incide_sobre:'CD',ordem:4},
+    {grupo:'L', codigo:'L1', descricao:'Lucro Bruto',percentual:bdiProPercent(base.lucro),incide_sobre:'CD',ordem:5},
+    {grupo:'T', codigo:'T1', descricao:'Tributos calculados pela Reforma Tributária',percentual:bdiProPercent(base.T),incide_sobre:'PV',ordem:6}
+  ];
+}
+function bdiProNome(origem, ano, tipo){
+  const data=new Date().toLocaleDateString('pt-BR');
+  return `BDI personalizado - ${origem} - ${bdiProTipoObraModulo(tipo)} - ${ano} - ${data}`;
+}
+function bdiProEmitirCadastro(payload){
+  if(!window.parent||window.parent===window){
+    alert('Para incluir o BDI personalizado, abra esta calculadora dentro do módulo Reforma Tributária do OrçaPro.');
+    return;
+  }
+  const requestId=`bdi-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  window.parent.postMessage({type:'orcasmart:bdi-personalizado',requestId,payload},window.location.origin);
+  toast('Enviando BDI personalizado ao módulo BDI...');
+}
+function bdiProPayloadComum(origem,o,res,extra={}){
+  const iva=bdiProIvaPorAno(o.ano, o.usarIvatManual?o.ivatManual:undefined);
+  const tributacao=bdiProTributacaoPerfil(o.ano,res);
+  return {
+    origem,
+    perfil:{
+      nome_perfil:bdiProNome(origem,o.ano,o.tipoObra),
+      tipo_obra:bdiProTipoObraModulo(o.tipoObra),
+      regime_tributario:'Normal',
+      regime_previdenciario:tributacao.regime_previdenciario,
+      quartil:'Personalizado',
+      ano_orcamento:Number(o.ano)||new Date().getFullYear(),
+      vigencia:String(o.ano||''),
+      situacao:'Ativo',
+      usa_reforma_tributaria:Number(o.ano)>=2027,
+      cbs_percentual:iva.cbs,
+      ibs_percentual:iva.ibs,
+      usa_iva_manual:1,
+      redutor_setorial_ivaeq:Number(o.f||0),
+      redutor_governamental_ivaeq:Number(o.redutor||0),
+      fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),
+      percentual_mat_ivaeq:Number(res.matcd||0),
+      credito_bdi_ivaeq:Number(res.creditoBdi||0),
+      ivaeq_percentual:bdiProPercent(res.ivaeq),
+      iss_percentual_manual:tributacao.iss_percentual_manual,
+      descricao:`BDI personalizado importado do módulo Reforma Tributária (${origem}).`,
+      observacoes:`BDI calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+    },
+    componentes:bdiProComponentes({ac:o.ac,r:o.r,sg:o.sg,df:o.df,lucro:o.lucro,T:res.T}),
+    memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),...extra}
+  };
+}
+function cadastrarBdiPersonalizadoParametrico(){
+  const o=vals();
+  const {res}=computeFromVals(o);
+  if(res.erro){toast('Corrija o cenário antes de cadastrar o BDI.');return;}
+  bdiProEmitirCadastro(bdiProPayloadComum('Cálculo paramétrico',o,res,{tipoRefCredito:o.tipoRefCredito}));
+}
+function cadastrarBdiPersonalizadoSimples(){
+  const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());
+  const tipo=res.tipoObra||($sim('simTipoObra')?.value)||'rodovias';
+  const quartil=res.quartilBdi||($sim('simQuartilBdi')?.value)||'Personalizado';
+  const perfil={
+    nome_perfil:bdiProNome('Simples Nacional',res.ano,tipo),
+    tipo_obra:bdiProTipoObraModulo(tipo),
+    regime_tributario:'Simples Nacional',
+    regime_previdenciario:Number(res.tributos?.cprb||0)>0?'Desonerado':'Onerado',
+    quartil:'Personalizado',
+    ano_orcamento:Number(res.ano)||new Date().getFullYear(),
+    vigencia:String(res.ano||''),
+    situacao:'Ativo',
+    usa_reforma_tributaria:Number(res.ano)>=2027,
+    cbs_percentual:bdiProPercent(res.tributos?.cbs||0),
+    ibs_percentual:bdiProPercent(res.tributos?.ibs||0),
+    percentual_mat_ivaeq:Number(res.matcd||0),
+    ivaeq_percentual:bdiProPercent(res.ivaeq||0),
+    simples_rbt12:Number(res.rbt12||0),
+    simples_faixa:Number(res.faixa?.faixa||res.faixa||0)||null,
+    simples_aliquota_efetiva:bdiProPercent(res.aliqEf||0),
+    usa_simples_efetiva_manual:1,
+    descricao:'BDI personalizado importado do módulo Reforma Tributária (Simples Nacional).',
+    observacoes:`BDI Simples calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+  };
+  bdiProEmitirCadastro({
+    origem:'Simples Nacional',
+    perfil,
+    componentes:bdiProComponentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),
+    memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),quartil}
+  });
+}
+window.addEventListener('message',function(event){
+  if(event.origin!==window.location.origin)return;
+  const data=event.data||{};
+  if(data.type==='orcasmart:bdi-personalizado:result'){
+    toast(data.ok?'BDI personalizado incluído no módulo BDI.':(data.error||'Não foi possível incluir o BDI personalizado.'));
+  }
+});
+window.BDIProPersonalizado={emitir:bdiProEmitirCadastro,percent:bdiProPercent,tipoObra:bdiProTipoObraModulo,quartil:bdiProQuartilLabel,componentes:bdiProComponentes,nome:bdiProNome,tributacao:bdiProTributacaoPerfil};
+
 /* ===================== INTERAÇÕES ===================== */
 function sincronizaManuais(){
   [['usarIssManual','wrapIssManual'],['usarIvatManual','wrapIvatManual'],['usarBdiOriginal','wrapBdiOriginal']]
@@ -1635,6 +1784,7 @@ function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t
 
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.getElementById(b.dataset.panel).classList.add('active')});
 document.getElementById('calcular').onclick=update;
+document.getElementById('btnSalvarBdiParam').onclick=cadastrarBdiPersonalizadoParametrico;
 
 document.querySelectorAll('input,select').forEach(el=>{
   if(el.classList.contains('slider-range'))return;
@@ -1990,6 +2140,54 @@ function recalc(){
   if(desc) desc.textContent = '';
   const memValor=$('valorAjustadoMem');
   if(memValor)memValor.textContent=`${fmtBRL(valorBase)} × (1 ${fatorReeq>=0?'+':'-'} ${fmtPct(Math.abs(fatorReeq))})`;
+  const anualSelecionado=anualExato(anoExato);
+  window.__BDIProUltimoExato={
+    ano:anoExato,
+    tipoObra:$('tipoObraEx')?.value||'rodovias',
+    quartilBdi:$('quartilBdiEx')?.value||'medio',
+    ac,r:R,sg,df,lucro:L,K,T,issBdi,pisCofins:Number(a.pis||0),cprbEfetiva,
+    ivaeq:IVAeq,bdi:BDIreal,matcd:matPct,fatorEfetivo,redutorSetorial:fs,redutorGovernamental:rg,
+    ivaNominal:ivaCheiaNominal,cbs:Number(anualSelecionado.cbs||0),ibs:Number(anualSelecionado.ibs||0),
+    CD,Cr,crCD,precoVenda
+  };
+}
+
+function cadastrarBdiPersonalizadoExato(){
+  recalc();
+  const res=window.__BDIProUltimoExato;
+  const helper=window.BDIProPersonalizado;
+  if(!res||!helper){alert('Resultado do BDI ainda não está disponível.');return;}
+  const cbsIbsPadrao=Number(res.cbs||0)+Number(res.ibs||0);
+  const usarIvaTotalManual=Math.abs(cbsIbsPadrao-Number(res.ivaNominal||0))>0.000001;
+  const tributacao=helper.tributacao?helper.tributacao(res.ano,res):{regime_previdenciario:Number(res.cprbEfetiva||0)>0?'Desonerado':'Onerado',iss_percentual_manual:helper.percent(res.issBdi)};
+  const perfil={
+    nome_perfil:helper.nome('Cálculo exato',res.ano,res.tipoObra),
+    tipo_obra:helper.tipoObra(res.tipoObra),
+    regime_tributario:'Normal',
+    regime_previdenciario:tributacao.regime_previdenciario,
+    quartil:'Personalizado',
+    ano_orcamento:Number(res.ano)||new Date().getFullYear(),
+    vigencia:String(res.ano||''),
+    situacao:'Ativo',
+    usa_reforma_tributaria:Number(res.ano)>=2027,
+    cbs_percentual:helper.percent(usarIvaTotalManual?res.ivaNominal:res.cbs),
+    ibs_percentual:helper.percent(usarIvaTotalManual?0:res.ibs),
+    usa_iva_manual:1,
+    redutor_setorial_ivaeq:Number(res.redutorSetorial||0),
+    redutor_governamental_ivaeq:Number(res.redutorGovernamental||0),
+    fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),
+    percentual_mat_ivaeq:Number(res.matcd||0),
+    ivaeq_percentual:helper.percent(res.ivaeq),
+    iss_percentual_manual:tributacao.iss_percentual_manual,
+    descricao:'BDI personalizado importado do módulo Reforma Tributária (cálculo exato).',
+    observacoes:`BDI exato calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+  };
+  helper.emitir({
+    origem:'Cálculo exato',
+    perfil,
+    componentes:helper.componentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),
+    memoria:{bdi:helper.percent(res.bdi),ivaeq:helper.percent(res.ivaeq),K:res.K,T:helper.percent(res.T),CD:res.CD,Cr:res.Cr,crCD:helper.percent(res.crCD)}
+  });
 }
 
 /* ====== Importação ====== */
@@ -2077,6 +2275,7 @@ function exportCSV(){
 if($('anoExato')){$('anoExato').addEventListener('change',()=>{aplicarAnoExato(); if(rows.length)renderTable(); else recalc();});}
 if($('tipoObraEx')){$('tipoObraEx').addEventListener('change',()=>{aplicarParametrosBdiExato();recalc();});}
 if($('quartilBdiEx')){$('quartilBdiEx').addEventListener('change',()=>{aplicarParametrosBdiExato();recalc();});}
+if($('btnSalvarBdiExato')){$('btnSalvarBdiExato').addEventListener('click',cadastrarBdiPersonalizadoExato);}
 function inicializarExato(){
   preencherSelectsExato();
   aplicarAnoExato();
