@@ -3,6 +3,7 @@
 /* ── API helpers ────────────────────────────────────────────────────────────── */
 Object.assign(API, {
   bdi: {
+    parametros: () => API.get('/bdi/parametros'),
     perfis: {
       list:      (p={})   => API.get('/bdi/perfis?'+new URLSearchParams(p).toString()),
       get:       (id)     => API.get(`/bdi/perfis/${id}`),
@@ -54,6 +55,7 @@ Router.register('bdi', async () => {
 
   let perfis = [], perfilAtivo = null, compsAtivas = [];
   let orcamentosRef = [];
+  let parametrosAnuais = {};
   const filtros = { ano:'', tipo:'', regime:'', quartil:'', faixa_simples:'' };
 
   function anoPerfil(p) {
@@ -74,14 +76,22 @@ Router.register('bdi', async () => {
     return 0;
   }
 
+  function parametrosAno(anoInformado) {
+    const ano = Math.max(2026, Math.min(2033, parseInt(anoInformado) || 2026));
+    return parametrosAnuais[ano] || { cbs:0, ibs:0, iss:0 };
+  }
+
+  function fatorKComponentes(componentes=[]) {
+    const soma = grupo => componentes.filter(c=>c.grupo===grupo && Number(c.ativo)!==0)
+      .reduce((total,c)=>total+(parseFloat(c.percentual)||0),0);
+    return (1+(soma('AC')+soma('S')+soma('R'))/100) * (1+soma('DF')/100) * (1+soma('L')/100);
+  }
+
   function formulaBdiTexto(p) {
     if (p.regime_tributario === 'Simples Nacional') {
-      return 'BDI Simples = { [ (1+AC+S+R) × (1+DF) × (1+L) / (1-Tsimples) ] - 1 } × 100';
+      return 'BDI Simples = [ K / (1 - T) ] - 1, com IVAeq = 0';
     }
-    const ano = anoPerfil(p);
-    if (ano <= 2026) return 'BDI = { [ (1+AC+S+R) × (1+DF) × (1+L) / (1-T) ] - 1 } × 100';
-    if (ano < 2033) return 'BDI = { [ (1+AC+S+R) × (1+DF) × (1+L) × (1+IVAeq) / (1-T) ] - 1 } × 100';
-    return 'BDI = { [ (1+AC+S+R) × (1+DF) × (1+L) × (1+IVAeq) ] - 1 } × 100';
+    return 'BDI = [ K × (1 + IVAeq) / (1 - T) ] - 1';
   }
 
   function descricaoPadraoBdi(p) {
@@ -93,18 +103,29 @@ Router.register('bdi', async () => {
     return `BDI para ${tipo} ${regime} - Ano de ${ano}`;
   }
 
-  function ivaeqCalculadoPerfil(p) {
-    const cbs = (parseFloat(p.cbs_percentual) || 0) / 100;
-    const ibs = (parseFloat(p.ibs_percentual) || 0) / 100;
-    const fator = parseFloat(p.fator_efetivo_ivaeq ?? 0.5) || 0;
-    const mat = parseFloat(p.percentual_mat_ivaeq ?? 0.4) || 0;
-    const credito = parseFloat(p.credito_bdi_ivaeq ?? 0) || 0;
-    return Math.max(0, (cbs + ibs) * (fator - mat - credito)) * 100;
+  function ivaeqCalculadoPerfil(p, K=1) {
+    const ano = anoPerfil(p);
+    if (ano === 2026 || p.regime_tributario === 'Simples Nacional') return 0;
+    const padrao = parametrosAno(ano);
+    const manual = Number(p.usa_iva_manual) === 1 || p.usa_iva_manual === true;
+    const ivaNominal = manual
+      ? (parseFloat(p.cbs_percentual)||0)+(parseFloat(p.ibs_percentual)||0)
+      : padrao.cbs+padrao.ibs;
+    const redSetorial = parseFloat(p.redutor_setorial_ivaeq ?? (1-(parseFloat(p.fator_efetivo_ivaeq ?? 0.5)||0))) || 0;
+    const redGov = parseFloat(p.redutor_governamental_ivaeq ?? 0) || 0;
+    const f = (1-redSetorial)*(1-redGov);
+    const matcd = parseFloat(p.percentual_mat_ivaeq ?? 0.4) || 0;
+    return Math.max(0, (ivaNominal/100)*((K*f-matcd)/K))*100;
   }
 
   async function carregar() {
     try {
-      perfis = await API.bdi.perfis.list(filtros);
+      const [lista, parametros] = await Promise.all([
+        API.bdi.perfis.list(filtros),
+        Object.keys(parametrosAnuais).length ? Promise.resolve(null) : API.bdi.parametros(),
+      ]);
+      perfis = lista;
+      if (parametros?.anuais) parametrosAnuais = parametros.anuais;
       renderLista();
     } catch(e) { Toast.error(e.message); }
   }
@@ -265,7 +286,9 @@ Router.register('bdi', async () => {
   /* ═══════════════════════ FORM PERFIL ═══════════════════════════════════════ */
   async function abrirForm(id=null, personalizado=false) {
     let p = {};
+    let componentesForm = [];
     if (id) { try { p = await API.bdi.perfis.get(id); } catch(e){ Toast.error(e.message); return; } }
+    if (id) { try { componentesForm = await API.bdi.perfis.comps(id); } catch(_) { componentesForm = []; } }
     if (personalizado && !id) {
       p = {
         nome_perfil: 'BDI personalizado',
@@ -275,9 +298,15 @@ Router.register('bdi', async () => {
         ano_orcamento: 2026,
         vigencia: '2026',
         iss_percentual_manual: 3,
+        redutor_setorial_ivaeq: 0.5,
+        redutor_governamental_ivaeq: 0,
+        percentual_mat_ivaeq: 0.4,
         descricao: 'BDI personalizado com rubricas definidas pelo usuário.'
       };
     }
+    const anoForm = anoPerfil(p);
+    const parametrosForm = parametrosAno(anoForm);
+    const ivaManualForm = Number(p.usa_iva_manual) === 1 || p.usa_iva_manual === true;
     try { orcamentosRef = await API.orcamentos.list({}); } catch(_) { orcamentosRef = []; }
     const orcamentoOptions = orcamentosRef.map(o => `
       <option value="${o.id_orcamento}" ${p.id_orcamento_ivaeq == o.id_orcamento ? 'selected' : ''}>
@@ -341,33 +370,37 @@ Router.register('bdi', async () => {
           <div class="form-group">
             <label class="form-label">CBS (%)</label>
             <input class="form-control js-ivaeq-param" id="fp_cbs" type="number" step="0.0001"
-              value="${p.cbs_percentual || 0}">
+              value="${ivaManualForm ? (p.cbs_percentual || 0) : parametrosForm.cbs}" ${ivaManualForm?'':'disabled'}>
           </div>
           <div class="form-group">
             <label class="form-label">IBS (%)</label>
             <input class="form-control js-ivaeq-param" id="fp_ibs" type="number" step="0.0001"
-              value="${p.ibs_percentual || 0}">
+              value="${ivaManualForm ? (p.ibs_percentual || 0) : parametrosForm.ibs}" ${ivaManualForm?'':'disabled'}>
           </div>
           <div class="form-group">
-            <label class="form-label">Fator efetivo</label>
-            <input class="form-control js-ivaeq-param" id="fp_fator_efetivo" type="number" min="0" max="1" step="0.0001"
-              value="${p.fator_efetivo_ivaeq ?? 0.5}">
+            <label class="form-label">Redutor setorial</label>
+            <input class="form-control js-ivaeq-param" id="fp_redutor_setorial" type="number" min="0" max="1" step="0.0001"
+              value="${p.redutor_setorial_ivaeq ?? (1-(parseFloat(p.fator_efetivo_ivaeq ?? 0.5)||0))}">
           </div>
           <div class="form-group">
-            <label class="form-label">%MAT</label>
+            <label class="form-label">Redutor governamental</label>
+            <input class="form-control js-ivaeq-param" id="fp_redutor_governamental" type="number" min="0" max="1" step="0.0001"
+              value="${p.redutor_governamental_ivaeq ?? 0}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">%MATcd — base creditável equivalente</label>
             <input class="form-control js-ivaeq-param" id="fp_percentual_mat" type="number" min="0" max="1" step="0.0001"
               value="${p.percentual_mat_ivaeq ?? 0.4}">
           </div>
           <div class="form-group">
-            <label class="form-label">Crédito no BDI</label>
-            <input class="form-control js-ivaeq-param" id="fp_credito_bdi_ivaeq" type="number" min="0" max="1" step="0.0001"
-              value="${p.credito_bdi_ivaeq || 0}">
+            <input type="checkbox" id="fp_iva_manual" ${ivaManualForm?'checked':''} style="width:16px;height:16px">
+            <label class="form-label" for="fp_iva_manual">Substituir alíquota nominal anual por CBS/IBS manual</label>
           </div>
           <div class="form-group">
-            <label class="form-label">IVAeq calculado/manual (%)</label>
-            <input class="form-control" id="fp_ivaeq" type="number" step="0.0001"
+            <label class="form-label">IVAeq calculado (%)</label>
+            <input class="form-control" id="fp_ivaeq" type="number" step="0.0001" readonly
               value="${p.ivaeq_percentual || 0}">
-            <div class="form-hint" id="fp_ivaeq_hint">IVAeq = max(0; (CBS+IBS) × (Fator efetivo - %MAT - Crédito no BDI))</div>
+            <div class="form-hint" id="fp_ivaeq_hint">IVAeq = max(0; IVA nominal × ((K × f - %MATcd) / K))</div>
           </div>
           <div class="form-group">
             <label class="form-label">ISS manual (%)</label>
@@ -375,8 +408,13 @@ Router.register('bdi', async () => {
               value="${p.iss_percentual_manual ?? ''}" placeholder="Usar componente ISS">
           </div>
           <div class="form-group">
-            <label class="form-label">Alíquota efetiva Simples (%)</label>
-            <input class="form-control" id="fp_simples_efetiva" type="number" step="0.0001"
+            <label class="form-label">RBT12 — receita bruta dos últimos 12 meses (R$)</label>
+            <input class="form-control" id="fp_simples_rbt12" type="number" min="0" step="0.01"
+              value="${p.simples_rbt12 || 0}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Alíquota efetiva Simples calculada (%)</label>
+            <input class="form-control" id="fp_simples_efetiva" type="number" step="0.0001" readonly
               value="${p.simples_aliquota_efetiva || 0}">
           </div>
           <div class="form-group">
@@ -417,24 +455,39 @@ Router.register('bdi', async () => {
               <button class="btn btn-primary" id="btnSalvBdi">${id?'Salvar':'Criar Perfil'}</button>`
     });
     const atualizarIvaeqForm = () => {
-      const pcalc = {
-        cbs_percentual: document.getElementById('fp_cbs')?.value,
-        ibs_percentual: document.getElementById('fp_ibs')?.value,
-        fator_efetivo_ivaeq: document.getElementById('fp_fator_efetivo')?.value,
-        percentual_mat_ivaeq: document.getElementById('fp_percentual_mat')?.value,
-        credito_bdi_ivaeq: document.getElementById('fp_credito_bdi_ivaeq')?.value,
-      };
-      const ano = parseInt(document.getElementById('fp_ano')?.value) || 0;
-      if (ano >= 2027 && ((parseFloat(pcalc.cbs_percentual)||0) || (parseFloat(pcalc.ibs_percentual)||0))) {
-        const calc = ivaeqCalculadoPerfil(pcalc);
-        document.getElementById('fp_ivaeq').value = calc.toFixed(4);
-        document.getElementById('fp_ivaeq_hint').textContent = `Calculado pela Reforma Tributária: ${Utils.num(calc,4)}%`;
+      const ano = parseInt(document.getElementById('fp_ano')?.value) || 2026;
+      const manual = document.getElementById('fp_iva_manual')?.checked;
+      const padrao = parametrosAno(ano);
+      const cbsInput = document.getElementById('fp_cbs');
+      const ibsInput = document.getElementById('fp_ibs');
+      if (!manual) {
+        cbsInput.value = padrao.cbs;
+        ibsInput.value = padrao.ibs;
       }
+      cbsInput.disabled = !manual;
+      ibsInput.disabled = !manual;
+      const pcalc = {
+        ano_orcamento: ano,
+        regime_tributario: document.getElementById('fp_reg')?.value,
+        cbs_percentual: cbsInput.value,
+        ibs_percentual: ibsInput.value,
+        usa_iva_manual: manual,
+        redutor_setorial_ivaeq: document.getElementById('fp_redutor_setorial')?.value,
+        redutor_governamental_ivaeq: document.getElementById('fp_redutor_governamental')?.value,
+        percentual_mat_ivaeq: document.getElementById('fp_percentual_mat')?.value,
+      };
+      const K = fatorKComponentes(componentesForm);
+      const calc = ivaeqCalculadoPerfil(pcalc, K);
+      const f = (1-(parseFloat(pcalc.redutor_setorial_ivaeq)||0)) * (1-(parseFloat(pcalc.redutor_governamental_ivaeq)||0));
+      document.getElementById('fp_ivaeq').value = calc.toFixed(4);
+      document.getElementById('fp_ivaeq_hint').textContent = `K ${Utils.num(K,6)} · f ${Utils.num(f,6)} · %MATcd ${Utils.num((parseFloat(pcalc.percentual_mat_ivaeq)||0)*100,4)}%`;
     };
     document.querySelectorAll('.js-ivaeq-param,#fp_ano').forEach(el => el.addEventListener('input', atualizarIvaeqForm));
+    document.getElementById('fp_iva_manual')?.addEventListener('change', atualizarIvaeqForm);
     document.getElementById('fp_reg')?.addEventListener('change', e=>{
       const alert = document.getElementById('fp_simples_alert');
       if (alert) alert.style.display = e.target.value === 'Simples Nacional' ? '' : 'none';
+      atualizarIvaeqForm();
     });
     atualizarIvaeqForm();
     document.getElementById('btnSalvBdi').addEventListener('click', ()=>salvarPerfil(id));
@@ -449,14 +502,18 @@ Router.register('bdi', async () => {
       simples_faixa:         document.getElementById('fp_simples_faixa').value ? parseInt(document.getElementById('fp_simples_faixa').value) : null,
       simples_faixa_label:   document.getElementById('fp_simples_faixa').selectedOptions[0]?.textContent || null,
       simples_aliquota_efetiva: parseFloat(document.getElementById('fp_simples_efetiva').value) || 0,
+      simples_rbt12:         parseFloat(document.getElementById('fp_simples_rbt12').value) || 0,
       vigencia:              document.getElementById('fp_vig').value.trim() || null,
       ano_orcamento:         parseInt(document.getElementById('fp_ano').value) || null,
       quartil:               document.getElementById('fp_quartil').value || null,
       cbs_percentual:        parseFloat(document.getElementById('fp_cbs').value) || 0,
       ibs_percentual:        parseFloat(document.getElementById('fp_ibs').value) || 0,
-      fator_efetivo_ivaeq:   parseFloat(document.getElementById('fp_fator_efetivo').value) || 0,
+      redutor_setorial_ivaeq: parseFloat(document.getElementById('fp_redutor_setorial').value) || 0,
+      redutor_governamental_ivaeq: parseFloat(document.getElementById('fp_redutor_governamental').value) || 0,
+      fator_efetivo_ivaeq:   (1-(parseFloat(document.getElementById('fp_redutor_setorial').value)||0)) * (1-(parseFloat(document.getElementById('fp_redutor_governamental').value)||0)),
+      usa_iva_manual:        document.getElementById('fp_iva_manual').checked,
       percentual_mat_ivaeq:  parseFloat(document.getElementById('fp_percentual_mat').value) || 0,
-      credito_bdi_ivaeq:     parseFloat(document.getElementById('fp_credito_bdi_ivaeq').value) || 0,
+      credito_bdi_ivaeq:     0,
       ivaeq_percentual:      parseFloat(document.getElementById('fp_ivaeq').value) || 0,
       iss_percentual_manual: document.getElementById('fp_iss').value === '' ? null : (parseFloat(document.getElementById('fp_iss').value) || 0),
       id_orcamento_ivaeq:    document.getElementById('fp_orc_ref').value ? parseInt(document.getElementById('fp_orc_ref').value) : null,
@@ -733,16 +790,14 @@ Router.register('bdi', async () => {
         if ((parseFloat(pct) || 0) <= 0) return;
         rows.push({ cod, desc, base, calc, pct });
       };
-      if (ano <= 2026) {
-        (compsPorGrupo.T || []).forEach(c => add(c.codigo || 'T', c.descricao, c.base_legal || '-', c.incide_sobre === 'PV' ? 'PV' : 'CD', c.percentual));
-      } else {
-        add('T1', 'ISS - Imposto Sobre Serviços', 'LC 116/2003', 'PV', tg.ISS || 0);
-        add('T2', 'CPRB - Contribuição Previdenciária s/ Receita Bruta', 'Lei 12.546/2011', 'PV', tg.CPRB || 0);
-        add('CBS', 'CBS - Contribuição sobre Bens e Serviços', 'Reforma Tributária', 'IVA', tg.CBS || 0);
-        add('IBS', 'IBS - Imposto sobre Bens e Serviços', 'Reforma Tributária', 'IVA', tg.IBS || 0);
-        if (p.regime_tributario !== 'Simples Nacional') {
-          add('IVAeq', 'IVA equivalente aplicado ao BDI', 'Calculado', 'Multiplicador', tg.IVAeq || 0);
-        }
+      add('PIS', 'PIS/Pasep', 'Transição tributária', 'PV', tg.PIS || 0);
+      add('COFINS', 'Cofins', 'Transição tributária', 'PV', tg.COFINS || 0);
+      add('ISS', 'ISS - Imposto Sobre Serviços', 'LC 116/2003', 'PV', tg.ISS || 0);
+      add('CPRB', 'CPRB - Contribuição Previdenciária s/ Receita Bruta', 'Lei 12.546/2011', 'PV', tg.CPRB || 0);
+      add('CBS', 'CBS - Contribuição sobre Bens e Serviços', 'Reforma Tributária', p.regime_tributario==='Simples Nacional'?'DAS':'IVA nominal', tg.CBS || 0);
+      add('IBS', 'IBS - Imposto sobre Bens e Serviços', 'Reforma Tributária', p.regime_tributario==='Simples Nacional'?'DAS':'IVA nominal', tg.IBS || 0);
+      if (p.regime_tributario !== 'Simples Nacional') {
+        add('IVAeq', 'IVA equivalente aplicado ao BDI', 'Calculado', 'Multiplicador', tg.IVAeq || 0);
       }
       if (!rows.length) return '';
       return `<div style="margin-bottom:12px">
@@ -786,7 +841,7 @@ Router.register('bdi', async () => {
         ${p.regime_tributario==='Simples Nacional' ? `
           <div style="background:var(--c-warning-l);border:1px solid #f59e0b44;border-radius:8px;padding:10px 12px;margin-bottom:12px">
             <div class="fw-700 text-sm" style="color:var(--c-warning)">Simples Nacional</div>
-            <div class="text-xs text-2">IRPJ (${Utils.num(p.simples_irpj_percentual||0,4)}%) e CSLL (${Utils.num(p.simples_csll_percentual||0,4)}%) não entram no cálculo do BDI. A critério do usuário, podem ser considerados na taxa de lucro.</div>
+            <div class="text-xs text-2">RBT12 ${Utils.moeda(tg.simples?.rbt12||0)} · ${tg.simples?.faixa||'—'}ª faixa · alíquota efetiva ${Utils.num(tg.simples?.aliquota_efetiva||0,4)}%. IRPJ (${Utils.num(tg.simples?.original?.irpj||0,4)}%) e CSLL (${Utils.num(tg.simples?.original?.csll||0,4)}%) ficam fora de T e são absorvidos pela taxa de lucro bruto.</div>
           </div>
         ` : ''}
 
@@ -838,9 +893,10 @@ Router.register('bdi', async () => {
           </div>
           <div>${Utils.esc(f.expressao || formulaBdiTexto(p))}</div>
           <div style="color:#64748b">── Substituindo ──────────────────────────────────────────────────</div>
-          <div>AC=${Utils.num(tg.AC,4)}% · S=${Utils.num(tg.S,4)}% · R=${Utils.num(tg.R,4)}% · DF=${Utils.num(tg.DF,4)}% · L=${Utils.num(tg.L,4)}% · ISS=${Utils.num(tg.ISS||0,4)}% · CPRB=${Utils.num(tg.CPRB||0,4)}% · T=${Utils.num(tg.T,4)}%${p.regime_tributario==='Simples Nacional' ? ` · CBS=${Utils.num(tg.CBS||0,4)}% · IBS=${Utils.num(tg.IBS||0,4)}%` : ` · CBS=${Utils.num(tg.CBS||0,4)}% · IBS=${Utils.num(tg.IBS||0,4)}% · IVAeq=${Utils.num(tg.IVAeq||0,4)}%`}</div>
-          ${anoPerfil(p) >= 2027 && p.regime_tributario!=='Simples Nacional' ? `<div style="color:#94a3b8">IVAeq = max(0; (CBS+IBS) × (Fator efetivo - %MAT - Crédito no BDI)) · Fator efetivo ${Utils.num(tg.FATOR_EFETIVO||0,4)}% · %MAT ${Utils.num(tg.PERCENTUAL_MAT||0,4)}%</div>` : ''}
-          <div style="color:#94a3b8">Ano ${f.ano || tg.ano || anoPerfil(p)} · T = ISS + CPRB aplicável${(f.ano || tg.ano || anoPerfil(p)) <= 2026 ? ' + PIS/COFINS' : ''}.</div>
+          <div>K=${Utils.num(tg.K,8)} · AC=${Utils.num(tg.AC,4)}% · SG=${Utils.num(tg.S,4)}% · R=${Utils.num(tg.R,4)}% · DF=${Utils.num(tg.DF,4)}% · L=${Utils.num(tg.L,4)}%</div>
+          <div>PIS=${Utils.num(tg.PIS||0,4)}% · Cofins=${Utils.num(tg.COFINS||0,4)}% · ISS=${Utils.num(tg.ISS||0,4)}% · CPRB=${Utils.num(tg.CPRB||0,4)}% · CBS=${Utils.num(tg.CBS||0,4)}% · IBS=${Utils.num(tg.IBS||0,4)}% · T=${Utils.num(tg.T,4)}%</div>
+          ${anoPerfil(p) >= 2027 && p.regime_tributario!=='Simples Nacional' ? `<div style="color:#94a3b8">f = (1 - redutor setorial) × (1 - redutor governamental) = ${Utils.num((tg.FATOR_EFETIVO||0)/100,6)} · IVA aplicável ${Utils.num(tg.IVA_APLICAVEL||0,4)}%<br>IVAeq = max(0; IVA nominal × ((K × f - %MATcd) / K)) = ${Utils.num(tg.IVAeq||0,4)}% · %MATcd ${Utils.num(tg.PERCENTUAL_MATCD||0,4)}%</div>` : ''}
+          <div style="color:#94a3b8">Ano ${f.ano || tg.ano || anoPerfil(p)} · T exclui IRPJ e CSLL.</div>
           <div>${Utils.esc(f.texto || '')}</div>
           <div style="color:#64748b">── Resultado ─────────────────────────────────────────────────────</div>
           <div style="color:#34d399;font-size:1.1rem;font-weight:700;margin-top:4px">BDI = ${Utils.num(f.bdi,4)}%</div>

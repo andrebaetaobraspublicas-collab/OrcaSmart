@@ -43,6 +43,7 @@ const {
 const {
   createTenantMysqlRuntime,
 } = require('./utils/mysqlTenantRuntime');
+const { ensureMysqlBdiSchema } = require('./utils/bdiMysqlSchema');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1148,6 +1149,7 @@ async function initializeMysqlPilot() {
     bootState.mysql.databaseName = result.databaseName || null;
     bootState.mysql.connectionMode = result.connectionMode || null;
     bootState.mysql.socketPath = result.socketPath || null;
+    if (result.ok) await ensureMysqlBdiSchema(mysqlConfig());
     if (!result.ok && result.missing && result.missing.length) {
       bootState.mysql.error = `Variaveis MySQL ausentes: ${result.missing.join(', ')}`;
     }

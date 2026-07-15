@@ -105,6 +105,13 @@ async function ensureRuntimeTenantSchema(db, key = '', catalogPath = '') {
   await sanitizeTenantForeignKeysToCatalog(db, CATALOG_TABLES, TENANT_TABLES);
   await ensureRuntimeOverrideTables(db, catalogPath);
 
+  if (await tableExists(db, 'tenant_perfis_bdi')) {
+    await ensureColumn(db, 'tenant_perfis_bdi', 'redutor_setorial_ivaeq', 'REAL DEFAULT 0.5');
+    await ensureColumn(db, 'tenant_perfis_bdi', 'redutor_governamental_ivaeq', 'REAL DEFAULT 0');
+    await ensureColumn(db, 'tenant_perfis_bdi', 'usa_iva_manual', 'INTEGER DEFAULT 0');
+    await ensureColumn(db, 'tenant_perfis_bdi', 'simples_rbt12', 'REAL DEFAULT 0');
+  }
+
   await run(db, `
     CREATE TABLE IF NOT EXISTS tenant_referential_overrides (
       id_override INTEGER PRIMARY KEY AUTOINCREMENT,

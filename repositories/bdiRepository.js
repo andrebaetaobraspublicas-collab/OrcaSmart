@@ -1,3 +1,5 @@
+const bdiRules = require('../services/bdiRules');
+
 function toNum(v, d = 0) {
   const n = Number(String(v ?? '').replace(',', '.'));
   return Number.isFinite(n) ? n : d;
@@ -86,26 +88,62 @@ function anoPerfil(p) {
   return m ? parseInt(m[1], 10) : 2026;
 }
 
+function corrigirGrafiaBdi(value) {
+  if (typeof value !== 'string' || !value) return value;
+  return value
+    .replace(/Administra(?:\?\?|Ã§Ã£|Ã\?\?|\u00C3\u00A7\u00C3\u00A3|c)a?o/g, 'Administração')
+    .replace(/Administracao/g, 'Administração')
+    .replace(/Bonifica(?:\?\?|Ã§Ã£|c)a?o/g, 'Bonificação')
+    .replace(/Desonera(?:\?\?|Ã§Ã£|c)a?o/g, 'Desoneração')
+    .replace(/Constru(?:\?\?|Ã§Ã£|c)a?o/g, 'Construção')
+    .replace(/Edif(?:\?|Ã­)cios/g, 'Edifícios')
+    .replace(/Ac(?:\?|Ã³|o)rd(?:\?|Ã£|a)o/g, 'Acórdão')
+    .replace(/C(?:\?|Ã¡)lc\./g, 'Cálc.')
+    .replace(/Mem(?:\?|Ã³)ria/g, 'Memória')
+    .replace(/C(?:\?|Ã¡)lculo/g, 'Cálculo')
+    .replace(/Vig(?:\?|Ãª)ncia/g, 'Vigência')
+    .replace(/al(?:\?|Ã­)quota/g, 'alíquota')
+    .replace(/tribut(?:\?|Ã¡)ria/g, 'tributária')
+    .replace(/Servi(?:\?\?|Ã§)os/g, 'Serviços')
+    .replace(/Contribui(?:\?\?|Ã§Ã£)o/g, 'Contribuição')
+    .replace(/Previdenci(?:\?|Ã¡)ria/g, 'Previdenciária');
+}
+
+function normalizarComponenteBdi(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    descricao: corrigirGrafiaBdi(row.descricao),
+    base_legal: corrigirGrafiaBdi(row.base_legal),
+    observacoes: corrigirGrafiaBdi(row.observacoes),
+  };
+}
+
+function normalizarPerfilBdi(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    nome_perfil: corrigirGrafiaBdi(row.nome_perfil),
+    tipo_obra: corrigirGrafiaBdi(row.tipo_obra),
+    descricao: corrigirGrafiaBdi(row.descricao),
+    observacoes: corrigirGrafiaBdi(row.observacoes),
+  };
+}
+
 function cprbPerfil(p) {
   const desonerado = p?.regime_tributario === 'Desonerado' || p?.regime_previdenciario === 'Desonerado';
   if (!desonerado) return 0;
   const ano = anoPerfil(p);
   if (ano <= 2024) return 4.5;
   if (ano === 2025) return 3.6;
-  if (ano === 2026) return 2.7;
-  if (ano === 2027) return 1.8;
-  return 0;
+  return bdiRules.parametrosDoAno(ano).cprb;
 }
 
-function ivaeqPerfil(p) {
-  const explicit = toNum(p?.ivaeq_percentual, 0);
-  if (explicit > 0) return explicit;
-  const cbs = toNum(p?.cbs_percentual, 0) / 100;
-  const ibs = toNum(p?.ibs_percentual, 0) / 100;
-  const fator = toNum(p?.fator_efetivo_ivaeq, 0.5);
-  const mat = toNum(p?.percentual_mat_ivaeq, 0.4);
-  const credito = toNum(p?.credito_bdi_ivaeq, 0);
-  return Math.max(0, (cbs + ibs) * (fator - mat - credito)) * 100;
+function ivaeqPerfil(p, grupos = {}) {
+  return bdiRules.calcularRegimeComum(
+    { ...(p || {}), ano_orcamento: anoPerfil(p) },
+    grupos,
+  ).IVAeq;
 }
 
 function perfilPayload(d) {
@@ -135,6 +173,10 @@ function perfilPayload(d) {
     toNum(d.simples_aliquota_efetiva, 0),
     toNum(d.simples_irpj_percentual, 0),
     toNum(d.simples_csll_percentual, 0),
+    toNum(d.redutor_setorial_ivaeq, 0.5),
+    toNum(d.redutor_governamental_ivaeq, 0),
+    d.usa_iva_manual ? 1 : 0,
+    toNum(d.simples_rbt12, 0),
   ];
 }
 
@@ -213,43 +255,49 @@ async function calcBdi(db, pid, options = {}) {
   const R = soma('R');
   const DF = soma('DF');
   const L = soma('L');
-  let T = soma('T');
   const ano = anoPerfil(p);
-  const ISS = toNum(p.iss_percentual_manual, 0) || comps
-    .filter(c => c.grupo === 'T' && /ISS/i.test(String(c.descricao || c.codigo || '')))
-    .reduce((s, c) => s + toNum(c.percentual, 0), 0);
-  const CPRB = cprbPerfil(p);
-  const IVAeq = ano >= 2027 ? ivaeqPerfil(p) : 0;
-
-  if (p.regime_tributario === 'Simples Nacional' && toNum(p.simples_aliquota_efetiva, 0) > 0) {
-    T = toNum(p.simples_aliquota_efetiva, T);
-  } else if (ano >= 2027) {
-    T = Math.max(T, ISS + CPRB);
-  }
-
-  const multBase = (1 + (AC + S + R) / 100) * (1 + DF / 100) * (1 + L / 100);
-  let bdi;
-  if (p.regime_tributario === 'Simples Nacional' || ano <= 2026) {
-    bdi = ((multBase / Math.max(0.0001, 1 - T / 100)) - 1) * 100;
-  } else if (ano < 2033) {
-    bdi = (((multBase * (1 + IVAeq / 100)) / Math.max(0.0001, 1 - T / 100)) - 1) * 100;
-  } else {
-    bdi = ((multBase * (1 + IVAeq / 100)) - 1) * 100;
-  }
-  bdi = Number(Math.max(0, bdi).toFixed(6));
+  const grupos = { AC, S, R, DF, L };
+  const calculo = ano < 2026
+    ? (() => {
+      const K = bdiRules.fatorK(grupos);
+      const T = soma('T');
+      const ISS = p.iss_percentual_manual !== null && p.iss_percentual_manual !== undefined
+        ? toNum(p.iss_percentual_manual)
+        : comps.filter(c => c.grupo === 'T' && /ISS/i.test(String(c.descricao || c.codigo || '')))
+          .reduce((total, c) => total + toNum(c.percentual), 0);
+      return {
+        ...grupos, K, T, ISS, CPRB: cprbPerfil(p), PIS: 0, COFINS: 0, CBS: 0, IBS: 0,
+        IVAeq: 0, IVA_NOMINAL: 0, IVA_APLICAVEL: 0, FATOR_EFETIVO: 0,
+        PERCENTUAL_MATCD: toNum(p.percentual_mat_ivaeq, 0.4) * 100,
+        ano, bdi: Math.max(0, (K / Math.max(0.000001, 1 - T / 100) - 1) * 100),
+        regime_calculo: 'legado',
+      };
+    })()
+    : bdiRules.calcularBdi({ ...p, ano_orcamento: ano }, grupos);
+  const bdi = Number(calculo.bdi.toFixed(6));
+  const IVAeq = Number(calculo.IVAeq.toFixed(6));
+  const simplesEfetiva = calculo.simples?.aliquota_efetiva ?? toNum(p.simples_aliquota_efetiva, 0);
+  const simplesIrpj = calculo.simples?.original?.irpj ?? toNum(p.simples_irpj_percentual, 0);
+  const simplesCsll = calculo.simples?.original?.csll ?? toNum(p.simples_csll_percentual, 0);
+  const simplesFaixa = calculo.simples?.faixa ?? p.simples_faixa ?? null;
   if (persist && (!catalogRead || scoped.scope === 'tenant')) {
     if (tenantMode && scoped.scope === 'tenant') {
-      await run(db, 'UPDATE tenant_perfis_bdi SET bdi_percentual=?, ivaeq_percentual=?, tenant_updated_at=? WHERE rowid=?', [bdi, IVAeq, new Date().toISOString(), scoped.value]);
+      await run(db, `UPDATE tenant_perfis_bdi
+        SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
+            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?, tenant_updated_at=?
+        WHERE rowid=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, new Date().toISOString(), scoped.value]);
     } else {
-      await run(db, 'UPDATE perfis_bdi SET bdi_percentual=?, ivaeq_percentual=? WHERE id_perfil_bdi=?', [bdi, IVAeq, pid]);
+      await run(db, `UPDATE perfis_bdi
+        SET bdi_percentual=?, ivaeq_percentual=?, simples_aliquota_efetiva=?,
+            simples_irpj_percentual=?, simples_csll_percentual=?, simples_faixa=?
+        WHERE id_perfil_bdi=?`, [bdi, IVAeq, simplesEfetiva, simplesIrpj, simplesCsll, simplesFaixa, pid]);
     }
   }
   return {
-    AC, S, R, DF, L, T, ISS, CPRB, IVAeq, ano, bdi,
-    CBS: toNum(p.cbs_percentual, 0),
-    IBS: toNum(p.ibs_percentual, 0),
-    FATOR_EFETIVO: toNum(p.fator_efetivo_ivaeq, 0.5) * 100,
-    PERCENTUAL_MAT: toNum(p.percentual_mat_ivaeq, 0.4) * 100,
+    ...calculo,
+    bdi,
+    IVAeq,
+    PERCENTUAL_MAT: calculo.PERCENTUAL_MATCD,
     CREDITO_BDI: toNum(p.credito_bdi_ivaeq, 0) * 100,
   };
 }
@@ -315,6 +363,10 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
              b.regime_previdenciario, b.simples_faixa, b.simples_faixa_label,
              b.simples_receita_limite, b.simples_aliquota_efetiva,
              b.simples_irpj_percentual, b.simples_csll_percentual,
+             ${isTenant ? 'b.redutor_setorial_ivaeq' : 'NULL'} AS redutor_setorial_ivaeq,
+             ${isTenant ? 'b.redutor_governamental_ivaeq' : 'NULL'} AS redutor_governamental_ivaeq,
+             ${isTenant ? 'b.usa_iva_manual' : '0'} AS usa_iva_manual,
+             ${isTenant ? 'b.simples_rbt12' : '0'} AS simples_rbt12,
              COUNT(c.${isTenant ? 'rowid' : 'id_componente'}) AS qtd_componentes,
              ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
              ${isTenant ? 'b.tenant_catalog_id' : 'b.id_perfil_bdi'} AS _catalog_id
@@ -331,7 +383,7 @@ async function createPerfil(db, data) {
   if (await hasTenantBdiOverrides(db)) {
     const result = await insertTenantPerfil(db, data, { action: data.tenant_override_action || 'create', catalogId: data.tenant_catalog_id || null });
     const defaults = [
-      ['AC', 'AC1', 'Administracao Central', 1],
+      ['AC', 'AC1', 'Administração Central', 1],
       ['S', 'S1', 'Seguros e Garantias', 2],
       ['R', 'R1', 'Riscos', 3],
       ['DF', 'DF1', 'Despesas Financeiras', 4],
@@ -354,10 +406,10 @@ async function createPerfil(db, data) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
   const defaults = [
-    ['AC', 'AC1', 'Administracao Central', 1],
+    ['AC', 'AC1', 'Administração Central', 1],
     ['S', 'S1', 'Seguros e Garantias', 2],
     ['R', 'R1', 'Riscos', 3],
     ['DF', 'DF1', 'Despesas Financeiras', 4],
@@ -407,7 +459,8 @@ async function updatePerfil(db, id, data, options = {}) {
       fator_efetivo_ivaeq=?,percentual_mat_ivaeq=?,credito_bdi_ivaeq=?,ivaeq_percentual=?,
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
-      simples_csll_percentual=?
+      simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
+      usa_iva_manual=?,simples_rbt12=?
     WHERE id_perfil_bdi=?`, [...perfilPayload(data), id]);
   if (!result.changes) return null;
   return recalcAndGet(db, id);
@@ -458,8 +511,8 @@ async function duplicarPerfil(db, id, options = {}) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload({ ...p, nome_perfil: `Copia de ${p.nome_perfil}` }));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload({ ...p, nome_perfil: `Copia de ${p.nome_perfil}` }));
   const comps = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=?', [id]);
   for (const c of comps) {
     await run(db, `
@@ -478,8 +531,9 @@ async function insertTenantPerfil(db, data = {}, options = {}) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,
+     tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
   [
     ...perfilPayload(data),
     options.catalogId || data.tenant_catalog_id || null,
@@ -505,7 +559,8 @@ async function updateTenantPerfil(db, rowid, data = {}) {
       fator_efetivo_ivaeq=?,percentual_mat_ivaeq=?,credito_bdi_ivaeq=?,ivaeq_percentual=?,
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
-      simples_csll_percentual=?,tenant_updated_at=?
+      simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
+      usa_iva_manual=?,simples_rbt12=?,tenant_updated_at=?
     WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`,
   [...perfilPayload(data), new Date().toISOString(), rowid]);
 }
@@ -553,16 +608,19 @@ async function recordReferentialOverride(db, data = {}) {
 async function listComponentes(db, idPerfil) {
   const scoped = scopedPerfilId(idPerfil);
   if ((await hasTenantBdiOverrides(db)) && scoped.scope === 'tenant') {
-    return all(db, `
+    const rows = await all(db, `
       SELECT *, 'tenant:' || rowid AS id_componente
       FROM tenant_componentes_bdi
       WHERE id_perfil_bdi=? AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY grupo, ordem`, [scoped.value]);
+    return rows.map(normalizarComponenteBdi);
   }
   if (await useTenantCatalogRead(db)) {
-    return all(db, 'SELECT * FROM catalog.componentes_bdi WHERE id_perfil_bdi=? ORDER BY grupo, ordem', [scoped.value]);
+    const rows = await all(db, 'SELECT * FROM catalog.componentes_bdi WHERE id_perfil_bdi=? ORDER BY grupo, ordem', [scoped.value]);
+    return rows.map(normalizarComponenteBdi);
   }
-  return all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=? ORDER BY grupo, ordem', [idPerfil]);
+  const rows = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=? ORDER BY grupo, ordem', [idPerfil]);
+  return rows.map(normalizarComponenteBdi);
 }
 
 async function createComponente(db, data, options = {}) {
@@ -668,14 +726,10 @@ async function memoria(db, idPerfil, options = {}) {
   const totais = await calcBdi(db, idPerfil, options);
   const ano = totais.ano;
   const expressao = perfil.regime_tributario === 'Simples Nacional'
-    ? 'BDI Simples = {[(1+AC+S+R)x(1+DF)x(1+L)/(1-T Simples)] - 1} x 100'
-    : ano <= 2026
-      ? 'BDI = {[(1+AC+S+R)x(1+DF)x(1+L)/(1-T)] - 1} x 100'
-      : ano < 2033
-        ? 'BDI = {[(1+AC+S+R)x(1+DF)x(1+L)x(1+IVAeq)/(1-T)] - 1} x 100'
-        : 'BDI = {[(1+AC+S+R)x(1+DF)x(1+L)x(1+IVAeq)] - 1} x 100';
+    ? 'BDI Simples = [K / (1 - T)] - 1, com IVAeq = 0'
+    : 'BDI = [K x (1 + IVAeq) / (1 - T)] - 1';
   return {
-    perfil,
+    perfil: normalizarPerfilBdi(perfil),
     componentes,
     totais_grupo: totais,
     formula: {
@@ -686,8 +740,13 @@ async function memoria(db, idPerfil, options = {}) {
       DF: totais.DF,
       L: totais.L,
       T: totais.T,
+      K: totais.K,
       ISS: totais.ISS,
       CPRB: totais.CPRB,
+      PIS: totais.PIS,
+      COFINS: totais.COFINS,
+      CBS: totais.CBS,
+      IBS: totais.IBS,
       IVAeq: totais.IVAeq,
       ano,
       bdi: totais.bdi,

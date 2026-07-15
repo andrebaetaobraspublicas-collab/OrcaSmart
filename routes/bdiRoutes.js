@@ -10,6 +10,10 @@ module.exports = function bdiRoutes(db, options = {}) {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
   });
 
+  router.get('/parametros', asyncHandler(async (_req, res) => {
+    res.json(await service.parametros());
+  }));
+
   router.get('/perfis', asyncHandler(async (req, res) => {
     res.json(await service.listPerfis(readDb, req.query || {}));
   }));

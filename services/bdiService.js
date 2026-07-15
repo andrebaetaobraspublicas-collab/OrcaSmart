@@ -1,4 +1,5 @@
 const repo = require('../repositories/bdiRepository');
+const bdiRules = require('./bdiRules');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -76,6 +77,11 @@ async function memoria(db, id, options = {}) {
 }
 
 module.exports = {
+  parametros: async () => ({
+    versao: bdiRules.PARAMETROS_VERSAO,
+    anuais: bdiRules.PARAMETROS_TRIBUTARIOS,
+    simples_anexo_iv: bdiRules.SIMPLES_ANEXO_IV,
+  }),
   listPerfis: repo.listPerfis,
   getPerfil,
   createPerfil,

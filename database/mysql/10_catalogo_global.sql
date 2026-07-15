@@ -345,6 +345,10 @@ CREATE TABLE IF NOT EXISTS `perfis_bdi` (
   `simples_aliquota_efetiva` DECIMAL(20,8) NOT NULL DEFAULT 0.0,
   `simples_irpj_percentual` DECIMAL(20,8) NOT NULL DEFAULT 0.0,
   `simples_csll_percentual` DECIMAL(20,8) NOT NULL DEFAULT 0.0,
+  `redutor_setorial_ivaeq` DECIMAL(20,8) NOT NULL DEFAULT 0.5,
+  `redutor_governamental_ivaeq` DECIMAL(20,8) NOT NULL DEFAULT 0.0,
+  `usa_iva_manual` BIGINT NOT NULL DEFAULT 0,
+  `simples_rbt12` DECIMAL(20,8) NOT NULL DEFAULT 0.0,
   PRIMARY KEY (`id_perfil_bdi`),
   KEY `idx_perfis_bdi_filtros` (`ano_orcamento`, `tipo_obra`, `regime_previdenciario`, `quartil`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
