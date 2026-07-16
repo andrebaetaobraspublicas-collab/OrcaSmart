@@ -54,11 +54,16 @@ module.exports = function insumosRoutes(db, options = {}) {
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createInsumo(db, req.body || {}));
+    res.status(201).json(await service.createInsumo(db, req.body || {}, {
+      forceUserOwned: req.user?.role !== 'admin',
+    }));
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    const result = await service.updateInsumo(db, req.params.id, req.body || {}, { readDb });
+    const result = await service.updateInsumo(db, req.params.id, req.body || {}, {
+      readDb,
+      forceUserOwned: req.user?.role !== 'admin',
+    });
     res.status(result._created ? 201 : 200).json(result);
   }));
 

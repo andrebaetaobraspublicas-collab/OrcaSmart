@@ -37,7 +37,7 @@ Object.assign(API, {
 
 /* ─── Constantes ───────────────────────────────────────────────────────────── */
 const TIPOS_INSUMO  = ['Material','Mão de Obra','Equipamento','Serviço Auxiliar'];
-const ORIGENS_INS   = ['SINAPI','SICRO','SEINFRA','SUDECAP','GOINFRA','CDHU','Cotação','Própria','Outra'];
+const ORIGENS_INS   = ['SINAPI','SICRO','SEINFRA','SUDECAP','GOINFRA','CDHU','USUARIO','Cotação','Própria','Outra'];
 const TIPO_ICONS    = {
   'Material':          '🧱',
   'Mão de Obra':       '👷',
@@ -880,21 +880,21 @@ Router.register('insumos', async () => {
         <!-- ── Preço Principal ───────────────────────────────────────── -->
         <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--c-border)">
           <div class="fw-600 text-xs mb-2" style="color:var(--c-primary);text-transform:uppercase;letter-spacing:.05em">
-            💰 Preço de Referência
+            💰 Custo de Referência
           </div>
           <div class="form-grid form-grid-3" style="gap:10px">
             <div class="form-group">
-              <label class="form-label">Preço Desonerado (R$)</label>
+              <label class="form-label">Custo Desonerado (R$)</label>
               <input class="form-control" id="fi_pdes" type="number" step="0.0001" min="0"
                 value="${ins.preco_desonerado||''}" placeholder="0,0000">
             </div>
             <div class="form-group">
-              <label class="form-label">Preço Não Desonerado (R$)</label>
+              <label class="form-label">Custo Não Desonerado (R$)</label>
               <input class="form-control" id="fi_pndes" type="number" step="0.0001" min="0"
                 value="${ins.preco_nao_desonerado||''}" placeholder="0,0000">
             </div>
             <div class="form-group">
-              <label class="form-label">Preço de Referência ★ (R$)</label>
+              <label class="form-label">Custo de Referência ★ (R$)</label>
               <input class="form-control" id="fi_pref" type="number" step="0.0001" min="0"
                 value="${ins.preco_referencia||''}" placeholder="0,0000" oninput="calcIVAForm()">
             </div>
@@ -953,7 +953,7 @@ Router.register('insumos', async () => {
         </div>`,
       footer: `
         <div style="font-size:.73rem;color:var(--c-text-3);margin-right:auto">
-          ★ Preço de referência = valor base para cálculo das composições
+          ★ Custo de referência = valor base para cálculo das composições
         </div>
         <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
         <button class="btn btn-primary" id="btnSalvarIns">${id ? 'Salvar' : 'Criar Insumo'}</button>`
@@ -1316,15 +1316,15 @@ Router.register('insumos', async () => {
               <select class="form-control" id="fp_db">${dbOpts}</select>
             </div>
             <div class="form-group">
-              <label class="form-label">Preço Desonerado (R$)</label>
+              <label class="form-label">Custo Desonerado (R$)</label>
               <input class="form-control" id="fp_des" type="number" step="0.0001" min="0" placeholder="0,0000">
             </div>
             <div class="form-group">
-              <label class="form-label">Preço Não Desonerado (R$)</label>
+              <label class="form-label">Custo Não Desonerado (R$)</label>
               <input class="form-control" id="fp_ndes" type="number" step="0.0001" min="0" placeholder="0,0000">
             </div>
             <div class="form-group">
-              <label class="form-label">Preço de Referência ★ <span class="req">*</span></label>
+              <label class="form-label">Custo de Referência ★ <span class="req">*</span></label>
               <input class="form-control" id="fp_ref" type="number" step="0.0001" min="0" placeholder="0,0000" oninput="calcIVA()">
             </div>
           </div>

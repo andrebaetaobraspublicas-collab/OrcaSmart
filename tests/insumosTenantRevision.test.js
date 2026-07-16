@@ -1,0 +1,117 @@
+const assert = require('assert');
+const sqlite3 = require('sqlite3').verbose();
+const service = require('../services/insumosService');
+
+function exec(db, sql) {
+  return new Promise((resolve, reject) => db.exec(sql, error => (error ? reject(error) : resolve())));
+}
+
+async function main() {
+  const db = new sqlite3.Database(':memory:');
+  try {
+    await exec(db, `
+      ATTACH DATABASE ':memory:' AS catalog;
+
+      CREATE TABLE catalog.insumos (
+        id_insumo INTEGER PRIMARY KEY, codigo_insumo TEXT, descricao TEXT, tipo_insumo TEXT,
+        id_unidade INTEGER, id_grupo INTEGER, origem TEXT, encargos_aplicaveis TEXT,
+        situacao TEXT, observacoes TEXT, encargos_sociais_percentual REAL
+      );
+      CREATE TABLE catalog.unidades_medida (id_unidade INTEGER PRIMARY KEY, sigla TEXT, descricao TEXT);
+      CREATE TABLE catalog.grupos_insumos (id_grupo INTEGER PRIMARY KEY, nome_grupo TEXT);
+      CREATE TABLE catalog.precos_insumos (
+        id_preco INTEGER PRIMARY KEY, id_insumo INTEGER, id_data_base INTEGER, id_fonte INTEGER,
+        uf_referencia TEXT, preco_referencia REAL, preco_desonerado REAL, preco_nao_desonerado REAL,
+        iva_equivalente REAL, cbs_percentual REAL, ibs_percentual REAL, is_percentual REAL,
+        preco_sem_tributos REAL, encargos_sociais_percentual REAL
+      );
+      CREATE TABLE catalog.datas_base (id_data_base INTEGER PRIMARY KEY, mes INTEGER, ano INTEGER, descricao TEXT);
+      CREATE TABLE catalog.fontes_referencia (id_fonte INTEGER PRIMARY KEY, nome_fonte TEXT);
+
+      CREATE TABLE tenant_insumos (
+        id_insumo INTEGER, codigo_insumo TEXT, descricao TEXT, tipo_insumo TEXT,
+        id_unidade INTEGER, id_grupo INTEGER, origem TEXT, encargos_aplicaveis TEXT,
+        situacao TEXT, observacoes TEXT, encargos_sociais_percentual REAL,
+        tenant_catalog_id INTEGER, tenant_override_action TEXT, tenant_override_status TEXT,
+        tenant_created_at TEXT, tenant_updated_at TEXT
+      );
+      CREATE TABLE tenant_precos_insumos (
+        id_preco INTEGER, id_insumo INTEGER, id_data_base INTEGER, id_fonte INTEGER,
+        uf_referencia TEXT, preco_referencia REAL, preco_desonerado REAL, preco_nao_desonerado REAL,
+        iva_equivalente REAL, cbs_percentual REAL, ibs_percentual REAL, is_percentual REAL,
+        preco_sem_tributos REAL, encargos_sociais_percentual REAL,
+        tenant_override_action TEXT, tenant_override_status TEXT,
+        tenant_created_at TEXT, tenant_updated_at TEXT
+      );
+      CREATE TABLE tenant_referential_overrides (
+        id_override INTEGER PRIMARY KEY, domain TEXT, catalog_table TEXT, catalog_id INTEGER,
+        tenant_table TEXT, tenant_rowid INTEGER, action TEXT, impact_policy TEXT,
+        payload_json TEXT, status TEXT, updated_at TEXT
+      );
+
+      CREATE TABLE composicoes (id_composicao INTEGER PRIMARY KEY, codigo TEXT, descricao TEXT, fonte TEXT, custo_unitario REAL);
+      CREATE TABLE itens_composicao (id_composicao INTEGER, codigo_item TEXT, tipo_item TEXT);
+      CREATE TABLE obras (id_obra INTEGER PRIMARY KEY, nome_obra TEXT);
+      CREATE TABLE orcamentos (id_orcamento INTEGER PRIMARY KEY, id_obra INTEGER, nome_orcamento TEXT);
+      CREATE TABLE orcamento_sintetico (
+        id_item INTEGER PRIMARY KEY, id_orcamento INTEGER, id_insumo INTEGER,
+        id_composicao INTEGER, codigo TEXT, descricao TEXT, custo_unitario REAL
+      );
+
+      INSERT INTO catalog.insumos
+        (id_insumo,codigo_insumo,descricao,tipo_insumo,origem,encargos_aplicaveis,situacao)
+      VALUES
+        (10,'M161910000','8 PASSAGEIROS PARA 15 PARADAS','Equipamento','CDHU','Sim','Ativo');
+    `);
+
+    const payload = {
+      codigo_insumo: 'M161910000',
+      descricao: '8 PASSAGEIROS PARA 15 PARADAS - PRECO REVISTO',
+      tipo_insumo: 'Equipamento',
+      origem: 'CDHU',
+      encargos_aplicaveis: 'Sim',
+      situacao: 'Ativo',
+      preco_referencia: 0,
+      modo_impacto: 'preservar',
+    };
+    const revisao = await service.updateInsumo(db, '10', payload, {
+      readDb: db,
+      forceUserOwned: true,
+    });
+    assert.strictEqual(revisao._created, true);
+    assert.strictEqual(revisao.codigo_insumo, 'M161910000.REV001');
+    assert.strictEqual(revisao.origem, 'USUARIO');
+    assert.match(revisao.id_insumo, /^tenant:/);
+
+    const impacto = await service.getImpacto(db, revisao.id_insumo);
+    assert.strictEqual(impacto.tem_impacto, false);
+
+    const editada = await service.updateInsumo(db, revisao.id_insumo, {
+      ...payload,
+      codigo_insumo: revisao.codigo_insumo,
+      descricao: 'REVISAO EDITADA NOVAMENTE',
+      modo_impacto: 'alterar_composicoes',
+    }, {
+      readDb: db,
+      forceUserOwned: true,
+    });
+    assert.strictEqual(editada.descricao, 'REVISAO EDITADA NOVAMENTE');
+    assert.strictEqual(editada.origem, 'USUARIO');
+
+    const admin = await service.createInsumo(db, {
+      codigo_insumo: 'ADM-1',
+      descricao: 'CADASTRO ADMINISTRATIVO',
+      origem: 'CDHU',
+    }, { forceUserOwned: false });
+    assert.strictEqual(admin.origem, 'CDHU');
+
+    console.log('insumosTenantRevision.test.js: OK');
+  } finally {
+    await new Promise(resolve => db.close(resolve));
+  }
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

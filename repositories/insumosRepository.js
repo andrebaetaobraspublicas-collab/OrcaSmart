@@ -495,8 +495,11 @@ function placeholders(values) {
 }
 
 async function impacto(db, id) {
-  const insumo = await one(db, 'SELECT * FROM insumos WHERE id_insumo = ?', [id]);
+  await ensureSchema(db);
+  const insumo = await getInsumo(db, id);
   if (!insumo) return null;
+  const scoped = scopedInsumoId(id);
+  const idPersistido = scoped.scope === 'tenant' ? scoped.value : id;
   const variantes = codigoVariantes(insumo.codigo_insumo);
   if (!variantes.length) {
     return {
@@ -524,7 +527,7 @@ async function impacto(db, id) {
     FROM orcamento_sintetico os
     JOIN orcamentos o ON o.id_orcamento = os.id_orcamento
     LEFT JOIN obras ob ON ob.id_obra = o.id_obra
-    WHERE os.id_insumo = ? OR os.codigo IN (${placeholders(variantes)})`, [id, ...variantes]);
+    WHERE os.id_insumo = ? OR os.codigo IN (${placeholders(variantes)})`, [idPersistido, ...variantes]);
 
   let indiretos = [];
   const compIds = composicoes.map(c => c.id_composicao);

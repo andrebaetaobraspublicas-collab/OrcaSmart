@@ -49,19 +49,25 @@ async function getImpacto(db, id) {
   return trimImpacto(impacto);
 }
 
-async function createInsumo(db, data) {
-  assertDescricao(data);
-  return repo.createInsumo(db, data);
+function asUserOwned(data, options = {}) {
+  return options.forceUserOwned ? { ...data, origem: 'USUARIO' } : data;
+}
+
+async function createInsumo(db, data, options = {}) {
+  const ownedData = asUserOwned(data, options);
+  assertDescricao(ownedData);
+  return repo.createInsumo(db, ownedData);
 }
 
 async function updateInsumo(db, id, data, options = {}) {
-  assertDescricao(data);
+  const ownedData = asUserOwned(data, options);
+  assertDescricao(ownedData);
   const readDb = options.readDb || db;
   const atual = await getInsumo(readDb, id);
   if (!atual) throw httpError(404, 'Insumo nao encontrado.');
 
-  if (data.modo_impacto === 'preservar') {
-    const novo = await repo.createPreservedRevision(db, atual, data);
+  if (ownedData.modo_impacto === 'preservar') {
+    const novo = await repo.createPreservedRevision(db, atual, ownedData);
     return {
       ...novo,
       mensagem: 'Novo insumo criado; composicoes e orcamentos existentes foram preservados.',
@@ -69,7 +75,7 @@ async function updateInsumo(db, id, data, options = {}) {
     };
   }
 
-  const updated = await repo.updateInsumo(db, id, data, atual);
+  const updated = await repo.updateInsumo(db, id, ownedData, atual);
   if (!updated) throw httpError(404, 'Insumo nao encontrado.');
   return {
     ...updated,
