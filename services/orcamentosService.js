@@ -216,8 +216,11 @@ async function duplicarOrcamento(db, id) {
 }
 
 async function updateBdi(db, id, data) {
-  await repo.updateBdi(db, id, data);
-  return { mensagem: 'BDI atualizado.' };
+  const result = await repo.updateBdi(db, id, data);
+  return {
+    mensagem: 'BDI atualizado.',
+    linhas_bdi_especifico_removidas: Number(result?.linhasBdiEspecificoRemovidas || 0),
+  };
 }
 
 async function updateTotais(db, id, data) {
@@ -822,9 +825,6 @@ function parseExcelRows(buffer) {
     let custo = custoPlanilha;
     if (!custo && precoUnitPlanilha) custo = precoUnitPlanilha;
     if (!custo && valorTotalPlanilha && hasQuantity) custo = valorTotalPlanilha / quantidade;
-    const bdiPercentual = custoPlanilha > 0 && precoUnitPlanilha > 0 && Math.abs(precoUnitPlanilha - custoPlanilha) > 0.0001
-      ? ((precoUnitPlanilha / custoPlanilha) - 1) * 100
-      : null;
     const hasCost = Math.abs(Number(custo) || 0) > 0;
     const sectionRef = itemNum || codigo;
     const looksSection = descricao && !hasQuantity && !hasCost && !unidade
@@ -838,7 +838,10 @@ function parseExcelRows(buffer) {
       unidade,
       quantidade,
       custo_unitario: custo,
-      bdi_percentual_linha: bdiPercentual,
+      // O preco da planilha nao cria uma excecao permanente de BDI. Linhas
+      // importadas usam o BDI global; excecoes somente nascem da edicao
+      // explicita pelo botao de BDI da propria linha.
+      bdi_percentual_linha: null,
       tipo_linha: looksSection ? 'section' : 'item',
     };
   }).filter(Boolean);

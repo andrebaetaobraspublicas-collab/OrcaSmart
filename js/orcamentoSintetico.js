@@ -652,20 +652,45 @@ Router.register('orcamento-sintetico', async () => {
     window._osAplicarBdi = async () => {
       const { idPerfil, percentual } = perfilBdiSelecionado();
       const inputPct = parseFloat(document.getElementById('inputBdiPctOS')?.value);
-      const pct = percentual !== null ? percentual : (Number.isFinite(inputPct) ? inputPct : 0);
+      const pct = Number.isFinite(inputPct) ? inputPct : (percentual !== null ? percentual : 0);
       const idP = idPerfil;
-      if (percentual !== null) sincronizarBdiSelecionadoNoInput();
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+        Toast.warning('Informe um BDI entre 0% e 100%.');
+        return;
+      }
       try {
+        const linhasComBdiEspecifico = itens.filter(item => item.tipo_linha === 'item' && temBdiLinha(item));
+        let limparBdiLinhas = false;
+        if (linhasComBdiEspecifico.length) {
+          const ok = await Confirm.ask(
+            `Existem ${linhasComBdiEspecifico.length} linha(s) com BDI especifico. Para que a nova taxa altere todos os precos unitarios e totais, esses valores por linha precisam ser removidos. Aplicar o BDI global a todas as linhas?`,
+            'Aplicar BDI global',
+            { okText:'Aplicar a todas', okClass:'btn btn-primary' },
+          );
+          if (!ok) return;
+          limparBdiLinhas = true;
+        }
         if (pct !== bdiPct || idP !== (orc.id_bdi_perfil || null)) guardarUndo('bdi');
-        await API.osSint.updateBdi(id_orc, { bdi_percentual: pct, id_bdi_perfil: idP });
+        await API.osSint.updateBdi(id_orc, {
+          bdi_percentual: pct,
+          id_bdi_perfil: idP,
+          limpar_bdi_linhas: limparBdiLinhas,
+        });
+        if (limparBdiLinhas) {
+          itens.forEach(item => { if (item.tipo_linha === 'item') item.bdi_percentual_linha = null; });
+        }
         bdiPct = pct; orc.bdi_percentual = pct; orc.id_bdi_perfil = idP;
-        Toast.success(`BDI ${pct.toFixed(2)}% aplicado com sucesso.`);
+        Toast.success(`BDI ${pct.toFixed(4)}% aplicado e valores recalculados.`);
         renderPage();
         await salvarTotais();
       } catch(e) { Toast.error(e.message); }
     };
     // Bind BDI select change (safe because renderPage replaces the element)
     document.getElementById('selBdiPerfilOS')?.addEventListener('change', sincronizarBdiSelecionadoNoInput);
+    document.getElementById('inputBdiPctOS')?.addEventListener('input', () => {
+      const select = document.getElementById('selBdiPerfilOS');
+      if (select) select.value = '';
+    });
 
     window._osAddSecao   = () => addRow('section', 0);
     window._osAddSub     = addSubSecao;

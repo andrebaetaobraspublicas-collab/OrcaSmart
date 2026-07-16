@@ -1,611 +1,563 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OrçaPro - Calculadora de Obras</title>
-  <meta name="description" content="Sistema de orcamento de obras publicas com SINAPI, SICRO, BDI, IBS, CBS e memoria de calculo auditavel.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --navy-900:#081a33; --navy-800:#0b2545; --navy-700:#103057;
-      --blue-600:#2563eb; --blue-500:#3b82f6; --blue-300:#9cc0ff;
-      --orange:#f97316; --orange-600:#ea670c;
-      --ink:#0f1b2d; --slate:#475569; --muted:#64748b;
-      --bg:#f5f8fd; --surface:#fff; --line:#e2e9f4;
-      --ok:#0f9d6b; --danger:#dc2626;
-      --rad:14px; --maxw:1180px;
-      --shadow-sm:0 2px 8px rgba(8,26,51,.06);
-      --shadow:0 22px 60px rgba(8,26,51,.12);
-      --shadow-lg:0 40px 100px rgba(8,26,51,.2);
-    }
-    * { box-sizing:border-box; }
-    html { scroll-behavior:smooth; }
-    body { margin:0; font-family:"IBM Plex Sans",system-ui,sans-serif; color:var(--ink); background:var(--bg); line-height:1.6; -webkit-font-smoothing:antialiased; }
-    h1,h2,h3,h4 { font-family:"Space Grotesk",sans-serif; line-height:1.08; letter-spacing:0; margin:0; font-weight:700; }
-    p { margin:0; }
-    a { color:inherit; text-decoration:none; }
-    button, input { font:inherit; }
-    .wrap { width:min(var(--maxw),100% - 48px); margin-inline:auto; }
-    .mono { font-family:"IBM Plex Mono",monospace; }
-    .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:var(--blue-600); display:inline-flex; align-items:center; gap:9px; }
-    .eyebrow::before { content:""; width:22px; height:2px; background:var(--orange); display:inline-block; border-radius:2px; }
-    .btn { display:inline-flex; align-items:center; justify-content:center; gap:9px; font-weight:600; font-size:15.5px; padding:14px 24px; border-radius:10px; cursor:pointer; border:1px solid transparent; transition:transform .15s ease,box-shadow .2s ease,background .2s ease,border-color .2s ease; }
-    .btn:hover { transform:translateY(-2px); }
-    .btn-orange { background:var(--orange); color:#fff; box-shadow:0 10px 26px rgba(249,115,22,.36); }
-    .btn-orange:hover { background:var(--orange-600); box-shadow:0 16px 34px rgba(249,115,22,.44); }
-    .btn-blue { background:var(--blue-600); color:#fff; box-shadow:0 10px 26px rgba(37,99,235,.34); }
-    .btn-blue:hover { background:#1d4fd8; }
-    .btn-outline { background:#fff; color:var(--navy-800); border-color:var(--line); box-shadow:var(--shadow-sm); }
-    .btn-outline:hover { border-color:var(--blue-300); }
-    .btn-plain { background:transparent; border:0; color:var(--navy-800); cursor:pointer; font-weight:700; }
-    section { padding:92px 0; }
-    .section-head { max-width:720px; margin:0 auto 54px; text-align:center; }
-    .section-head h2 { font-size:clamp(30px,4.2vw,46px); margin:18px 0 16px; }
-    .section-head p { font-size:18px; color:var(--slate); }
+<html lang="pt-BR"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OrçaPro — Calculadora de Obras</title>
+<meta name="description" content="Sistema de orçamento de obras públicas com SINAPI, SICRO, BDI, IBS, CBS e memória de cálculo auditável.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style></style>
 
-    header.nav { position:sticky; top:0; z-index:50; background:rgba(245,248,253,.86); backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }
-    .nav-inner { display:flex; align-items:center; justify-content:space-between; height:72px; }
-    .logo { display:flex; align-items:center; gap:11px; font-family:"Space Grotesk"; font-weight:700; font-size:19px; color:var(--navy-900); }
-    .mark { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--navy-800),var(--blue-600)); display:grid; place-items:center; color:#fff; font-size:17px; box-shadow:var(--shadow-sm); }
-    .nav-links { display:flex; gap:30px; font-size:15px; font-weight:500; color:var(--slate); }
-    .nav-links a:hover { color:var(--blue-600); }
-    .nav-cta { display:flex; align-items:center; gap:14px; }
-    .login-link { font-weight:700; font-size:15px; color:var(--navy-800); background:transparent; border:0; cursor:pointer; }
+<style>
+:root{
+  --navy-900:#071a30; --navy-800:#0b2545; --navy-700:#12335e;
+  --blue-600:#2563eb; --blue-500:#3b82f6; --blue-300:#a9c8ff;
+  --orange:#f97316; --orange-600:#e8590c;
+  --ink:#0f1b2d; --slate:#4b5b73; --muted:#6b7c94;
+  --bg:#f3f7fd; --surface:#fff; --line:#dfe7f3;
+  --ok:#0f9d6b; --danger:#dc2626;
+  --rad:16px; --maxw:1180px;
+  --shadow-sm:0 2px 10px rgba(7,26,48,.06);
+  --shadow:0 24px 64px rgba(7,26,48,.14);
+  --shadow-lg:0 40px 100px rgba(7,26,48,.22);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:"IBM Plex Sans",system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:"Space Grotesk",sans-serif;line-height:1.1;margin:0;font-weight:700}
+p{margin:0}
+a{color:var(--blue-600);text-decoration:none}
+a:hover{color:var(--orange)}
+button,input{font:inherit}
+.wrap{width:min(var(--maxw),100% - 48px);margin-inline:auto}
+.mono{font-family:"IBM Plex Mono",monospace}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--blue-600);display:inline-flex;align-items:center;gap:9px}
+.eyebrow::before{content:"";width:22px;height:2px;background:var(--orange);display:inline-block;border-radius:2px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-weight:600;font-size:15.5px;padding:14px 26px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:transform .15s ease,box-shadow .2s ease,background .2s ease}
+.btn:hover{transform:translateY(-2px)}
+.btn-orange{background:var(--orange);color:#fff;box-shadow:0 10px 26px rgba(249,115,22,.35)}
+.btn-orange:hover{background:var(--orange-600)}
+.btn-outline{background:#fff;color:var(--navy-800);border-color:var(--line);box-shadow:var(--shadow-sm)}
+.btn-outline:hover{border-color:var(--blue-300)}
+.btn-blue{background:var(--blue-600);color:#fff;box-shadow:0 10px 26px rgba(37,99,235,.32)}
+section{padding:100px 0}
+.section-head{max-width:700px;margin:0 auto 52px;text-align:center}
+.section-head h2{font-size:clamp(30px,4.2vw,44px);margin:16px 0 14px}
+.section-head p{font-size:18px;color:var(--slate)}
 
-    .hero { position:relative; padding:72px 0 92px; overflow:hidden; }
-    .hero::before { content:""; position:absolute; inset:0; background:radial-gradient(900px 460px at 78% -10%,rgba(59,130,246,.16),transparent 60%),radial-gradient(700px 420px at 8% 12%,rgba(249,115,22,.08),transparent 60%); z-index:0; }
-    .hero-grid { position:relative; z-index:1; display:grid; grid-template-columns:1.02fr 1.08fr; gap:54px; align-items:center; }
-    .hero h1 { font-size:clamp(36px,5vw,56px); margin:22px 0 20px; }
-    .hero h1 .hl { color:var(--blue-600); }
-    .hero .sub { font-size:19px; color:var(--slate); max-width:560px; }
-    .hero-actions { display:flex; gap:14px; flex-wrap:wrap; margin-top:34px; }
-    .hero-trust { display:flex; gap:24px; margin-top:34px; flex-wrap:wrap; }
-    .hero-trust .t { display:flex; align-items:center; gap:10px; font-size:14px; color:var(--slate); font-weight:500; }
-    .hero-trust .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 4px rgba(15,157,107,.14); }
+header.nav{position:sticky;top:0;z-index:50;background:rgba(243,247,253,.86);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:74px}
+.logo{display:flex;align-items:center;gap:11px;font-family:"Space Grotesk";font-weight:700;font-size:19px;color:var(--navy-900)}
+.mark{width:36px;height:36px;display:grid;place-items:center}
+.mark img{width:100%;height:100%;object-fit:contain}
+.nav-links{display:flex;gap:30px;font-size:15px;font-weight:500;color:var(--slate)}
+.nav-links a{color:var(--slate)}
+.nav-links a:hover{color:var(--blue-600)}
+.nav-cta{display:flex;align-items:center;gap:16px}
+.login-link{font-weight:700;font-size:15px;color:var(--navy-800);background:transparent;border:0;cursor:pointer}
 
-    .dash { background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow-lg); overflow:hidden; transform:perspective(1600px) rotateY(-7deg) rotateX(3deg); transform-origin:left center; }
-    .dash-top { display:flex; align-items:center; gap:8px; padding:13px 16px; background:var(--navy-800); }
-    .dash-top .dots { display:flex; gap:6px; }
-    .dash-top .dots i { width:11px; height:11px; border-radius:50%; background:rgba(255,255,255,.32); }
-    .dash-top .title { color:#cfe0ff; font-size:12.5px; font-family:"IBM Plex Mono"; margin-left:8px; }
-    .dash-body { display:grid; grid-template-columns:62px 1fr; }
-    .dash-side { background:#0e2a4d; padding:16px 0; display:flex; flex-direction:column; align-items:center; gap:18px; }
-    .dash-side i { width:26px; height:26px; border-radius:7px; background:rgba(255,255,255,.1); }
-    .dash-side i.active { background:var(--orange); }
-    .dash-main { padding:18px; background:#fafcff; }
-    .dash-h { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
-    .dash-h .lbl { font-size:11px; color:var(--muted); font-family:"IBM Plex Mono"; text-transform:uppercase; letter-spacing:.08em; }
-    .dash-h .big { font-family:"Space Grotesk"; font-weight:700; font-size:22px; color:var(--navy-900); margin-top:2px; }
-    .pill { font-size:10.5px; font-weight:600; padding:5px 10px; border-radius:999px; background:rgba(15,157,107,.12); color:var(--ok); font-family:"IBM Plex Mono"; }
-    .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:14px; }
-    .kpi { border:1px solid var(--line); border-radius:10px; padding:10px 11px; background:#fff; }
-    .kpi .k { font-size:10px; color:var(--muted); font-family:"IBM Plex Mono"; text-transform:uppercase; letter-spacing:.06em; }
-    .kpi .v { font-family:"Space Grotesk"; font-weight:700; font-size:16px; color:var(--navy-900); margin-top:3px; }
-    .kpi .v.blue { color:var(--blue-600); } .kpi .v.orange { color:var(--orange); }
-    .table { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
-    .tr { display:grid; grid-template-columns:1.7fr .7fr .9fr; padding:9px 12px; font-size:11.5px; border-bottom:1px solid #eef3fa; }
-    .tr.head { background:#f1f6fe; font-family:"IBM Plex Mono"; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
-    .tr:last-child { border-bottom:0; }
-    .tr .name { color:var(--ink); font-weight:500; }
-    .tr .code { color:var(--blue-600); font-family:"IBM Plex Mono"; }
-    .tr .val { text-align:right; font-family:"IBM Plex Mono"; color:var(--navy-900); font-weight:600; }
-    .bar { height:6px; border-radius:4px; background:#eaf0f9; overflow:hidden; margin-top:11px; }
-    .bar i { display:block; height:100%; width:73%; background:linear-gradient(90deg,var(--blue-600),var(--blue-500)); }
+.hero{position:relative;padding:76px 0 100px;overflow:hidden;background:linear-gradient(115deg,var(--navy-900) 0%,var(--navy-800) 30%,var(--blue-600) 58%,var(--navy-700) 78%,var(--navy-900) 100%)}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(900px 480px at 82% -10%,rgba(59,130,246,.3),transparent 60%),radial-gradient(700px 420px at 5% 100%,rgba(249,115,22,.14),transparent 60%),repeating-radial-gradient(circle at 12% 18%,rgba(255,255,255,.14) 0 2px,transparent 2px 34px)}
+.hero::after{content:"";position:absolute;top:0;right:0;bottom:0;width:14px;background:linear-gradient(180deg,var(--orange),var(--blue-500));opacity:.7}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr 1.12fr;gap:56px;align-items:center}
+.hero .eyebrow{color:var(--blue-300)}
+.hero .eyebrow::before{background:var(--orange)}
+.hero h1{font-size:clamp(34px,4.6vw,52px);margin:20px 0 18px;color:#fff}
+.hero h1 .hl{color:var(--blue-300)}
+.hero .sub{font-size:18px;color:#c3d3ea;max-width:560px}
+.hero-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:32px}
+.hero-trust{display:flex;gap:22px;margin-top:32px;flex-wrap:wrap}
+.hero-trust .t{display:flex;align-items:center;gap:9px;font-size:13.5px;color:#a9bcd8;font-weight:500}
+.hero-trust .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(15,157,107,.18)}
+.hero-shot{position:relative}
+.hero-shot img{width:100%;display:block;border-radius:16px;box-shadow:var(--shadow-lg)}
 
-    .strip { padding:30px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#fff; }
-    .strip-inner { display:flex; align-items:center; justify-content:center; gap:40px; flex-wrap:wrap; }
-    .strip .lab { font-family:"IBM Plex Mono"; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
-    .strip .ref { font-family:"Space Grotesk"; font-weight:700; font-size:18px; color:#9fb0c6; }
+.strip{padding:28px 0;border-bottom:1px solid var(--line);background:#fff}
+.strip-inner{display:flex;align-items:center;justify-content:center;gap:36px;flex-wrap:wrap}
+.strip .lab{font-family:"IBM Plex Mono";font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.strip .ref{font-family:"Space Grotesk";font-weight:700;font-size:17px;color:#9fb0c6}
 
-    .prob { background:var(--navy-900); color:#e7eef9; position:relative; overflow:hidden; }
-    .prob::before { content:""; position:absolute; inset:0; background:radial-gradient(700px 400px at 85% 0%,rgba(37,99,235,.22),transparent 60%); }
-    .prob .wrap { position:relative; z-index:1; }
-    .prob .section-head h2 { color:#fff; } .prob .section-head p { color:#a9bbd6; }
-    .prob-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
-    .prob-card { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:var(--rad); padding:26px; }
-    .prob-card .ic { width:42px; height:42px; border-radius:10px; background:rgba(249,115,22,.16); color:var(--orange); display:grid; place-items:center; font-size:20px; margin-bottom:16px; }
-    .prob-card h3 { font-size:18px; color:#fff; margin-bottom:8px; }
-    .prob-card p { font-size:14.5px; color:#9fb2ce; line-height:1.55; }
+.prob{background:#fff}
+.prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.prob-card{background:var(--bg);border:1px solid var(--line);border-radius:var(--rad);padding:28px}
+.prob-card .ic{width:42px;height:42px;border-radius:10px;background:rgba(249,115,22,.13);color:var(--orange);display:grid;place-items:center;font-size:19px;font-weight:700;margin-bottom:16px}
+.prob-card h3{font-size:18px;margin-bottom:8px}
+.prob-card p{font-size:14.5px;color:var(--slate);line-height:1.55}
 
-    .sol-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
-    .sol-card { background:#fff; border:1px solid var(--line); border-radius:var(--rad); padding:24px; box-shadow:var(--shadow-sm); }
-    .sol-card .chk { width:34px; height:34px; border-radius:9px; background:rgba(37,99,235,.1); color:var(--blue-600); display:grid; place-items:center; font-weight:700; margin-bottom:14px; }
-    .sol-card h3 { font-size:16.5px; margin-bottom:7px; }
-    .sol-card p { font-size:14px; color:var(--slate); }
+.sol{background:var(--bg)}
+.sol-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.sol-card{background:#fff;border:1px solid var(--line);border-radius:var(--rad);padding:24px;box-shadow:var(--shadow-sm)}
+.sol-card .chk{width:34px;height:34px;border-radius:9px;background:rgba(37,99,235,.1);color:var(--blue-600);display:grid;place-items:center;font-weight:700;margin-bottom:14px}
+.sol-card h3{font-size:16.5px;margin-bottom:7px}
+.sol-card p{font-size:14px;color:var(--slate)}
 
-    .steps { background:#fff; }
-    .steps-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; }
-    .step { padding:26px 18px; border:1px solid var(--line); border-radius:var(--rad); background:var(--bg); }
-    .step .num { font-family:"Space Grotesk"; font-weight:700; font-size:15px; color:#fff; width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg,var(--navy-800),var(--blue-600)); display:grid; place-items:center; margin-bottom:16px; box-shadow:var(--shadow-sm); }
-    .step h3 { font-size:16px; margin-bottom:6px; }
-    .step p { font-size:13.5px; color:var(--slate); }
+.steps{background:#fff}
+.steps-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.step{padding:26px 18px;border:1px solid var(--line);border-radius:var(--rad);background:var(--bg)}
+.step .num{font-family:"Space Grotesk";font-weight:700;font-size:15px;color:#fff;width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--navy-800),var(--blue-600));display:grid;place-items:center;margin-bottom:16px;box-shadow:var(--shadow-sm)}
+.step h3{font-size:16px;margin-bottom:6px}
+.step p{font-size:13.5px;color:var(--slate)}
 
-    .tax { background:var(--navy-800); color:#fff; position:relative; overflow:hidden; }
-    .tax::before { content:""; position:absolute; inset:0; background:radial-gradient(680px 420px at 12% 110%,rgba(249,115,22,.2),transparent 55%),radial-gradient(700px 460px at 90% -20%,rgba(59,130,246,.26),transparent 60%); }
-    .tax-grid { position:relative; z-index:1; display:grid; grid-template-columns:1.05fr .95fr; gap:54px; align-items:center; }
-    .tax h2 { font-size:clamp(30px,4vw,44px); color:#fff; margin-bottom:20px; }
-    .tax .lead { color:#b9cbe6; font-size:17px; margin-bottom:26px; }
-    .tax ul { list-style:none; padding:0; margin:0 0 28px; display:grid; gap:13px; }
-    .tax li { display:flex; gap:12px; align-items:flex-start; font-size:15.5px; color:#dce7f7; }
-    .tax li .c { color:var(--orange); font-weight:700; flex:none; }
-    .tax-quote { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.14); border-left:4px solid var(--orange); border-radius:12px; padding:26px; font-family:"Space Grotesk"; font-size:19px; font-weight:500; line-height:1.4; color:#fff; }
-    .tax-time { display:grid; gap:14px; }
-    .tax-time .row { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:18px 20px; display:flex; align-items:center; gap:18px; }
-    .tax-time .yr { font-family:"IBM Plex Mono"; font-weight:600; font-size:15px; color:var(--orange); min-width:96px; }
-    .tax-time .txt { font-size:14.5px; color:#cbd9ee; }
+.tax{background:var(--navy-800);color:#fff;position:relative;overflow:hidden}
+.tax::before{content:"";position:absolute;inset:0;background:radial-gradient(680px 420px at 12% 110%,rgba(249,115,22,.2),transparent 55%),radial-gradient(700px 460px at 90% -20%,rgba(59,130,246,.26),transparent 60%)}
+.tax-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.05fr .95fr;gap:54px;align-items:center}
+.tax h2{font-size:clamp(30px,4vw,42px);color:#fff;margin-bottom:20px}
+.tax .lead{color:#b9cbe6;font-size:17px;margin-bottom:26px}
+.tax ul{list-style:none;padding:0;margin:0 0 28px;display:grid;gap:13px}
+.tax li{display:flex;gap:12px;align-items:flex-start;font-size:15.5px;color:#dce7f7}
+.tax li .c{color:var(--orange);font-weight:700;flex:none}
+.tax-quote{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-left:4px solid var(--orange);border-radius:12px;padding:26px;font-family:"Space Grotesk";font-size:19px;font-weight:500;line-height:1.4;color:#fff}
+.tax-time{display:grid;gap:14px}
+.tax-time .row{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:18px 20px;display:flex;align-items:center;gap:18px}
+.tax-time .yr{font-family:"IBM Plex Mono";font-weight:600;font-size:15px;color:var(--orange);min-width:96px}
+.tax-time .txt{font-size:14.5px;color:#cbd9ee}
 
-    .price-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:24px; max-width:880px; margin:0 auto; }
-    .plan { background:#fff; border:1px solid var(--line); border-radius:18px; padding:34px; box-shadow:var(--shadow-sm); position:relative; display:flex; flex-direction:column; }
-    .plan.feat { border:2px solid var(--blue-600); box-shadow:var(--shadow); }
-    .plan .tag { position:absolute; top:-13px; left:34px; background:var(--orange); color:#fff; font-size:12px; font-weight:700; padding:6px 14px; border-radius:999px; box-shadow:0 8px 20px rgba(249,115,22,.4); }
-    .plan h3 { font-size:20px; margin-bottom:6px; }
-    .plan .desc { font-size:14px; color:var(--muted); margin-bottom:20px; }
-    .plan .price { display:flex; align-items:baseline; gap:4px; margin-bottom:6px; }
-    .plan .price .cur { font-size:20px; font-weight:600; color:var(--slate); }
-    .plan .price .num { font-family:"Space Grotesk"; font-weight:700; font-size:46px; color:var(--navy-900); }
-    .plan .price .per { font-size:15px; color:var(--muted); }
-    .plan .save { font-size:13.5px; font-weight:600; color:var(--ok); margin-bottom:22px; }
-    .plan ul { list-style:none; padding:0; margin:0 0 26px; display:grid; gap:12px; flex:1; }
-    .plan li { display:flex; gap:11px; font-size:14.5px; color:var(--slate); }
-    .plan li .c { color:var(--blue-600); font-weight:700; flex:none; }
+.price{background:#fff}
+.price-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;max-width:880px;margin:0 auto}
+.plan{background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:34px;position:relative;display:flex;flex-direction:column}
+.plan.feat{border:2px solid var(--blue-600);box-shadow:var(--shadow);background:#fff}
+.plan .tag{position:absolute;top:-13px;left:34px;background:var(--orange);color:#fff;font-size:12px;font-weight:700;padding:6px 14px;border-radius:999px;box-shadow:0 8px 20px rgba(249,115,22,.4)}
+.plan h3{font-size:20px;margin-bottom:6px}
+.plan .desc{font-size:14px;color:var(--muted);margin-bottom:20px}
+.plan .cost{display:flex;align-items:baseline;gap:4px;margin-bottom:6px}
+.plan .cost .cur{font-size:20px;font-weight:600;color:var(--slate)}
+.plan .cost .num{font-family:"Space Grotesk";font-weight:700;font-size:44px;color:var(--navy-900)}
+.plan .cost .per{font-size:15px;color:var(--muted)}
+.plan .save{font-size:13.5px;font-weight:600;color:var(--ok);margin-bottom:22px}
+.plan ul{list-style:none;padding:0;margin:0 0 26px;display:grid;gap:12px;flex:1}
+.plan li{display:flex;gap:11px;font-size:14.5px;color:var(--slate)}
+.plan li .c{color:var(--blue-600);font-weight:700;flex:none}
 
-    .faq { background:var(--bg); }
-    .faq-list { max-width:820px; margin:0 auto; display:grid; gap:12px; }
-    details { background:#fff; border:1px solid var(--line); border-radius:12px; padding:4px 22px; box-shadow:var(--shadow-sm); }
-    summary { list-style:none; cursor:pointer; padding:18px 0; font-family:"Space Grotesk"; font-weight:600; font-size:17px; color:var(--navy-900); display:flex; justify-content:space-between; align-items:center; gap:16px; }
-    summary::-webkit-details-marker { display:none; }
-    details p { padding:0 0 20px; color:var(--slate); font-size:15px; }
+.faq{background:var(--bg)}
+.faq-list{max-width:800px;margin:0 auto;display:grid;gap:12px}
+details{background:#fff;border:1px solid var(--line);border-radius:12px;padding:4px 22px;box-shadow:var(--shadow-sm)}
+summary{list-style:none;cursor:pointer;padding:18px 0;font-family:"Space Grotesk";font-weight:600;font-size:17px;color:var(--navy-900);display:flex;justify-content:space-between;align-items:center;gap:16px}
+summary::-webkit-details-marker{display:none}
+details p{padding:0 0 20px;color:var(--slate);font-size:15px}
 
-    footer { background:var(--navy-900); color:#9fb2ce; padding:64px 0 30px; }
-    .foot-grid { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:32px; padding-bottom:40px; border-bottom:1px solid rgba(255,255,255,.1); }
-    footer .logo { color:#fff; margin-bottom:14px; }
-    footer .blurb { font-size:14px; max-width:320px; line-height:1.6; }
-    .foot-col h4 { font-family:"IBM Plex Mono"; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:#6e83a3; margin:0 0 16px; font-weight:600; }
-    .foot-col a, .foot-col button { display:block; font-size:14.5px; margin-bottom:11px; color:#b9c8dd; background:transparent; border:0; padding:0; cursor:pointer; }
-    .foot-bottom { display:flex; justify-content:space-between; align-items:center; padding-top:24px; font-size:13px; color:#6e83a3; flex-wrap:wrap; gap:12px; }
+footer{background:var(--navy-900);color:#9fb2ce;padding:64px 0 30px}
+.foot-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:32px;padding-bottom:40px;border-bottom:1px solid rgba(255,255,255,.1)}
+footer .logo{color:#fff;margin-bottom:14px}
+footer .blurb{font-size:14px;max-width:320px;line-height:1.6;color:#9fb2ce}
+.foot-col h4{font-family:"IBM Plex Mono";font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#6e83a3;margin:0 0 16px;font-weight:600}
+.foot-col a,.foot-col button{display:block;font-size:14.5px;margin-bottom:11px;color:#b9c8dd;background:transparent;border:0;padding:0;cursor:pointer;text-align:left}
+.foot-bottom{display:flex;justify-content:space-between;align-items:center;padding-top:24px;font-size:13px;color:#6e83a3;flex-wrap:wrap;gap:12px}
 
-    .login-panel { display:none; position:fixed; inset:0; z-index:80; padding:24px; background:rgba(8,26,51,.58); backdrop-filter:blur(10px); align-items:center; justify-content:center; }
-    .login-panel.open { display:flex; }
-    .auth-card { width:min(470px,100%); background:#fff; border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow-lg); overflow:hidden; }
-    .auth-head { padding:24px 26px 18px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }
-    .auth-head h2 { font-size:24px; margin-bottom:6px; }
-    .auth-head p { color:var(--muted); font-size:14px; }
-    .close-auth { border:0; background:#f1f5fb; color:var(--navy-800); width:34px; height:34px; border-radius:9px; cursor:pointer; font-weight:800; }
-    .auth-body { padding:22px 26px 26px; }
-    .tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:18px; }
-    .tab { border:1px solid var(--line); background:#f8fafc; border-radius:9px; padding:11px; font-weight:800; cursor:pointer; color:var(--navy-800); }
-    .tab.active { background:var(--blue-600); color:#fff; border-color:var(--blue-600); }
-    label { display:block; font-size:13px; font-weight:800; color:#475569; margin-top:12px; }
-    input { width:100%; margin-top:5px; border:1px solid var(--line); border-radius:9px; padding:12px 13px; background:#fff; color:var(--ink); }
-    button.primary { width:100%; margin-top:18px; border:0; border-radius:9px; padding:13px 14px; background:var(--blue-600); color:#fff; font-weight:900; cursor:pointer; }
-    button.secondary { width:100%; margin-top:10px; border:1px solid var(--line); border-radius:9px; padding:12px; background:#fff; color:var(--navy-800); font-weight:800; cursor:pointer; }
-    .msg { margin-top:14px; padding:10px 12px; border-radius:9px; font-size:13px; display:none; }
-    .msg.error { display:block; border:1px solid #fecaca; background:#fef2f2; color:var(--danger); }
-    .msg.ok { display:block; border:1px solid #bbf7d0; background:#f0fdf4; color:var(--ok); }
-    .hint { margin-top:12px; color:var(--muted); font-size:12px; line-height:1.5; }
+.login-panel{display:none;position:fixed;inset:0;z-index:80;padding:24px;background:rgba(7,26,48,.6);backdrop-filter:blur(10px);align-items:center;justify-content:center}
+.login-panel.open{display:flex}
+.auth-card{width:min(470px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-lg);overflow:hidden}
+.auth-head{padding:24px 26px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+.auth-head h2{font-size:24px;margin-bottom:6px}
+.auth-head p{color:var(--muted);font-size:14px}
+.close-auth{border:0;background:#f1f5fb;color:var(--navy-800);width:34px;height:34px;border-radius:9px;cursor:pointer;font-weight:800}
+.auth-body{padding:22px 26px 26px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px}
+.tab{border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:11px;font-weight:700;cursor:pointer;color:var(--navy-800)}
+.tab.active{background:var(--blue-600);color:#fff;border-color:var(--blue-600)}
+label{display:block;font-size:13px;font-weight:700;color:var(--slate);margin-top:12px}
+input{width:100%;margin-top:5px;border:1px solid var(--line);border-radius:9px;padding:12px 13px;background:#fff;color:var(--ink)}
+button.primary{width:100%;margin-top:18px;border:0;border-radius:9px;padding:13px 14px;background:var(--blue-600);color:#fff;font-weight:800;cursor:pointer}
+button.secondary{width:100%;margin-top:10px;border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;color:var(--navy-800);font-weight:700;cursor:pointer}
+.msg{margin-top:14px;padding:10px 12px;border-radius:9px;font-size:13px;display:none}
+.msg.error{display:block;border:1px solid #fecaca;background:#fef2f2;color:var(--danger)}
+.msg.ok{display:block;border:1px solid #bbf7d0;background:#f0fdf4;color:var(--ok)}
+.hint{margin-top:12px;color:var(--muted);font-size:12px;line-height:1.5}
 
-    .notice-modal { display:none; position:fixed; inset:0; z-index:90; padding:24px; background:rgba(8,26,51,.58); backdrop-filter:blur(10px); align-items:center; justify-content:center; }
-    .notice-modal.open { display:flex; }
-    .notice-card { width:min(440px,100%); background:#fff; border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow-lg); padding:28px; text-align:center; }
-    .notice-icon { width:54px; height:54px; border-radius:14px; display:grid; place-items:center; background:rgba(249,115,22,.13); color:var(--orange); margin:0 auto 16px; font-size:26px; }
-    .notice-card h3 { font-size:22px; margin-bottom:10px; }
-    .notice-card p { color:var(--slate); margin-bottom:22px; }
+.notice-modal{display:none;position:fixed;inset:0;z-index:90;padding:24px;background:rgba(7,26,48,.6);backdrop-filter:blur(10px);align-items:center;justify-content:center}
+.notice-modal.open{display:flex}
+.notice-card{width:min(440px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-lg);padding:28px;text-align:center}
+.notice-icon{width:54px;height:54px;border-radius:14px;display:grid;place-items:center;background:rgba(249,115,22,.13);color:var(--orange);margin:0 auto 16px;font-size:24px;font-weight:700}
+.notice-card h3{font-size:22px;margin-bottom:10px}
+.notice-card p{color:var(--slate);margin-bottom:22px}
 
-    .reveal { opacity:0; transform:translateY(24px); transition:opacity .7s ease,transform .7s ease; }
-    .reveal.in { opacity:1; transform:none; }
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
 
-    @media (max-width:1000px) { .sol-grid { grid-template-columns:repeat(2,1fr); } .steps-grid { grid-template-columns:repeat(2,1fr); } }
-    @media (max-width:940px) { .hero-grid,.tax-grid { grid-template-columns:1fr; gap:48px; } .dash { transform:none; } .nav-links { display:none; } }
-    @media (max-width:820px) { .prob-grid,.price-grid { grid-template-columns:1fr; } .foot-grid { grid-template-columns:1fr 1fr; } }
-    @media (max-width:560px) { .wrap { width:min(100% - 28px, var(--maxw)); } .sol-grid,.steps-grid,.foot-grid { grid-template-columns:1fr; } section { padding:68px 0; } .nav-cta .btn { display:none; } .kpis { grid-template-columns:1fr; } }
-    @media (prefers-reduced-motion:reduce) { .reveal { opacity:1; transform:none; } .btn:hover { transform:none; } }
-  </style>
+@media (max-width:1000px){.sol-grid{grid-template-columns:repeat(2,1fr)}.steps-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:940px){.hero-grid,.tax-grid{grid-template-columns:1fr;gap:44px}.nav-links{display:none}}
+@media (max-width:820px){.prob-grid,.price-grid{grid-template-columns:1fr}.foot-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){.wrap{width:min(100% - 28px,var(--maxw))}.sol-grid,.steps-grid,.foot-grid{grid-template-columns:1fr}section{padding:72px 0}.nav-cta .btn{display:none}}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}.btn:hover{transform:none}}
+</style>
 </head>
 <body>
-  <header class="nav">
-    <div class="wrap nav-inner">
-      <a class="logo" href="#"><span class="mark">OP</span> Orça<span style="color:var(--blue-600)">PRO</span></a>
-      <nav class="nav-links" aria-label="Navegacao principal">
-        <a href="#solucao">Solucao</a>
-        <a href="#como">Como funciona</a>
-        <a href="#reforma">Reforma Tributaria</a>
-        <a href="#planos">Planos</a>
-        <a href="#faq">FAQ</a>
-      </nav>
-      <div class="nav-cta">
-        <button class="login-link" type="button" data-open-login>Entrar</button>
-        <button class="btn btn-orange" type="button" data-soon>Teste Gratis</button>
-      </div>
-    </div>
-  </header>
 
-  <section class="hero">
-    <div class="wrap hero-grid">
-      <div>
-        <span class="eyebrow">Orcamento de Obras Publicas</span>
-        <h1>Orce obras publicas com <span class="hl">seguranca</span> na era da Reforma Tributaria</h1>
-        <p class="sub">Sistema online para elaborar orcamentos com SINAPI, SICRO, BDI, encargos sociais, IBS, CBS, creditos tributarios e memoria de calculo auditavel.</p>
-        <div class="hero-actions">
-          <button class="btn btn-orange" type="button" data-soon>Teste Gratuitamente -></button>
-          <button class="btn btn-outline" type="button" data-open-login>Entrar no sistema</button>
-        </div>
-        <div class="hero-trust">
-          <div class="t"><span class="dot"></span> Compativel com SINAPI e SICRO</div>
-          <div class="t"><span class="dot"></span> 100% online, sem instalacao</div>
-          <div class="t"><span class="dot"></span> Banco individual por usuario</div>
-        </div>
-      </div>
-
-      <div class="dash" aria-hidden="true">
-        <div class="dash-top">
-          <div class="dots"><i></i><i></i><i></i></div>
-          <span class="title">OrçaPro / orcamento</span>
-        </div>
-        <div class="dash-body">
-          <div class="dash-side"><i class="active"></i><i></i><i></i><i></i><i></i></div>
-          <div class="dash-main">
-            <div class="dash-h">
-              <div>
-                <div class="lbl">Orcamento sintetico · Obra 042</div>
-                <div class="big">R$ 4.872.310,55</div>
-              </div>
-              <span class="pill">Auditavel</span>
-            </div>
-            <div class="kpis">
-              <div class="kpi"><div class="k">BDI aplicado</div><div class="v blue">24,18%</div></div>
-              <div class="kpi"><div class="k">IVA efetivo</div><div class="v orange">8,42%</div></div>
-              <div class="kpi"><div class="k">Creditos IBS/CBS</div><div class="v">R$ 96k</div></div>
-            </div>
-            <div class="table">
-              <div class="tr head"><span>Composicao</span><span>Fonte</span><span style="text-align:right">Total</span></div>
-              <div class="tr"><span class="name">Escavacao mecanizada</span><span class="code">SINAPI</span><span class="val">312.480</span></div>
-              <div class="tr"><span class="name">Concreto estrutural fck 30</span><span class="code">SINAPI</span><span class="val">884.205</span></div>
-              <div class="tr"><span class="name">Pavimentacao asfaltica</span><span class="code">SICRO</span><span class="val">1.204.770</span></div>
-              <div class="tr"><span class="name">Drenagem pluvial</span><span class="code">SICRO</span><span class="val">528.940</span></div>
-            </div>
-            <div class="bar"><i></i></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div class="strip">
-    <div class="wrap strip-inner">
-      <span class="lab">Bases e conformidade</span>
-      <span class="ref">SINAPI</span>
-      <span class="ref">SICRO</span>
-      <span class="ref">BDI</span>
-      <span class="ref">IBS · CBS</span>
-      <span class="ref">TCU</span>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="#"><span class="mark"><img src="/img/login-orcapro-logo.png" alt="OrçaPro"></span> Orça<span style="color:var(--blue-600)">PRO</span></a>
+    <nav class="nav-links" aria-label="Navegação principal">
+      <a href="#solucao">Solução</a>
+      <a href="#como">Como funciona</a>
+      <a href="#reforma">Reforma Tributária</a>
+      <a href="#planos">Planos</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="nav-cta">
+      <button class="login-link" type="button" data-open-login="">Entrar</button>
+      <button class="btn btn-orange" type="button" data-soon="">Teste Grátis</button>
     </div>
   </div>
+</header>
 
-  <section class="prob" id="problema">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <span class="eyebrow" style="color:var(--orange);justify-content:center">O cenario mudou</span>
-        <h2>Os desafios da orcamentacao apos a Reforma Tributaria</h2>
-        <p>A transicao tributaria redefine a forma de compor custos. Planilhas manuais ja nao acompanham as novas regras, e o risco de erro recai sobre o profissional.</p>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Orçamento de Obras Públicas</span>
+      <h1>Orçamentos <span class="hl">precisos</span> na era da Reforma Tributária</h1>
+      <p class="sub">Elabore orçamentos com SINAPI, SICRO, BDI, encargos sociais, IBS, CBS, créditos tributários e memória de cálculo auditável — tudo em um só sistema.</p>
+      <div class="hero-actions">
+        <button class="btn btn-orange" type="button" data-soon="">Teste gratuitamente →</button>
+        <button class="btn btn-outline" type="button" data-open-login="">Entrar no sistema</button>
       </div>
-      <div class="prob-grid">
-        <div class="prob-card reveal"><div class="ic">%</div><h3>Mudancas no BDI</h3><p>A metodologia de composicao do BDI muda com o novo modelo de tributos sobre o consumo.</p></div>
-        <div class="prob-card reveal"><div class="ic">⇄</div><h3>IBS e CBS</h3><p>Dois novos tributos substituem o sistema anterior e exigem calculo do IVA efetivo.</p></div>
-        <div class="prob-card reveal"><div class="ic">R$</div><h3>Creditos tributarios</h3><p>O aproveitamento de creditos altera o custo liquido da obra e precisa ser controlado item a item.</p></div>
+      <div class="hero-trust">
+        <div class="t"><span class="dot"></span> Compatível com SINAPI e SICRO</div>
+        <div class="t"><span class="dot"></span> 100% online, sem instalação</div>
+        <div class="t"><span class="dot"></span> Banco individual por usuário</div>
       </div>
     </div>
-  </section>
-
-  <section id="solucao">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <span class="eyebrow" style="justify-content:center">A solucao</span>
-        <h2>Conheca o OrçaPro</h2>
-        <p>Tudo o que a orcamentacao de obras publicas exige em um so sistema, preparado para a nova realidade tributaria.</p>
-      </div>
-      <div class="sol-grid">
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>SINAPI</h3><p>Orcamentos sobre bases referenciais oficiais.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>SICRO</h3><p>Composicoes rodoviarias e infraestrutura integradas.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>BDI e encargos</h3><p>Calculos estruturados, editaveis e auditaveis.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>IBS e CBS</h3><p>Controle tributario ja preparado para o periodo de transicao.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>Composicoes proprias</h3><p>Crie itens de usuario e reutilize entre obras.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>Memoria de calculo</h3><p>Cada valor rastreavel ate a fonte.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>Usuarios SaaS</h3><p>Banco de dados isolado por conta.</p></div>
-        <div class="sol-card reveal"><div class="chk">✓</div><h3>Relatorios</h3><p>Exportacoes e demonstrativos para revisao tecnica.</p></div>
-      </div>
+    <div class="hero-shot reveal">
+      <img src="/img/login-orcapro-dashboard.png" alt="Painel do OrçaPro exibindo a Curva ABC de Insumos com classificação de custos e diagrama de Pareto">
     </div>
-  </section>
+  </div>
+</section>
 
-  <section class="steps" id="como">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <span class="eyebrow" style="justify-content:center">Fluxo de trabalho</span>
-        <h2>Como funciona</h2>
-        <p>Do cadastro da obra ao relatorio auditavel em cinco passos.</p>
-      </div>
-      <div class="steps-grid">
-        <div class="step reveal"><div class="num">1</div><h3>Cadastre a obra</h3><p>Defina dados, local e referencias.</p></div>
-        <div class="step reveal"><div class="num">2</div><h3>Monte composicoes</h3><p>Use SINAPI, SICRO ou itens proprios.</p></div>
-        <div class="step reveal"><div class="num">3</div><h3>Configure BDI</h3><p>Parametrize custos, tributos e encargos.</p></div>
-        <div class="step reveal"><div class="num">4</div><h3>Gere o orcamento</h3><p>Orcamento sintetico e analitico.</p></div>
-        <div class="step reveal"><div class="num">5</div><h3>Emita relatorios</h3><p>Memoria de calculo pronta para revisao.</p></div>
-      </div>
+<div class="strip">
+  <div class="wrap strip-inner">
+    <span class="lab">Bases e conformidade</span>
+    <span class="ref">SINAPI</span>
+    <span class="ref">SICRO</span>
+    <span class="ref">BDI</span>
+    <span class="ref">IBS · CBS</span>
+    <span class="ref">TCU</span>
+  </div>
+</div>
+
+<section class="prob" id="problema">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow" style="justify-content:center">O cenário mudou</span>
+      <h2>Os desafios da orçamentação após a Reforma Tributária</h2>
+      <p>A transição tributária redefine a composição de custos. Planilhas manuais já não acompanham as novas regras, e o risco recai sobre o profissional.</p>
     </div>
-  </section>
+    <div class="prob-grid">
+      <div class="prob-card reveal"><div class="ic">%</div><h3>Mudanças no BDI</h3><p>A metodologia de composição do BDI muda com o novo modelo de tributos sobre o consumo.</p></div>
+      <div class="prob-card reveal"><div class="ic">⇄</div><h3>IBS e CBS</h3><p>Dois novos tributos substituem o sistema anterior e exigem o cálculo do IVA efetivo.</p></div>
+      <div class="prob-card reveal"><div class="ic">R$</div><h3>Créditos tributários</h3><p>O aproveitamento de créditos altera o custo líquido da obra e precisa ser controlado item a item.</p></div>
+    </div>
+  </div>
+</section>
 
-  <section class="tax" id="reforma">
-    <div class="wrap tax-grid">
-      <div class="reveal">
-        <span class="eyebrow" style="color:var(--orange)">Reforma Tributaria</span>
-        <h2>Preparado para a nova tributacao</h2>
-        <p class="lead">O OrçaPro aplica a logica de IBS, CBS, IVA equivalente e creditos tributarios em uma estrutura editavel e verificavel.</p>
+<section class="sol" id="solucao">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow" style="justify-content:center">A solução</span>
+      <h2>Conheça o OrçaPro</h2>
+      <p>Tudo o que a orçamentação de obras públicas exige em um só sistema, preparado para a nova realidade tributária.</p>
+    </div>
+    <div class="sol-grid">
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Curva ABC de Insumos</h3><p>Visualize o impacto dos insumos e foque no que realmente importa.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Análise de custos</h3><p>Classificação automática por relevância e custo total por classe.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Base completa</h3><p>Milhares de composições de custo unitário e insumos já cadastrados.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>IBS e CBS</h3><p>Controle tributário já preparado para o período de transição da Reforma Tributária.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Composições próprias</h3><p>Crie itens de usuário e reutilize entre obras.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Adicional de Risco</h3><p>Simulações de Monte Carlo e Diagrama de Tornado.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Usuários SaaS</h3><p>Banco de dados isolado por conta.</p></div>
+      <div class="sol-card reveal"><div class="chk">✓</div><h3>Exportação e relatórios</h3><p>Gere relatórios e exporte dados com apenas um clique.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="steps" id="como">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow" style="justify-content:center">Fluxo de trabalho</span>
+      <h2>Como funciona</h2>
+      <p>Do cadastro da obra ao relatório auditável em cinco passos.</p>
+    </div>
+    <div class="steps-grid">
+      <div class="step reveal"><div class="num">1</div><h3>Cadastre a obra</h3><p>Defina dados, local e referências.</p></div>
+      <div class="step reveal"><div class="num">2</div><h3>Monte composições</h3><p>Use SINAPI, SICRO ou itens próprios.</p></div>
+      <div class="step reveal"><div class="num">3</div><h3>Configure o BDI</h3><p>Parametrize custos, tributos e encargos.</p></div>
+      <div class="step reveal"><div class="num">4</div><h3>Gere o orçamento</h3><p>Orçamento sintético e analítico.</p></div>
+      <div class="step reveal"><div class="num">5</div><h3>Emita relatórios</h3><p>Memória de cálculo pronta para revisão.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="tax" id="reforma">
+  <div class="wrap tax-grid">
+    <div class="reveal">
+      <span class="eyebrow" style="color:var(--orange)">Reforma Tributária</span>
+      <h2>Preparado para a nova tributação</h2>
+      <p class="lead">O OrçaPro aplica a lógica de IBS, CBS, IVA equivalente e créditos tributários em uma estrutura editável e verificável.</p>
+      <ul>
+        <li><span class="c">✓</span> Tributação por IBS e CBS nas composições</li>
+        <li><span class="c">✓</span> Cálculo do IVA equivalente</li>
+        <li><span class="c">✓</span> Controle de créditos tributários por item</li>
+        <li><span class="c">✓</span> Regras de transição entre 2026 e 2033</li>
+      </ul>
+      <div class="tax-quote">Não adapte planilhas manualmente. Utilize um sistema desenvolvido para a nova realidade tributária.</div>
+    </div>
+    <div class="tax-time reveal">
+      <div class="row"><span class="yr">2026</span><span class="txt">Início da cobrança-teste de CBS e IBS.</span></div>
+      <div class="row"><span class="yr">2027–2032</span><span class="txt">Transição progressiva entre modelos tributários.</span></div>
+      <div class="row"><span class="yr">2033</span><span class="txt">Vigência plena do novo sistema.</span></div>
+      <div class="row" style="background:rgba(249,115,22,.14);border-color:rgba(249,115,22,.4)"><span class="yr">Agora</span><span class="txt" style="color:#fff">Prepare seus orçamentos desde já.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="price" id="planos">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow" style="justify-content:center">Planos e preços</span>
+      <h2>Escolha o plano ideal</h2>
+      <p>Assine diretamente pelo sistema — o pagamento é processado com segurança pelo Stripe.</p>
+    </div>
+    <div class="price-grid">
+      <div class="plan reveal">
+        <h3>Plano Mensal</h3>
+        <p class="desc">Flexibilidade total, mês a mês.</p>
+        <div class="cost"><span class="cur">R$</span><span class="num">499</span><span class="per">/mês</span></div>
+        <div class="save" style="visibility:hidden">.</div>
         <ul>
-          <li><span class="c">✓</span> Tributacao por IBS e CBS nas composicoes</li>
-          <li><span class="c">✓</span> Calculo do IVA equivalente</li>
-          <li><span class="c">✓</span> Controle de creditos tributarios por item</li>
-          <li><span class="c">✓</span> Regras de transicao entre 2026 e 2033</li>
+          <li><span class="c">✓</span> Acesso completo ao sistema</li>
+          <li><span class="c">✓</span> Atualizações incluídas</li>
+          <li><span class="c">✓</span> Suporte técnico</li>
+          <li><span class="c">✓</span> Recursos tributários IBS/CBS</li>
         </ul>
-        <div class="tax-quote">Nao adapte planilhas manualmente. Utilize um sistema desenvolvido para a nova realidade tributaria.</div>
+        <button class="btn btn-outline" type="button" data-open-login="" data-mode="register" style="width:100%">Assinar Plano Mensal</button>
       </div>
-      <div class="tax-time reveal">
-        <div class="row"><span class="yr">2026</span><span class="txt">Inicio da cobranca-teste de CBS e IBS.</span></div>
-        <div class="row"><span class="yr">2027-2032</span><span class="txt">Transicao progressiva entre modelos tributarios.</span></div>
-        <div class="row"><span class="yr">2033</span><span class="txt">Vigencia plena do novo sistema.</span></div>
-        <div class="row" style="background:rgba(249,115,22,.14);border-color:rgba(249,115,22,.4)"><span class="yr">Agora</span><span class="txt" style="color:#fff">Prepare seus orcamentos desde ja.</span></div>
+      <div class="plan feat reveal">
+        <span class="tag">Mais vendido · melhor custo-benefício</span>
+        <h3>Plano Anual</h3>
+        <p class="desc">O melhor valor para quem orça o ano todo.</p>
+        <div class="cost"><span class="cur">R$</span><span class="num">4.990</span><span class="per">/ano</span></div>
+        <div class="save">Economia de R$ 998 por ano</div>
+        <ul>
+          <li><span class="c">✓</span> Tudo do plano mensal</li>
+          <li><span class="c">✓</span> Suporte prioritário</li>
+          <li><span class="c">✓</span> Novos módulos na vigência</li>
+          <li><span class="c">✓</span> Atualizações da Reforma incluídas</li>
+        </ul>
+        <button class="btn btn-orange" type="button" data-open-login="" data-mode="register" style="width:100%">Assinar Plano Anual</button>
       </div>
-    </div>
-  </section>
-
-  <section id="planos">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <span class="eyebrow" style="justify-content:center">Planos e precos</span>
-        <h2>Escolha o plano ideal</h2>
-        <p>A comercializacao sera liberada em breve. O acesso atual permanece pelo login autorizado.</p>
-      </div>
-      <div class="price-grid">
-        <div class="plan reveal">
-          <h3>Plano Mensal</h3>
-          <p class="desc">Flexibilidade total, mes a mes.</p>
-          <div class="price"><span class="cur">R$</span><span class="num">499</span><span class="per">/mes</span></div>
-          <div class="save" style="visibility:hidden">.</div>
-          <ul>
-            <li><span class="c">✓</span> Acesso completo ao sistema</li>
-            <li><span class="c">✓</span> Atualizacoes incluidas</li>
-            <li><span class="c">✓</span> Suporte tecnico</li>
-            <li><span class="c">✓</span> Recursos tributarios IBS/CBS</li>
-          </ul>
-          <button class="btn btn-outline" type="button" data-soon style="width:100%">Assinar Plano Mensal</button>
-        </div>
-        <div class="plan feat reveal">
-          <span class="tag">Mais vendido · melhor custo-beneficio</span>
-          <h3>Plano Anual</h3>
-          <p class="desc">O melhor valor para quem orca o ano todo.</p>
-          <div class="price"><span class="cur">R$</span><span class="num">4.990</span><span class="per">/ano</span></div>
-          <div class="save">Economia de R$ 998 por ano</div>
-          <ul>
-            <li><span class="c">✓</span> Tudo do plano mensal</li>
-            <li><span class="c">✓</span> Suporte prioritario</li>
-            <li><span class="c">✓</span> Novos modulos na vigencia</li>
-            <li><span class="c">✓</span> Atualizacoes da Reforma incluidas</li>
-          </ul>
-          <button class="btn btn-orange" type="button" data-soon style="width:100%">Assinar Plano Anual</button>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="faq" id="faq">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <span class="eyebrow" style="justify-content:center">Duvidas frequentes</span>
-        <h2>Perguntas frequentes</h2>
-      </div>
-      <div class="faq-list">
-        <details class="reveal"><summary>O sistema utiliza SINAPI?</summary><p>Sim. As bases referenciais ficam disponiveis para consulta e composicao dos orcamentos.</p></details>
-        <details class="reveal"><summary>O sistema utiliza SICRO?</summary><p>Sim. Composicoes rodoviarias e demonstrativos relacionados sao suportados.</p></details>
-        <details class="reveal"><summary>Os dados ficam separados por usuario?</summary><p>Sim. Na versao SaaS, cada usuario possui banco de dados individual e isolado.</p></details>
-        <details class="reveal"><summary>Como acesso agora?</summary><p>Use o botao Entrar e informe o usuario e a senha ja cadastrados no sistema.</p></details>
-      </div>
-    </div>
-  </section>
-
-  <footer>
-    <div class="wrap">
-      <div class="foot-grid">
-        <div>
-          <div class="logo"><span class="mark">OP</span> Orça<span style="color:var(--blue-500)">PRO</span></div>
-          <p class="blurb">Sistema de orcamentacao de obras publicas com SINAPI, SICRO, BDI e conformidade com a Reforma Tributaria.</p>
-        </div>
-        <div class="foot-col"><h4>Produto</h4><a href="#solucao">Solucao</a><a href="#como">Como funciona</a><a href="#planos">Planos</a><a href="#reforma">Reforma Tributaria</a></div>
-        <div class="foot-col"><h4>Acesso</h4><button type="button" data-open-login>Entrar</button><button type="button" data-soon>Teste Gratis</button><a href="#faq">FAQ</a></div>
-        <div class="foot-col"><h4>Legal</h4><a href="#">Politica de Privacidade</a><a href="#">Termos de Uso</a></div>
-      </div>
-      <div class="foot-bottom">
-        <span>© 2026 OrçaPro · forestgreen-turkey-374923.hostingersite.com</span>
-        <span class="mono">SINAPI · SICRO · BDI · IBS · CBS</span>
-      </div>
-    </div>
-  </footer>
-
-  <div class="login-panel" id="loginPanel" aria-hidden="true">
-    <section class="auth-card" aria-label="Acesso ao sistema">
-      <div class="auth-head">
-        <div>
-          <h2>Acesse o OrçaPro</h2>
-          <p>Entre com seu usuario autorizado ou crie uma conta para ativacao futura.</p>
-        </div>
-        <button class="close-auth" type="button" data-close-login aria-label="Fechar">×</button>
-      </div>
-      <div class="auth-body">
-        <div class="tabs">
-          <button class="tab active" id="tabLogin" type="button">Entrar</button>
-          <button class="tab" id="tabRegister" type="button">Criar conta</button>
-        </div>
-        <form id="loginForm">
-          <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required></label>
-          <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" required></label>
-          <button class="primary" type="submit">Entrar</button>
-        </form>
-        <form id="registerForm" style="display:none">
-          <label>Nome ou empresa<input id="regName" autocomplete="organization" required></label>
-          <label>E-mail<input id="regEmail" type="email" autocomplete="email" required></label>
-          <label>Senha<input id="regPassword" type="password" autocomplete="new-password" minlength="8" required></label>
-          <button class="primary" type="submit">Criar conta</button>
-        </form>
-        <button class="secondary" id="billingButton" type="button" style="display:none">Ir para pagamento Stripe</button>
-        <div class="msg" id="msg"></div>
-        <p class="hint">A logica de autenticacao e Stripe permanece no servidor. Nenhuma chave secreta fica no navegador.</p>
-      </div>
-    </section>
-  </div>
-
-  <div class="notice-modal" id="noticeModal" aria-hidden="true">
-    <div class="notice-card" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
-      <div class="notice-icon">⌛</div>
-      <h3 id="noticeTitle">Aguarde...</h3>
-      <p>Em breve o sistema estara disponivel para comercializacao.</p>
-      <button class="btn btn-blue" type="button" data-close-notice>Entendi</button>
     </div>
   </div>
+</section>
 
-  <script>
-    const msg = document.getElementById('msg');
-    const billingButton = document.getElementById('billingButton');
-    const loginPanel = document.getElementById('loginPanel');
-    const noticeModal = document.getElementById('noticeModal');
-    let pendingCheckoutUrl = '';
+<section class="faq" id="faq">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow" style="justify-content:center">Dúvidas frequentes</span>
+      <h2>Perguntas frequentes</h2>
+    </div>
+    <div class="faq-list">
+      <details class="reveal"><summary>O sistema utiliza SINAPI?</summary><p>Sim. As bases referenciais ficam disponíveis para consulta e composição dos orçamentos.</p></details>
+      <details class="reveal"><summary>O sistema utiliza SICRO?</summary><p>Sim. Composições rodoviárias e demonstrativos relacionados são suportados.</p></details>
+      <details class="reveal"><summary>Os dados ficam separados por usuário?</summary><p>Sim. Na versão SaaS, cada usuário possui banco de dados individual e isolado.</p></details>
+      <details class="reveal"><summary>Como faço para assinar?</summary><p>Clique em "Criar conta", informe seus dados e finalize o pagamento pelo Stripe. O acesso é liberado automaticamente após a confirmação.</p></details>
+      <details class="reveal"><summary>Como acesso se já tenho conta?</summary><p>Use o botão Entrar e informe o e-mail e a senha já cadastrados no sistema.</p></details>
+    </div>
+  </div>
+</section>
 
-    function show(type, text) {
-      msg.className = 'msg ' + type;
-      msg.textContent = text;
-    }
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="logo"><span class="mark"><img src="/img/login-orcapro-logo.png" alt="OrçaPro"></span> Orça<span style="color:var(--blue-500)">PRO</span></div>
+        <p class="blurb">Sistema de orçamentação de obras públicas com SINAPI, SICRO, BDI e conformidade com a Reforma Tributária.</p>
+      </div>
+      <div class="foot-col"><h4>Produto</h4><a href="#solucao">Solução</a><a href="#como">Como funciona</a><a href="#planos">Planos</a><a href="#reforma">Reforma Tributária</a></div>
+      <div class="foot-col"><h4>Acesso</h4><button type="button" data-open-login="">Entrar</button><button type="button" data-open-login="" data-mode="register">Criar conta</button><a href="#faq">FAQ</a></div>
+      <div class="foot-col"><h4>Legal</h4><a href="#">Política de Privacidade</a><a href="#">Termos de Uso</a></div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 OrçaPro</span>
+      <span class="mono">SINAPI · SICRO · BDI · IBS · CBS</span>
+    </div>
+  </div>
+</footer>
 
-    function openLogin(mode = 'login') {
-      loginPanel.classList.add('open');
-      loginPanel.setAttribute('aria-hidden', 'false');
-      activate(mode);
-      setTimeout(() => document.getElementById(mode === 'login' ? 'loginEmail' : 'regName')?.focus(), 50);
-    }
+<div class="login-panel" id="loginPanel" aria-hidden="true">
+  <section class="auth-card" aria-label="Acesso ao sistema">
+    <div class="auth-head">
+      <div>
+        <h2>Acesse o OrçaPro</h2>
+        <p>Entre com sua conta ou crie uma nova para assinar.</p>
+      </div>
+      <button class="close-auth" type="button" data-close-login="" aria-label="Fechar">×</button>
+    </div>
+    <div class="auth-body">
+      <div class="tabs">
+        <button class="tab active" id="tabLogin" type="button">Entrar</button>
+        <button class="tab" id="tabRegister" type="button">Criar conta</button>
+      </div>
+      <form id="loginForm">
+        <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required=""></label>
+        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" required=""></label>
+        <button class="primary" type="submit">Entrar</button>
+      </form>
+      <form id="registerForm" style="display:none">
+        <label>Nome ou empresa<input id="regName" autocomplete="organization" required=""></label>
+        <label>E-mail<input id="regEmail" type="email" autocomplete="email" required=""></label>
+        <label>Senha<input id="regPassword" type="password" autocomplete="new-password" minlength="8" required=""></label>
+        <button class="primary" type="submit">Criar conta</button>
+      </form>
+      <button class="secondary" id="billingButton" type="button" style="display:none">Ir para pagamento Stripe</button>
+      <div class="msg" id="msg"></div>
+      <p class="hint">A lógica de autenticação e o Stripe permanecem no servidor. Nenhuma chave secreta fica no navegador.</p>
+    </div>
+  </section>
+</div>
 
-    function closeLogin() {
-      loginPanel.classList.remove('open');
-      loginPanel.setAttribute('aria-hidden', 'true');
-    }
+<div class="notice-modal" id="noticeModal" aria-hidden="true">
+  <div class="notice-card" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
+    <div class="notice-icon">⌛</div>
+    <h3 id="noticeTitle">Aguarde...</h3>
+    <p>Em breve o sistema estará disponível para comercialização.</p>
+    <button class="btn btn-blue" type="button" data-close-notice="">Entendi</button>
+  </div>
+</div>
 
-    function openSoon() {
-      noticeModal.classList.add('open');
-      noticeModal.setAttribute('aria-hidden', 'false');
-    }
+<script>
+const msg = document.getElementById('msg');
+const billingButton = document.getElementById('billingButton');
+const loginPanel = document.getElementById('loginPanel');
+const noticeModal = document.getElementById('noticeModal');
+let pendingCheckoutUrl = '';
 
-    function closeSoon() {
-      noticeModal.classList.remove('open');
-      noticeModal.setAttribute('aria-hidden', 'true');
-    }
+function show(type, text) {
+  msg.className = 'msg ' + type;
+  msg.textContent = text;
+}
 
-    function activate(mode) {
-      document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
-      document.getElementById('tabRegister').classList.toggle('active', mode === 'register');
-      document.getElementById('loginForm').style.display = mode === 'login' ? '' : 'none';
-      document.getElementById('registerForm').style.display = mode === 'register' ? '' : 'none';
-      msg.className = 'msg';
-      billingButton.style.display = 'none';
-    }
+function openLogin(mode) {
+  mode = mode || 'login';
+  loginPanel.classList.add('open');
+  loginPanel.setAttribute('aria-hidden', 'false');
+  activate(mode);
+  setTimeout(function () {
+    var el = document.getElementById(mode === 'login' ? 'loginEmail' : 'regName');
+    if (el) el.focus();
+  }, 50);
+}
 
-    async function api(path, body) {
-      const res = await fetch('/api' + path, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body || {}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok && res.status !== 402) throw new Error(data.erro || 'Erro no servidor.');
-      return { status: res.status, data };
-    }
+function closeLogin() {
+  loginPanel.classList.remove('open');
+  loginPanel.setAttribute('aria-hidden', 'true');
+}
 
-    document.querySelectorAll('[data-open-login]').forEach(btn => btn.addEventListener('click', () => openLogin('login')));
-    document.querySelectorAll('[data-close-login]').forEach(btn => btn.addEventListener('click', closeLogin));
-    document.querySelectorAll('[data-soon]').forEach(btn => btn.addEventListener('click', openSoon));
-    document.querySelectorAll('[data-close-notice]').forEach(btn => btn.addEventListener('click', closeSoon));
-    loginPanel.addEventListener('click', (ev) => { if (ev.target === loginPanel) closeLogin(); });
-    noticeModal.addEventListener('click', (ev) => { if (ev.target === noticeModal) closeSoon(); });
-    document.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') {
-        closeLogin();
-        closeSoon();
-      }
+function openSoon() {
+  noticeModal.classList.add('open');
+  noticeModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSoon() {
+  noticeModal.classList.remove('open');
+  noticeModal.setAttribute('aria-hidden', 'true');
+}
+
+function activate(mode) {
+  document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
+  document.getElementById('tabRegister').classList.toggle('active', mode === 'register');
+  document.getElementById('loginForm').style.display = mode === 'login' ? '' : 'none';
+  document.getElementById('registerForm').style.display = mode === 'register' ? '' : 'none';
+  msg.className = 'msg';
+  billingButton.style.display = 'none';
+}
+
+async function api(path, body) {
+  const res = await fetch('/api' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(function () { return {}; });
+  if (!res.ok && res.status !== 402) throw new Error(data.erro || 'Erro no servidor.');
+  return { status: res.status, data: data };
+}
+
+document.querySelectorAll('[data-open-login]').forEach(function (btn) {
+  btn.addEventListener('click', function () { openLogin(btn.getAttribute('data-mode') || 'login'); });
+});
+document.querySelectorAll('[data-close-login]').forEach(function (btn) { btn.addEventListener('click', closeLogin); });
+document.querySelectorAll('[data-soon]').forEach(function (btn) { btn.addEventListener('click', openSoon); });
+document.querySelectorAll('[data-close-notice]').forEach(function (btn) { btn.addEventListener('click', closeSoon); });
+loginPanel.addEventListener('click', function (ev) { if (ev.target === loginPanel) closeLogin(); });
+noticeModal.addEventListener('click', function (ev) { if (ev.target === noticeModal) closeSoon(); });
+document.addEventListener('keydown', function (ev) {
+  if (ev.key === 'Escape') { closeLogin(); closeSoon(); }
+});
+
+document.getElementById('tabLogin').onclick = function () { activate('login'); };
+document.getElementById('tabRegister').onclick = function () { activate('register'); };
+billingButton.onclick = function () { if (pendingCheckoutUrl) location.href = pendingCheckoutUrl; };
+
+document.getElementById('loginForm').onsubmit = async function (ev) {
+  ev.preventDefault();
+  try {
+    const r = await api('/auth/login', {
+      email: loginEmail.value,
+      password: loginPassword.value,
     });
-
-    document.getElementById('tabLogin').onclick = () => activate('login');
-    document.getElementById('tabRegister').onclick = () => activate('register');
-    billingButton.onclick = () => {
-      if (pendingCheckoutUrl) location.href = pendingCheckoutUrl;
-    };
-
-    document.getElementById('loginForm').onsubmit = async (ev) => {
-      ev.preventDefault();
-      try {
-        const {status, data} = await api('/auth/login', {
-          email: loginEmail.value,
-          password: loginPassword.value,
-        });
-        if (status === 402 || data.subscription_required) {
-          const chk = await api('/billing/create-checkout-session', {});
-          pendingCheckoutUrl = chk.data.url || '';
-          if (pendingCheckoutUrl) {
-            billingButton.style.display = '';
-            show('ok', 'Sua conta existe, mas a assinatura ainda precisa ser ativada.');
-          } else {
-            show('error', 'Assinatura pendente e Stripe ainda nao configurado.');
-          }
-          return;
-        }
-        location.href = '/';
-      } catch(e) {
-        show('error', e.message);
+    if (r.status === 402 || r.data.subscription_required) {
+      const chk = await api('/billing/create-checkout-session', {});
+      pendingCheckoutUrl = chk.data.url || '';
+      if (pendingCheckoutUrl) {
+        billingButton.style.display = '';
+        show('ok', 'Sua conta existe, mas a assinatura ainda precisa ser ativada.');
+      } else {
+        show('error', 'Assinatura pendente e Stripe ainda não configurado.');
       }
-    };
-
-    document.getElementById('registerForm').onsubmit = async (ev) => {
-      ev.preventDefault();
-      try {
-        const {data} = await api('/auth/register', {
-          nome: regName.value,
-          email: regEmail.value,
-          password: regPassword.value,
-        });
-        if (data.checkout_url) {
-          location.href = data.checkout_url;
-        } else {
-          show('ok', 'Conta criada. Configure Stripe no servidor ou ative o usuario pelo painel admin.');
-        }
-      } catch(e) {
-        show('error', e.message);
-      }
-    };
-
-    const qs = new URLSearchParams(location.search);
-    if (qs.get('checkout') === 'success') {
-      openLogin('login');
-      show('ok', 'Pagamento processado. Faca login para acessar.');
+      return;
     }
-    if (qs.get('subscription') === 'required') {
-      openLogin('login');
-      show('error', 'Sua assinatura precisa estar ativa para acessar o sistema.');
-    }
+    location.href = '/';
+  } catch (e) {
+    show('error', e.message);
+  }
+};
 
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('in');
-          io.unobserve(entry.target);
-        }
-      });
-    }, { threshold:.12 });
-    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-  </script>
-</body>
-</html>
+document.getElementById('registerForm').onsubmit = async function (ev) {
+  ev.preventDefault();
+  try {
+    const r = await api('/auth/register', {
+      nome: regName.value,
+      email: regEmail.value,
+      password: regPassword.value,
+    });
+    if (r.data.checkout_url) {
+      location.href = r.data.checkout_url;
+    } else {
+      show('ok', 'Conta criada. Configure o Stripe no servidor ou ative o usuário pelo painel admin.');
+    }
+  } catch (e) {
+    show('error', e.message);
+  }
+};
+
+const qs = new URLSearchParams(location.search);
+if (qs.get('checkout') === 'success') {
+  openLogin('login');
+  show('ok', 'Pagamento processado. Faça login para acessar.');
+}
+if (qs.get('subscription') === 'required') {
+  openLogin('login');
+  show('error', 'Sua assinatura precisa estar ativa para acessar o sistema.');
+}
+
+const io = new IntersectionObserver(function (entries) {
+  entries.forEach(function (entry) {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('in');
+      io.unobserve(entry.target);
+    }
+  });
+}, { threshold: .12 });
+document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+</script>
+
+
+</body></html>

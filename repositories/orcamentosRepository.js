@@ -449,11 +449,21 @@ async function duplicarOrcamento(db, id) {
 }
 
 async function updateBdi(db, id, data = {}) {
-  return run(
+  const result = await run(
     db,
     'UPDATE orcamentos SET bdi_percentual=?, id_bdi_perfil=? WHERE id_orcamento=?',
     [toNum(data.bdi_percentual, 0), data.id_bdi_perfil || null, id],
   );
+  let linhasBdiEspecificoRemovidas = 0;
+  if (data.limpar_bdi_linhas === true) {
+    await ensureBdiLinha(db);
+    const cleared = await run(db, `
+      UPDATE orcamento_sintetico
+      SET bdi_percentual_linha=NULL
+      WHERE id_orcamento=? AND bdi_percentual_linha IS NOT NULL`, [id]);
+    linhasBdiEspecificoRemovidas = Number(cleared.changes || 0);
+  }
+  return { ...result, linhasBdiEspecificoRemovidas };
 }
 
 async function updateTotais(db, id, data = {}) {

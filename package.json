@@ -11,6 +11,7 @@
         "start:python": "python server.py",
         "test:bdi": "node tests/bdiRules.test.js && node tests/bdiRoutesScope.test.js",
         "test:riscos": "node tests/riscosEngine.test.js && node tests/riscosBdiIntegration.test.js",
+        "test:orcamentos": "node tests/orcamentoBdi.test.js",
         "init-db:node": "node database/init.js",
         "build:shared-catalog": "node scripts/buildSharedCatalog.js --force",
         "build:tenant-template": "node scripts/buildTenantTemplate.js --force",
