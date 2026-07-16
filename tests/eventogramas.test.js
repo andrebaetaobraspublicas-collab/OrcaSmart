@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const repo = require('../repositories/eventogramasRepository');
 const service = require('../services/eventogramasService');
@@ -61,6 +63,14 @@ async function main() {
         (2,1,'1.1','A-01','Placa de obra','M2',2,100,NULL,'item',1,2,'SINAPI'),
         (3,1,'1.2','A-02','Mobilizacao','UN',1,100,NULL,'item',1,3,'USUARIO');
     `);
+    if (process.env.EVENTOGRAMA_PDF_OUTPUT) {
+      const extras = Array.from({ length: 28 }, (_, index) => {
+        const id = index + 4;
+        const ordem = index + 4;
+        return `(${id},1,'1.${index + 3}','A-${String(index + 3).padStart(2, '0')}','Servico complementar de engenharia com descricao detalhada para verificacao da quebra de linha e da paginacao profissional','M2',1,50,NULL,'item',1,${ordem},'SINAPI')`;
+      });
+      await exec(db, `INSERT INTO orcamento_sintetico VALUES ${extras.join(',')}; UPDATE orcamentos SET valor_total=1870 WHERE id_orcamento=1;`);
+    }
 
     const evg = await service.createEventograma(db, {
       id_orcamento: 1,
@@ -73,16 +83,21 @@ async function main() {
 
     const detalhe = await service.getEventograma(db, evg.id_eventograma);
     const itens = detalhe.itens_orcamento.filter(item => item.tipo_linha === 'item');
-    assert.strictEqual(itens.length, 2);
+    assert.strictEqual(itens.length, process.env.EVENTOGRAMA_PDF_OUTPUT ? 30 : 2);
     assert.ok(itens.every(item => item.alocado));
     assert.ok(itens.every(item => item.id_evento_alocado));
     assert.ok(itens.every(item => item.numero_evento_alocado === '01'));
-    assert.deepStrictEqual(detalhe.eventos[0].itens.map(item => item.valor), [220, 110]);
+    assert.deepStrictEqual(detalhe.eventos[0].itens.slice(0, 2).map(item => item.valor), [220, 110]);
 
     const pdf = await service.exportPdf(db, evg.id_eventograma);
     assert.match(pdf.filename, /\.pdf$/);
     assert.strictEqual(pdf.buffer.subarray(0, 8).toString('latin1'), '%PDF-1.4');
     assert.ok(pdf.buffer.length > 500);
+    if (process.env.EVENTOGRAMA_PDF_OUTPUT) {
+      const output = path.resolve(process.env.EVENTOGRAMA_PDF_OUTPUT);
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      fs.writeFileSync(output, pdf.buffer);
+    }
 
     console.log('eventogramas.test.js: OK');
   } finally {

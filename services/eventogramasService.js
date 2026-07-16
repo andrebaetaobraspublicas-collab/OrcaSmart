@@ -126,92 +126,258 @@ async function exportExcel(db, id) {
   return { filename: `eventograma_${safeName}.xls`, content: rows.join('') };
 }
 
-function ascii(value) {
+function pdfText(value) {
   return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x20-\x7E]/g, '');
+    .normalize('NFC')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, '-')
+    .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function wrapPdfLine(value, width = 105) {
-  const words = ascii(value).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
-  if (!words.length) return [''];
+function pdfEscape(value) {
+  return pdfText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
+function pdfApproxWidth(text, size) {
+  return pdfText(text).length * size * 0.48;
+}
+
+function pdfWrap(text, width, size, maxLines = 2) {
+  const words = pdfText(text).split(/\s+/).filter(Boolean);
   const lines = [];
-  let current = '';
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= width) current = candidate;
+  let line = '';
+  const limit = Math.max(10, Math.floor(width / (size * 0.58)));
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= limit) line = next;
     else {
-      if (current) lines.push(current);
-      current = word;
+      if (line) lines.push(line);
+      line = word;
     }
+  });
+  if (line) lines.push(line);
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    kept[maxLines - 1] = `${kept[maxLines - 1].slice(0, Math.max(0, limit - 3)).trim()}...`;
+    return kept;
   }
-  if (current) lines.push(current);
-  return lines;
+  return lines.length ? lines : [''];
 }
 
-function buildTextPdf(lines) {
-  const perPage = 46;
+function buildProfessionalPdf(evg) {
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const margin = 30;
+  const tableLeft = margin;
+  const tableTop = 414;
+  const footerY = 28;
+  const rowBottomLimit = 54;
+  const totalRef = Number(evg.valor_total_ref || evg.valor_total || 0);
+  const itensOrcamento = (evg.itens_orcamento || []).filter(item => item.tipo_linha !== 'section');
+  const itensAlocados = itensOrcamento.filter(item => item.alocado).length;
+  const cobertura = itensOrcamento.length ? (itensAlocados / itensOrcamento.length * 100) : 0;
+  const flat = flattenEventos(evg.eventos || []);
+  const qtdEventos = flat.filter(row => row.tipo === 'evento').length;
+  const cols = [
+    { key: 'evento', title: 'EVENTO', width: 58, align: 'left' },
+    { key: 'item', title: 'ITEM / CODIGO', width: 105, align: 'left' },
+    { key: 'descricao', title: 'DESCRICAO DO SERVICO', width: 354, align: 'left' },
+    { key: 'unidade', title: 'UN.', width: 42, align: 'center' },
+    { key: 'quantidade', title: 'QUANTIDADE', width: 72, align: 'right' },
+    { key: 'valor', title: 'VALOR (R$)', width: 90, align: 'right' },
+    { key: 'percentual', title: '% TOTAL', width: 61, align: 'right' },
+  ];
+  const tableWidth = cols.reduce((sum, col) => sum + col.width, 0);
+  let zebra = 0;
+  const rows = flat.map((entry) => {
+    if (entry.tipo === 'evento') {
+      const evento = entry.evento;
+      const descLines = pdfWrap(evento.descricao || 'Evento', 390, 8.2, 2);
+      const criterioLines = evento.criterio_medicao ? pdfWrap(`Criterio: ${evento.criterio_medicao}`, 540, 6.8, 1) : [];
+      return {
+        type: 'event',
+        depth: entry.nivel,
+        evento,
+        descLines,
+        criterioLines,
+        height: 15 + (descLines.length * 9) + (criterioLines.length * 8),
+      };
+    }
+    const item = entry.item;
+    const descLines = pdfWrap(item.descricao || '-', cols[2].width - 12, 7.2, 2);
+    zebra += 1;
+    return {
+      type: 'item',
+      depth: entry.nivel,
+      evento: entry.evento,
+      item,
+      descLines,
+      zebra: zebra % 2 === 0,
+      height: Math.max(22, 11 + descLines.length * 8),
+    };
+  });
+
   const pages = [];
-  for (let index = 0; index < lines.length; index += perPage) pages.push(lines.slice(index, index + perPage));
-  if (!pages.length) pages.push(['Eventograma']);
-  const objects = [null];
-  const addObject = content => { objects.push(content); return objects.length - 1; };
-  const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  const boldId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+  let current = [];
+  let y = tableTop - 24;
+  rows.forEach((row) => {
+    if (y - row.height < rowBottomLimit && current.length) {
+      pages.push(current);
+      current = [];
+      y = tableTop - 24;
+    }
+    current.push(row);
+    y -= row.height;
+  });
+  if (current.length) pages.push(current);
+  if (!pages.length) pages.push([]);
+
+  const objects = [];
+  const addObj = (body) => { objects.push(body); return objects.length; };
+  const catalogId = addObj('<< /Type /Catalog /Pages 2 0 R >>');
+  objects.push(null);
+  const fontId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const fontBoldId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
   const pageIds = [];
-  const contentIds = [];
-  pages.forEach((page) => {
-    const stream = page.map((line, index) => {
-      const title = index === 0 && page === pages[0];
-      const escaped = ascii(line).replace(/([\\()])/g, '\\$1');
-      return `BT /${title ? 'F2' : 'F1'} ${title ? 14 : 8.5} Tf 42 ${806 - index * 16} Td (${escaped}) Tj ET`;
-    }).join('\n');
-    contentIds.push(addObject(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`));
-    pageIds.push(addObject(''));
+  const generatedAt = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+  const drawText = (commands, text, x, yText, size = 8, opts = {}) => {
+    const font = opts.bold ? 'F2' : 'F1';
+    const color = opts.color || '0.05 0.12 0.23';
+    let tx = x;
+    if (opts.align === 'right') tx = x - pdfApproxWidth(text, size);
+    if (opts.align === 'center') tx = x - pdfApproxWidth(text, size) / 2;
+    commands.push('BT', `${color} rg`, `/${font} ${size} Tf`, `1 0 0 1 ${tx.toFixed(2)} ${yText.toFixed(2)} Tm`, `(${pdfEscape(text)}) Tj`, 'ET');
+  };
+  const drawRect = (commands, x, yRect, width, height, fill, stroke = '') => {
+    commands.push('q');
+    if (fill) commands.push(`${fill} rg`);
+    if (stroke) commands.push(`${stroke} RG`);
+    commands.push(`${x.toFixed(2)} ${yRect.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re ${fill && stroke ? 'B' : fill ? 'f' : 'S'}`, 'Q');
+  };
+  const drawLine = (commands, x1, y1, x2, y2, color = '0.80 0.85 0.92', width = 0.4) => {
+    commands.push('q', `${color} RG`, `${width} w`, `${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`, 'Q');
+  };
+  const drawHeader = (commands, pageNo, totalPages) => {
+    drawRect(commands, 0, 552, pageWidth, 43, '0.04 0.16 0.33');
+    drawText(commands, 'OrcaPRO', margin, 573, 16, { bold: true, color: '1 1 1' });
+    drawText(commands, 'Eventograma - Eventos Geradores de Pagamento', margin, 558, 8.5, { color: '0.74 0.84 0.96' });
+    drawText(commands, `Pagina ${pageNo} de ${totalPages}`, pageWidth - margin, 566, 8, { align: 'right', color: '0.86 0.92 1' });
+    drawText(commands, pdfText(evg.nome || 'Eventograma'), margin, 529, 16, { bold: true });
+    drawText(commands, `Obra: ${pdfText(evg.nome_obra || '-')}`, margin, 512, 8.5, { color: '0.29 0.36 0.46' });
+    drawText(commands, `Orcamento: ${pdfText(evg.nome_orcamento || '-')}  |  Status: ${pdfText(evg.status || 'Rascunho')}  |  Emitido em: ${generatedAt}`, margin, 499, 8, { color: '0.38 0.44 0.55' });
+    const cards = [
+      ['VALOR DE REFERENCIA', `R$ ${money(totalRef)}`],
+      ['EVENTOS', String(qtdEventos)],
+      ['ITENS ALOCADOS', `${itensAlocados} de ${itensOrcamento.length}`],
+      ['COBERTURA', `${cobertura.toFixed(1).replace('.', ',')}%`],
+    ];
+    const cardY = 440;
+    const cardW = 184;
+    cards.forEach((card, index) => {
+      const x = margin + index * (cardW + 12);
+      const emphasis = index === 0 || index === 3;
+      drawRect(commands, x, cardY, cardW, 46, emphasis ? '0.89 0.95 1' : '0.97 0.99 1', '0.80 0.87 0.94');
+      drawText(commands, card[0], x + 10, cardY + 30, 7, { bold: true, color: '0.39 0.46 0.58' });
+      drawText(commands, card[1], x + 10, cardY + 12, 12, { bold: true, color: emphasis ? '0.02 0.31 0.62' : '0.05 0.12 0.23' });
+    });
+  };
+  const drawTableHeader = (commands) => {
+    drawRect(commands, tableLeft, tableTop - 20, tableWidth, 20, '0.91 0.95 0.99', '0.75 0.82 0.91');
+    let x = tableLeft;
+    cols.forEach((col) => {
+      const tx = col.align === 'right' ? x + col.width - 4 : col.align === 'center' ? x + col.width / 2 : x + 4;
+      drawText(commands, col.title, tx, tableTop - 13, 6.4, { bold: true, align: col.align, color: '0.13 0.23 0.38' });
+      x += col.width;
+    });
+    drawLine(commands, tableLeft, tableTop - 20, tableLeft + tableWidth, tableTop - 20, '0.08 0.16 0.28', 0.8);
+  };
+  const drawEventRow = (commands, row, yRow) => {
+    const root = row.depth === 0;
+    const fill = root ? '0.08 0.25 0.48' : '0.88 0.94 1';
+    const primary = root ? '1 1 1' : '0.05 0.20 0.40';
+    const secondary = root ? '0.80 0.89 0.98' : '0.28 0.40 0.56';
+    drawRect(commands, tableLeft, yRow - row.height, tableWidth, row.height, fill, root ? '' : '0.68 0.80 0.93');
+    const indent = Math.min(28, row.depth * 12);
+    drawText(commands, `EVENTO ${row.evento.numero_evento || '-'}`, tableLeft + 8 + indent, yRow - 13, 7.3, { bold: true, color: primary });
+    row.descLines.forEach((line, index) => drawText(commands, line, tableLeft + 90 + indent, yRow - 13 - index * 9, 8.2, { bold: true, color: primary }));
+    drawText(commands, `R$ ${money(row.evento.valor_calculado)}`, tableLeft + tableWidth - 8, yRow - 13, 8.4, { bold: true, align: 'right', color: primary });
+    const metaY = yRow - 14 - row.descLines.length * 9;
+    drawText(commands, `Grupo: ${pdfText(row.evento.grupo || '-')}`, tableLeft + 90 + indent, metaY, 6.8, { color: secondary });
+    if (row.criterioLines.length) drawText(commands, row.criterioLines[0], tableLeft + 90 + indent, metaY - 8, 6.6, { color: secondary });
+  };
+  const drawItemRow = (commands, row, yRow) => {
+    drawRect(commands, tableLeft, yRow - row.height, tableWidth, row.height, row.zebra ? '0.97 0.985 1' : '1 1 1', '0.86 0.90 0.95');
+    const item = row.item;
+    const values = {
+      evento: row.evento.numero_evento || '',
+      item: [item.item, item.codigo].filter(Boolean).join(' / '),
+      unidade: item.unidade || '',
+      quantidade: pct(item.quantidade),
+      valor: money(item.valor),
+      percentual: totalRef > 0 ? `${(Number(item.valor || 0) / totalRef * 100).toFixed(2).replace('.', ',')}%` : '0,00%',
+    };
+    let x = tableLeft;
+    cols.forEach((col) => {
+      if (col.key === 'descricao') {
+        row.descLines.forEach((line, index) => drawText(commands, line, x + 6 + Math.min(18, row.depth * 4), yRow - 10 - index * 8, 7.2));
+      } else {
+        const tx = col.align === 'right' ? x + col.width - 5 : col.align === 'center' ? x + col.width / 2 : x + 5;
+        drawText(commands, values[col.key] || '', tx, yRow - 11, 6.9, { align: col.align, color: '0.10 0.18 0.30' });
+      }
+      x += col.width;
+    });
+  };
+  const drawFooter = (commands, pageNo, totalPages) => {
+    drawLine(commands, margin, footerY + 12, pageWidth - margin, footerY + 12, '0.82 0.87 0.94', 0.5);
+    drawText(commands, 'OrcaPRO - Calculadora de Obras', margin, footerY, 7, { color: '0.45 0.51 0.60' });
+    drawText(commands, 'Eventograma - documento de apoio a medicao e pagamento', pageWidth / 2, footerY, 7, { align: 'center', color: '0.45 0.51 0.60' });
+    drawText(commands, `Pagina ${pageNo}/${totalPages}`, pageWidth - margin, footerY, 7, { align: 'right', color: '0.45 0.51 0.60' });
+  };
+
+  pages.forEach((pageRows, pageIndex) => {
+    const commands = [];
+    drawHeader(commands, pageIndex + 1, pages.length);
+    drawTableHeader(commands);
+    let yRow = tableTop - 24;
+    pageRows.forEach((row) => {
+      if (row.type === 'event') drawEventRow(commands, row, yRow);
+      else drawItemRow(commands, row, yRow);
+      yRow -= row.height;
+    });
+    if (pageIndex === pages.length - 1) {
+      const totalY = Math.max(rowBottomLimit + 8, yRow - 48);
+      drawRect(commands, tableLeft + tableWidth - 280, totalY, 280, 40, '0.89 0.95 1', '0.68 0.80 0.93');
+      drawText(commands, 'TOTAL DE REFERENCIA DO EVENTOGRAMA', tableLeft + tableWidth - 268, totalY + 25, 7.5, { bold: true, color: '0.13 0.23 0.38' });
+      drawText(commands, `R$ ${money(totalRef)}`, tableLeft + tableWidth - 12, totalY + 10, 13, { bold: true, align: 'right', color: '0.02 0.31 0.62' });
+    }
+    drawFooter(commands, pageIndex + 1, pages.length);
+    const stream = commands.join('\n');
+    const contentId = addObj(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`);
+    const pageId = addObj(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    pageIds.push(pageId);
   });
-  const pagesId = addObject('');
-  const catalogId = addObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
-  pageIds.forEach((id, index) => {
-    objects[id] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${boldId} 0 R >> >> /Contents ${contentIds[index]} 0 R >>`;
-  });
-  objects[pagesId] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
-  let output = '%PDF-1.4\n';
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+  const chunks = ['%PDF-1.4\n'];
   const offsets = [0];
-  for (let id = 1; id < objects.length; id += 1) {
-    offsets[id] = Buffer.byteLength(output, 'latin1');
-    output += `${id} 0 obj\n${objects[id]}\nendobj\n`;
-  }
-  const xref = Buffer.byteLength(output, 'latin1');
-  output += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
-  for (let id = 1; id < objects.length; id += 1) output += `${String(offsets[id]).padStart(10, '0')} 00000 n \n`;
-  output += `trailer << /Size ${objects.length} /Root ${catalogId} 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return Buffer.from(output, 'latin1');
+  objects.forEach((body, index) => {
+    offsets[index + 1] = Buffer.byteLength(chunks.join(''), 'latin1');
+    chunks.push(`${index + 1} 0 obj\n${body}\nendobj\n`);
+  });
+  const xrefOffset = Buffer.byteLength(chunks.join(''), 'latin1');
+  chunks.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`);
+  for (let id = 1; id <= objects.length; id += 1) chunks.push(`${String(offsets[id]).padStart(10, '0')} 00000 n \n`);
+  chunks.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  return Buffer.from(chunks.join(''), 'latin1');
 }
 
 async function exportPdf(db, id) {
   const evg = await getEventograma(db, id);
-  const lines = [
-    'EVENTOGRAMA - TABELA DE EVENTOS GERADORES DE PAGAMENTO',
-    `Eventograma: ${evg.nome || '-'}`,
-    `Obra: ${evg.nome_obra || '-'}`,
-    `Orcamento: ${evg.nome_orcamento || '-'}`,
-    `Status: ${evg.status || '-'} | Valor de referencia: R$ ${money(evg.valor_total_ref || evg.valor_total)}`,
-    '',
-  ];
-  for (const row of flattenEventos(evg.eventos || [])) {
-    if (row.tipo === 'evento') {
-      const ev = row.evento;
-      lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel)}EVENTO ${ev.numero_evento || '-'} - ${ev.descricao || ''} | Grupo: ${ev.grupo || '-'} | Valor: R$ ${money(ev.valor_calculado)}`));
-      if (ev.criterio_medicao) lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel + 1)}Criterio: ${ev.criterio_medicao}`));
-    } else {
-      const it = row.item;
-      lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel)}Item ${it.item || ''} ${it.codigo || ''} - ${it.descricao || ''} | ${it.unidade || '-'} | Qtd. ${pct(it.quantidade)} | Valor R$ ${money(it.valor)}`));
-    }
-  }
-  lines.push('', `TOTAL DO EVENTOGRAMA: R$ ${money(evg.valor_total_ref || evg.valor_total)}`);
   const safeName = String(evg.nome || `eventograma_${id}`).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 80);
-  return { filename: `eventograma_${safeName}.pdf`, buffer: buildTextPdf(lines) };
+  return { filename: `eventograma_${safeName}.pdf`, buffer: buildProfessionalPdf(evg) };
 }
 
 module.exports = {
