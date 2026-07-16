@@ -13,6 +13,7 @@
         "test:riscos": "node tests/riscosEngine.test.js && node tests/riscosBdiIntegration.test.js",
         "test:orcamentos": "node tests/orcamentoBdi.test.js",
         "test:insumos": "node tests/insumosTenantRevision.test.js",
+        "test:eventogramas": "node tests/eventogramas.test.js",
         "init-db:node": "node database/init.js",
         "build:shared-catalog": "node scripts/buildSharedCatalog.js --force",
         "build:tenant-template": "node scripts/buildTenantTemplate.js --force",

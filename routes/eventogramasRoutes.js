@@ -68,5 +68,12 @@ module.exports = function eventogramasRoutes(db) {
     res.send(file.content);
   }));
 
+  router.get('/:id/exportar/pdf', asyncHandler(async (req, res) => {
+    const file = await service.exportPdf(db, req.params.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.buffer);
+  }));
+
   return router;
 };

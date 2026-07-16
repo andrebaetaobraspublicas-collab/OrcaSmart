@@ -27,7 +27,7 @@ function valorItem(item, bdi) {
   const bdiLinha = item.bdi_percentual_linha == null || item.bdi_percentual_linha === ''
     ? bdi
     : toNum(item.bdi_percentual_linha, bdi);
-  return toNum(item.quantidade) * toNum(item.custo_unitario) * (1 + bdiLinha / 100);
+  return Number((toNum(item.quantidade) * toNum(item.custo_unitario) * (1 + bdiLinha / 100)).toFixed(2));
 }
 
 function classificarGrupo(texto) {
@@ -48,13 +48,12 @@ function formatNumeroEvento(indexes = []) {
 }
 
 async function insertEventoItens(db, idEvento, rows = []) {
-  const itemIds = rows.map(row => row.id_item).filter(Boolean);
-  const batchSize = 200;
-  for (let i = 0; i < itemIds.length; i += batchSize) {
-    const batch = itemIds.slice(i, i + batchSize);
-    const placeholders = batch.map(() => '(?,?)').join(',');
-    const params = batch.flatMap(idItem => [idEvento, idItem]);
-    await run(db, `INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES ${placeholders}`, params);
+  const itemIds = [...new Set(rows.map(row => row.id_item).filter(Boolean))];
+  // O runtime MySQL acrescenta tenant_id e a chave privada a cada INSERT.
+  // Uma instrucao com varios grupos VALUES recebia esses campos somente na
+  // primeira linha, causando "Column count doesn't match value count".
+  for (const idItem of itemIds) {
+    await run(db, 'INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES (?,?)', [idEvento, idItem]);
   }
 }
 
@@ -204,11 +203,23 @@ async function getEventograma(db, idEventograma) {
   if (!evg) return null;
 
   evg.eventos = await getEventosTree(db, idEventograma);
-  const alocados = new Set((await all(db, `
-    SELECT DISTINCT ei.id_item
+  const preencherValores = (eventos = []) => {
+    for (const evento of eventos) {
+      for (const item of evento.itens || []) item.valor = valorItem(item, toNum(evg.bdi_percentual));
+      preencherValores(evento.subeventos || []);
+    }
+  };
+  preencherValores(evg.eventos);
+  const alocacoes = await all(db, `
+    SELECT ei.id_item, ev.id_evento, ev.numero_evento, ev.descricao AS descricao_evento
     FROM ev_evento_itens ei
     JOIN ev_eventos ev ON ev.id_evento=ei.id_evento
-    WHERE ev.id_eventograma=?`, [idEventograma])).map(r => r.id_item));
+    WHERE ev.id_eventograma=?
+    ORDER BY ev.ordem, ev.id_evento`, [idEventograma]);
+  const alocados = new Map();
+  for (const row of alocacoes) {
+    if (!alocados.has(row.id_item)) alocados.set(row.id_item, row);
+  }
 
   evg.itens_orcamento = await all(db, `
     SELECT *
@@ -216,7 +227,11 @@ async function getEventograma(db, idEventograma) {
     WHERE id_orcamento=?
     ORDER BY ordem, id_item`, [evg.id_orcamento]);
   evg.itens_orcamento.forEach((it) => {
-    it.alocado = alocados.has(it.id_item);
+    const alocacao = alocados.get(it.id_item) || null;
+    it.alocado = !!alocacao;
+    it.id_evento_alocado = alocacao?.id_evento || null;
+    it.numero_evento_alocado = alocacao?.numero_evento || null;
+    it.descricao_evento_alocado = alocacao?.descricao_evento || null;
     it.valor = valorItem(it, toNum(evg.bdi_percentual));
   });
   return evg;
@@ -403,4 +418,5 @@ module.exports = {
   moveItensEvento,
   reordenarEventos,
   getEventogramaRaw,
+  insertEventoItens,
 };

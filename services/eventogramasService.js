@@ -126,6 +126,94 @@ async function exportExcel(db, id) {
   return { filename: `eventograma_${safeName}.xls`, content: rows.join('') };
 }
 
+function ascii(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '');
+}
+
+function wrapPdfLine(value, width = 105) {
+  const words = ascii(value).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!words.length) return [''];
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= width) current = candidate;
+    else {
+      if (current) lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function buildTextPdf(lines) {
+  const perPage = 46;
+  const pages = [];
+  for (let index = 0; index < lines.length; index += perPage) pages.push(lines.slice(index, index + perPage));
+  if (!pages.length) pages.push(['Eventograma']);
+  const objects = [null];
+  const addObject = content => { objects.push(content); return objects.length - 1; };
+  const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const boldId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+  const pageIds = [];
+  const contentIds = [];
+  pages.forEach((page) => {
+    const stream = page.map((line, index) => {
+      const title = index === 0 && page === pages[0];
+      const escaped = ascii(line).replace(/([\\()])/g, '\\$1');
+      return `BT /${title ? 'F2' : 'F1'} ${title ? 14 : 8.5} Tf 42 ${806 - index * 16} Td (${escaped}) Tj ET`;
+    }).join('\n');
+    contentIds.push(addObject(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`));
+    pageIds.push(addObject(''));
+  });
+  const pagesId = addObject('');
+  const catalogId = addObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
+  pageIds.forEach((id, index) => {
+    objects[id] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${boldId} 0 R >> >> /Contents ${contentIds[index]} 0 R >>`;
+  });
+  objects[pagesId] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+  let output = '%PDF-1.4\n';
+  const offsets = [0];
+  for (let id = 1; id < objects.length; id += 1) {
+    offsets[id] = Buffer.byteLength(output, 'latin1');
+    output += `${id} 0 obj\n${objects[id]}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(output, 'latin1');
+  output += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+  for (let id = 1; id < objects.length; id += 1) output += `${String(offsets[id]).padStart(10, '0')} 00000 n \n`;
+  output += `trailer << /Size ${objects.length} /Root ${catalogId} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return Buffer.from(output, 'latin1');
+}
+
+async function exportPdf(db, id) {
+  const evg = await getEventograma(db, id);
+  const lines = [
+    'EVENTOGRAMA - TABELA DE EVENTOS GERADORES DE PAGAMENTO',
+    `Eventograma: ${evg.nome || '-'}`,
+    `Obra: ${evg.nome_obra || '-'}`,
+    `Orcamento: ${evg.nome_orcamento || '-'}`,
+    `Status: ${evg.status || '-'} | Valor de referencia: R$ ${money(evg.valor_total_ref || evg.valor_total)}`,
+    '',
+  ];
+  for (const row of flattenEventos(evg.eventos || [])) {
+    if (row.tipo === 'evento') {
+      const ev = row.evento;
+      lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel)}EVENTO ${ev.numero_evento || '-'} - ${ev.descricao || ''} | Grupo: ${ev.grupo || '-'} | Valor: R$ ${money(ev.valor_calculado)}`));
+      if (ev.criterio_medicao) lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel + 1)}Criterio: ${ev.criterio_medicao}`));
+    } else {
+      const it = row.item;
+      lines.push(...wrapPdfLine(`${'  '.repeat(row.nivel)}Item ${it.item || ''} ${it.codigo || ''} - ${it.descricao || ''} | ${it.unidade || '-'} | Qtd. ${pct(it.quantidade)} | Valor R$ ${money(it.valor)}`));
+    }
+  }
+  lines.push('', `TOTAL DO EVENTOGRAMA: R$ ${money(evg.valor_total_ref || evg.valor_total)}`);
+  const safeName = String(evg.nome || `eventograma_${id}`).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 80);
+  return { filename: `eventograma_${safeName}.pdf`, buffer: buildTextPdf(lines) };
+}
+
 module.exports = {
   listEventogramas,
   createEventograma,
@@ -141,4 +229,5 @@ module.exports = {
   reordenarEventos: repo.reordenarEventos,
   exportJson,
   exportExcel,
+  exportPdf,
 };

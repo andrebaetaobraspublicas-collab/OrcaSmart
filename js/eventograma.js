@@ -210,7 +210,8 @@ Router.register('eventograma', async () => {
           <div style="position:relative">
             <button class="btn btn-secondary btn-sm" id="btnExportar">⬇ Exportar ▾</button>
             <div id="exportMenu" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:20;min-width:160px;padding:4px 0">
-              <a href="${API.eventogramas.exportarExcel(state.evgId)}" style="display:block;padding:8px 14px;font-size:.83rem;text-decoration:none;color:var(--c-text)" download>📊 Excel (.xlsx)</a>
+              <a href="${API.eventogramas.exportarExcel(state.evgId)}" style="display:block;padding:8px 14px;font-size:.83rem;text-decoration:none;color:var(--c-text)" download>📊 Excel (.xls)</a>
+              <a href="${API.eventogramas.exportarPdf(state.evgId)}" style="display:block;padding:8px 14px;font-size:.83rem;text-decoration:none;color:var(--c-text)" download>📄 PDF (.pdf)</a>
               <a href="${API.eventogramas.exportarJson(state.evgId)}"  style="display:block;padding:8px 14px;font-size:.83rem;text-decoration:none;color:var(--c-text)" download>{ } JSON</a>
             </div>
           </div>
@@ -284,6 +285,8 @@ Router.register('eventograma', async () => {
           margin-bottom:3px;cursor:grab;font-size:.76rem;
         }
         .item-unaloc:hover { border-color:#f59e0b; }
+        .item-unaloc.item-alocado { background:#eff6ff;border-color:#bfdbfe; }
+        .item-unaloc.item-alocado:hover { border-color:#3b82f6; }
         .drop-zone {
           min-height:32px;border:2px dashed transparent;border-radius:var(--radius-sm);
           transition:all .12s;padding:4px;
@@ -321,36 +324,45 @@ Router.register('eventograma', async () => {
   function renderPainelItens() {
     const el = document.getElementById('painelItens');
     if (!el || !state.evgData) return;
-    const busca  = (document.getElementById('filtroBuscaItem')?.value || '').toLowerCase();
-    const itens  = state.evgData.itens_orcamento || [];
-    const naoAloc = itens.filter(i => !i.alocado && i.tipo_linha !== 'section');
+    const normalizar = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const busca = normalizar(document.getElementById('filtroBuscaItem')?.value || '');
+    const termos = busca.split(/\s+/).filter(Boolean);
+    const itens = (state.evgData.itens_orcamento || []).filter(i => i.tipo_linha !== 'section');
+    const naoAloc = itens.filter(i => !i.alocado);
     const badge   = document.getElementById('badgeNaoAloc');
-    if (badge) badge.textContent = `${naoAloc.length} pendente(s)`;
+    if (badge) badge.textContent = busca ? 'buscando em todos' : `${naoAloc.length} pendente(s)`;
 
-    const filtrado = naoAloc.filter(i =>
-      !busca ||
-      (i.descricao||'').toLowerCase().includes(busca) ||
-      (i.codigo||'').toLowerCase().includes(busca)
-    );
+    const base = busca ? itens : naoAloc;
+    const filtrado = base.filter((i) => {
+      if (!termos.length) return true;
+      const texto = normalizar([i.item, i.codigo, i.descricao, i.unidade, i.fonte].filter(Boolean).join(' '));
+      return termos.every(termo => texto.includes(termo));
+    });
     const limite = busca ? 600 : 300;
     const visivel = filtrado.slice(0, limite);
 
     if (!filtrado.length) {
       el.innerHTML = `<div style="text-align:center;padding:20px;font-size:.8rem;color:var(--c-text-2)">
-        ${naoAloc.length === 0 ? '✅ Todos os itens alocados!' : '🔍 Nenhum resultado.'}
+        ${busca ? '🔍 Nenhum item encontrado no orçamento.' : (naoAloc.length === 0 ? '✅ Todos os itens alocados!' : '🔍 Nenhum resultado.')}
       </div>`; return;
     }
 
     el.innerHTML = `
       ${filtrado.length > visivel.length ? `
         <div style="font-size:.75rem;color:var(--c-text-2);padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px">
-          Mostrando ${visivel.length.toLocaleString('pt-BR')} de ${filtrado.length.toLocaleString('pt-BR')} itens pendentes. Use a busca para refinar.
+          Mostrando ${visivel.length.toLocaleString('pt-BR')} de ${filtrado.length.toLocaleString('pt-BR')} itens do orçamento. Use a busca para refinar.
         </div>` : ''}
       ${visivel.map(it => `
-      <div class="item-unaloc" draggable="true"
-           data-id="${it.id_item}" data-origem="unaloc"
+      <div class="item-unaloc ${it.alocado ? 'item-alocado' : ''}" draggable="true"
+           data-id="${it.id_item}" data-origem="${it.id_evento_alocado || 'unaloc'}"
            title="${Utils.esc(it.descricao||'')}">
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.esc(it.descricao||'—')}</span>
+        <span style="flex:1;min-width:0;overflow:hidden">
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Utils.esc(it.descricao||'—')}</span>
+          <span style="display:block;color:var(--c-text-3);font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${Utils.esc([it.item, it.codigo].filter(Boolean).join(' · ') || 'Sem código')}
+            ${it.alocado ? ` · Evento ${Utils.esc(it.numero_evento_alocado || '')}` : ''}
+          </span>
+        </span>
         <span style="color:var(--c-text-3);flex-shrink:0">${it.unidade||''}</span>
         <span style="font-weight:600;color:var(--c-primary);flex-shrink:0">${Utils.moeda(it.valor||0)}</span>
       </div>`).join('')}`;

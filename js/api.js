@@ -112,6 +112,7 @@ const API = {
     reordenar:   (id, ordens)   => API.post(`/eventogramas/${id}/reordenar`, ordens),
     exportarJson:  (id) => `${API.BASE}/eventogramas/${id}/exportar/json`,
     exportarExcel: (id) => `${API.BASE}/eventogramas/${id}/exportar/excel`,
+    exportarPdf:   (id) => `${API.BASE}/eventogramas/${id}/exportar/pdf`,
     eventos: {
       list:   (evgId)           => API.get(`/eventogramas/${evgId}/eventos`),
       create: (evgId, data)     => API.post(`/eventogramas/${evgId}/eventos`, data),
