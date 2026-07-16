@@ -1,12 +1,55 @@
 const assert = require('assert');
 const sqlite3 = require('sqlite3').verbose();
 const service = require('../services/insumosService');
+const repo = require('../repositories/insumosRepository');
 
 function exec(db, sql) {
   return new Promise((resolve, reject) => db.exec(sql, error => (error ? reject(error) : resolve())));
 }
 
+async function validarChaveDePrecoNoMysql() {
+  const engineAnterior = process.env.ORCASMART_DB_ENGINE;
+  process.env.ORCASMART_DB_ENGINE = 'mysql';
+  const execucoes = [];
+  const fakeDb = {
+    get(sql, params, callback) {
+      const row = /AS\s+registro_key/i.test(sql)
+        ? { registro_key: 41, id_preco: 41 }
+        : { id_preco: 41 };
+      callback(null, row);
+    },
+    run(sql, params, callback) {
+      if (params.some(value => value === undefined)) {
+        callback.call({}, new Error('Bind parameters must not contain undefined'));
+        return;
+      }
+      execucoes.push({ sql, params });
+      callback.call({ changes: 1, lastID: 0 }, null);
+    },
+  };
+  try {
+    const id = await repo.savePrecoPrincipal(fakeDb, 9, {
+      id_data_base: null,
+      uf_referencia: null,
+      preco_desonerado: 54,
+      preco_nao_desonerado: 54,
+      preco_referencia: 54,
+      cbs_percentual: 0,
+      ibs_percentual: 0,
+      is_percentual: 0,
+      encargos_sociais_percentual: 0,
+    }, { tenant: true });
+    assert.strictEqual(id, 41);
+    assert.strictEqual(execucoes.length, 1);
+    assert.strictEqual(execucoes[0].params.at(-1), 41);
+  } finally {
+    if (engineAnterior === undefined) delete process.env.ORCASMART_DB_ENGINE;
+    else process.env.ORCASMART_DB_ENGINE = engineAnterior;
+  }
+}
+
 async function main() {
+  await validarChaveDePrecoNoMysql();
   const db = new sqlite3.Database(':memory:');
   try {
     await exec(db, `

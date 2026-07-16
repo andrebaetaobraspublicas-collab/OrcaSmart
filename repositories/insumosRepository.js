@@ -808,8 +808,12 @@ async function savePrecoPrincipal(db, idInsumo, data, options = {}) {
   const payload = pricePayload(data);
   if (payload.pref <= 0) return null;
   const table = options.tenant ? 'tenant_precos_insumos' : 'precos_insumos';
-  const keyColumn = options.tenant ? 'rowid' : 'id_preco';
-  const row = await one(db, `SELECT rowid, id_preco FROM ${table} WHERE id_insumo = ? ORDER BY ${keyColumn} DESC LIMIT 1`, [idInsumo]);
+  const keyColumn = options.tenant ? tenantSyntheticPk('tenant_precos_insumos') : 'id_preco';
+  const row = await one(db, `
+    SELECT ${keyColumn} AS registro_key, id_preco
+    FROM ${table}
+    WHERE id_insumo = ?
+    ORDER BY ${keyColumn} DESC LIMIT 1`, [idInsumo]);
   const params = [
     data.id_data_base || null,
     data.uf_referencia || null,
@@ -830,8 +834,8 @@ async function savePrecoPrincipal(db, idInsumo, data, options = {}) {
         preco_desonerado=?, preco_nao_desonerado=?, preco_referencia=?,
         cbs_percentual=?, ibs_percentual=?, is_percentual=?,
         iva_equivalente=?, preco_sem_tributos=?, encargos_sociais_percentual=?
-      WHERE ${keyColumn}=?`, [...params, options.tenant ? row.rowid : row.id_preco]);
-    return options.tenant ? row.rowid : row.id_preco;
+      WHERE ${keyColumn}=?`, [...params, row.registro_key]);
+    return row.registro_key;
   }
   const result = await run(db, `
     INSERT INTO ${table}
@@ -1057,4 +1061,5 @@ module.exports = {
   updatePreco,
   deletePreco,
   deleteBatch,
+  savePrecoPrincipal,
 };
