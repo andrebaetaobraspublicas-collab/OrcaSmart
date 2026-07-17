@@ -102,6 +102,11 @@ async function run() {
   const vme = engine.expectedMonetaryValue(analysis, services, events);
   assert.ok(vme.contingencia_total > 0, 'VME deve incluir riscos e eventos');
   approx(vme.taxa_contingencia, vme.contingencia_total / 1500 * 100, 1e-9, 'taxa VME');
+  const includedExpectedValues = vme.rows.filter(row => row.incluido).map(row => row.valor_esperado);
+  const expectedRms = Math.sqrt(includedExpectedValues.reduce((sum, value) => sum + value ** 2, 0) / includedExpectedValues.length);
+  approx(vme.contingencia_rms, expectedRms, 1e-9, 'contingencia RMS dos valores esperados');
+  approx(vme.taxa_rms, expectedRms / 1500 * 100, 1e-9, 'taxa RMS');
+  assert.strictEqual(vme.variaveis_rms, includedExpectedValues.length, 'RMS deve considerar somente variaveis incluidas');
 
   const tornado = engine.buildTornado(analysis, services, events);
   assert.strictEqual(tornado.rows.length, 2, 'tornado deve incluir servico selecionado e evento');

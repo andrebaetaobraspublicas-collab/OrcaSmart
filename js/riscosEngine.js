@@ -300,10 +300,17 @@
       });
     });
     const contingency = rows.reduce((sum, row) => sum + row.valor_esperado, 0);
+    const rmsRows = rows.filter(row => row.incluido);
+    const rmsContingency = rmsRows.length
+      ? Math.sqrt(rmsRows.reduce((sum, row) => sum + number(row.valor_esperado) ** 2, 0) / rmsRows.length)
+      : 0;
     return {
       base_calculo: base,
       contingencia_total: contingency,
       taxa_contingencia: base ? contingency / base * 100 : 0,
+      contingencia_rms: rmsContingency,
+      taxa_rms: base ? rmsContingency / base * 100 : 0,
+      variaveis_rms: rmsRows.length,
       rows,
     };
   }
