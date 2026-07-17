@@ -26,6 +26,11 @@ async function validarInsertCompativelComTenantMysql() {
 
 async function main() {
   await validarInsertCompativelComTenantMysql();
+  const frontendSource = fs.readFileSync(path.resolve(__dirname, '../js/eventograma.js'), 'utf8');
+  assert.ok(
+    frontendSource.includes("querySelectorAll('.evt-card[data-evid], .subevt-card[data-evid]')"),
+    'eventos principais e subeventos devem aceitar itens arrastados'
+  );
   const db = new sqlite3.Database(':memory:');
   try {
     await exec(db, `
@@ -89,6 +94,31 @@ async function main() {
     assert.ok(itens.every(item => item.id_evento_alocado));
     assert.ok(itens.every(item => item.numero_evento_alocado === '01'));
     assert.deepStrictEqual(detalhe.eventos[0].itens.slice(0, 2).map(item => item.valor), [220, 110]);
+
+    const eventoPai = detalhe.eventos[0];
+    const subevento = await service.createEvento(db, evg.id_eventograma, {
+      id_evento_pai: eventoPai.id_evento,
+      numero_evento: '01.01',
+      descricao: 'Mobilizacao e desmobilizacao',
+      grupo: 'Servicos preliminares',
+    });
+    await service.moveItensEvento(db, eventoPai.id_evento, {
+      id_evento_destino: subevento.id_evento,
+      ids: [2],
+    });
+    const detalheComSubevento = await service.getEventograma(db, evg.id_eventograma);
+    assert.deepStrictEqual(detalheComSubevento.eventos[0].itens.map(item => item.id_item), [3]);
+    assert.deepStrictEqual(detalheComSubevento.eventos[0].subeventos[0].itens.map(item => item.id_item), [2]);
+    assert.strictEqual(detalheComSubevento.eventos[0].valor_calculado, 330);
+    assert.strictEqual(detalheComSubevento.eventos[0].subeventos[0].valor_calculado, 220);
+
+    await service.moveItensEvento(db, subevento.id_evento, {
+      id_evento_destino: eventoPai.id_evento,
+      ids: [2],
+    });
+    const detalheRestaurado = await service.getEventograma(db, evg.id_eventograma);
+    assert.deepStrictEqual(detalheRestaurado.eventos[0].itens.map(item => item.id_item).sort(), [2, 3]);
+    assert.strictEqual(detalheRestaurado.eventos[0].subeventos[0].itens.length, 0);
 
     const budgetItems = detalhe.itens_orcamento.filter(item => item.tipo_linha === 'item').map(item => ({ ...item, valor: item.valor, secao: 'Servicos preliminares' }));
     const balanced = aiService.normalizePlan({

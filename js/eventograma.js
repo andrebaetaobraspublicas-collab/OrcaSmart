@@ -512,7 +512,10 @@ Router.register('eventograma', async () => {
           border-radius:var(--radius);margin-bottom:8px;overflow:hidden;
           transition:box-shadow .12s;
         }
-        .evt-card.drag-over { border-color:var(--c-primary);box-shadow:0 0 0 2px rgba(99,102,241,.25); }
+        .evt-card.drag-over, .subevt-card.drag-over {
+          border-color:var(--c-primary);box-shadow:0 0 0 2px rgba(99,102,241,.25);
+          background:#eff6ff;
+        }
         .evt-header {
           display:flex;align-items:center;gap:8px;padding:10px 12px;
           cursor:pointer;user-select:none;
@@ -660,7 +663,7 @@ Router.register('eventograma', async () => {
     }).join('');
 
     // Attach drag/drop
-    el.querySelectorAll('.evt-card[data-evid]').forEach(card => setupDropZone(card));
+    el.querySelectorAll('.evt-card[data-evid], .subevt-card[data-evid]').forEach(card => setupDropZone(card));
     el.querySelectorAll('.item-chip[draggable]').forEach(chip => {
       const evId = parseInt(chip.closest('[data-evid]').dataset.evid);
       setupDragItem(chip, evId);
@@ -908,7 +911,7 @@ Router.register('eventograma', async () => {
 
   function setupDropZone(card) {
     const evId = parseInt(card.dataset.evid);
-    card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+    card.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); card.classList.add('drag-over'); });
     card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) card.classList.remove('drag-over'); });
     card.addEventListener('drop', async e => {
       e.preventDefault(); e.stopPropagation();
