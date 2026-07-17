@@ -195,9 +195,8 @@ const RiscosContingencia = {
   },
 
   async selectClass(scope) {
-    const services = this.state.atual.servicos;
     try {
-      await Promise.all(services.map(item => API.riscosContingencia.updateServico(item.id_risco_servico, { ...item, selecionado: scope === 'ALL' || scope.includes(item.classificacao_abc) ? 1 : 0 })));
+      await API.riscosContingencia.selecionarEscopoServicos(this.state.idAnalise, scope);
       await this.loadAnalysis(this.state.idAnalise);
       Toast.success('Escopo da curva ABC atualizado.');
     } catch (error) { Toast.error(error.message); }
@@ -237,13 +236,54 @@ const RiscosContingencia = {
   },
 
   renderModeling() {
-    const services = this.state.atual.servicos.filter(item => Number(item.selecionado) === 1);
-    const rows = services.map(item => `<tr><td><span class="risk-badge ${String(item.classificacao_abc).toLowerCase()}">${this.esc(item.classificacao_abc)}</span></td><td class="risk-service-name">${this.esc(item.descricao)}<small>${this.esc(item.codigo)} · Base ${this.money(item.valor_base)}</small></td><td>${this.esc(this.riskTypeLabel(item.tipo_risco))}</td><td>${this.esc(item.distribuicao)}</td><td>${this.esc(item.responsavel)}</td><td>${this.num(item.minimo)} / ${this.num(item.mais_provavel)} / ${this.num(item.maximo)}%</td><td><span class="risk-badge">${Number(item.incluir_contingencia) ? 'Incluido' : 'Excluido'}</span></td><td><button class="risk-icon-btn" data-edit-service="${item.id_risco_servico}">Editar modelo</button></td></tr>`).join('');
+    const services = this.state.atual.servicos || [];
+    const selected = services.filter(item => Number(item.selecionado) === 1);
+    const coverage = this.coverage();
+    const rows = services.map(item => {
+      const isSelected = Number(item.selecionado) === 1;
+      const searchText = [item.classificacao_abc, item.codigo, item.descricao, item.fonte].filter(Boolean).join(' ').toLowerCase();
+      return `<tr data-model-service data-selected="${isSelected ? '1' : '0'}" data-abc="${this.esc(item.classificacao_abc)}" data-search="${this.esc(searchText)}" style="${isSelected ? '' : 'opacity:.68;background:#f8fafc'}">
+        <td><span class="risk-badge ${String(item.classificacao_abc).toLowerCase()}">${this.esc(item.classificacao_abc)}</span></td>
+        <td class="risk-service-name">${this.esc(item.descricao)}<small>${this.esc(item.codigo)} · Base ${this.money(item.valor_base)}</small></td>
+        <td>${this.esc(this.riskTypeLabel(item.tipo_risco))}</td><td>${this.esc(item.distribuicao)}</td><td>${this.esc(item.responsavel)}</td>
+        <td>${this.num(item.minimo)} / ${this.num(item.mais_provavel)} / ${this.num(item.maximo)}%</td>
+        <td><span class="risk-badge ${isSelected ? 'a' : ''}">${isSelected ? (Number(item.incluir_contingencia) ? 'Modelado' : 'Modelado, fora da contingência') : 'Não selecionado'}</span></td>
+        <td style="white-space:nowrap">${isSelected ? `<button class="risk-icon-btn" data-edit-service="${item.id_risco_servico}">Editar modelo</button> <button class="risk-icon-btn" data-toggle-model-service="${item.id_risco_servico}" data-include="0">Retirar</button>` : `<button class="risk-icon-btn" data-toggle-model-service="${item.id_risco_servico}" data-include="1">Incluir e modelar</button>`}</td>
+      </tr>`;
+    }).join('');
     this.panel('Modelagem dos Riscos', 'Modele a incerteza sobre custo unitário, quantidade, produtividade ou parcelas da composição.', `
       <div class="risk-alert info"><b>ℹ</b><span>Os intervalos qualitativos sao apenas sugestoes editaveis. Valores negativos representam oportunidades/reducoes; valores positivos, ameacas/acrescimos.</span></div>
-      <div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>ABC</th><th>Serviço</th><th>Variável</th><th>Distribuição</th><th>Responsável</th><th>Min / Prov. / Max</th><th>Status</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="risk-empty">Selecione serviços na etapa Curva ABC.</td></tr>'}</tbody></table></div>${this.footerActions('premissas','registro')}`);
+      <div class="risk-kpis" style="margin-bottom:10px"><div class="risk-kpi"><span class="label">Serviços da curva</span><strong>${services.length}</strong></div><div class="risk-kpi ${selected.length <= 1 && services.length > 1 ? 'highlight' : ''}"><span class="label">Selecionados para modelagem</span><strong>${selected.length}</strong></div><div class="risk-kpi"><span class="label">Cobertura financeira</span><strong>${this.pct(coverage.percent)}</strong></div></div>
+      ${selected.length <= 1 && services.length > 1 ? '<div class="risk-alert warning"><b>⚠</b><span>Apenas um serviço está selecionado. Os demais continuam visíveis abaixo e podem ser incluídos individualmente ou pelos atalhos de escopo.</span></div>' : ''}
+      <div class="risk-toolbar" style="margin-bottom:10px;gap:7px;flex-wrap:wrap">
+        <button class="btn btn-ghost" data-select-class="A">Modelar classe A</button><button class="btn btn-ghost" data-select-class="AB">Modelar A + B</button><button class="btn btn-ghost" data-select-class="ALL">Modelar orçamento completo</button>
+        <select class="form-control" id="riskModelFilter" style="max-width:190px"><option value="ALL">Exibir todos</option><option value="SELECTED">Somente selecionados</option><option value="NOT_SELECTED">Não selecionados</option><option value="A">Classe A</option><option value="B">Classe B</option><option value="C">Classe C</option></select>
+        <input class="form-control" id="riskModelSearch" type="search" autocomplete="off" placeholder="Buscar serviço ou código…" style="min-width:220px;flex:1">
+        <span id="riskModelVisible" class="text-xs text-3"></span>
+      </div>
+      <div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>ABC</th><th>Serviço</th><th>Variável</th><th>Distribuição</th><th>Responsável</th><th>Min / Prov. / Max</th><th>Status</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="risk-empty">A curva ABC não possui serviços válidos.</td></tr>'}</tbody></table></div>${this.footerActions('premissas','registro')}`);
     document.querySelectorAll('[data-edit-service]').forEach(button => button.addEventListener('click', () => this.openServiceModel(button.dataset.editService)));
+    document.querySelectorAll('[data-toggle-model-service]').forEach(button => button.addEventListener('click', () => this.toggleService(button.dataset.toggleModelService, button.dataset.include === '1')));
+    document.querySelectorAll('[data-select-class]').forEach(button => button.addEventListener('click', () => this.selectClass(button.dataset.selectClass)));
+    document.getElementById('riskModelFilter')?.addEventListener('change', () => this.filterModelingRows());
+    document.getElementById('riskModelSearch')?.addEventListener('input', () => this.filterModelingRows());
+    this.filterModelingRows();
     this.bindFooter();
+  },
+
+  filterModelingRows() {
+    const filter = document.getElementById('riskModelFilter')?.value || 'ALL';
+    const search = String(document.getElementById('riskModelSearch')?.value || '').trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll('[data-model-service]').forEach(row => {
+      const selected = row.dataset.selected === '1';
+      const matchesFilter = filter === 'ALL' || (filter === 'SELECTED' && selected) || (filter === 'NOT_SELECTED' && !selected) || row.dataset.abc === filter;
+      const matchesSearch = !search || String(row.dataset.search || '').includes(search);
+      row.style.display = matchesFilter && matchesSearch ? '' : 'none';
+      if (matchesFilter && matchesSearch) visible += 1;
+    });
+    const counter = document.getElementById('riskModelVisible');
+    if (counter) counter.textContent = `${visible} serviço(s) exibido(s)`;
   },
 
   riskTypeLabel(value) {

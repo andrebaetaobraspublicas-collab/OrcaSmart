@@ -236,6 +236,21 @@ async function updateService(db, id, data) {
   return result.changes ? getService(db, id) : null;
 }
 
+async function selectServicesByScope(db, idAnalysis, scope) {
+  const normalized = String(scope || '').toUpperCase();
+  const result = await run(db, `
+    UPDATE riscos_servicos
+    SET selecionado = CASE
+      WHEN ? = 'ALL' THEN 1
+      WHEN ? = 'AB' AND classificacao_abc IN ('A','B') THEN 1
+      WHEN ? = 'A' AND classificacao_abc = 'A' THEN 1
+      ELSE 0
+    END,
+    atualizado_em = CURRENT_TIMESTAMP
+    WHERE id_analise=?`, [normalized, normalized, normalized, idAnalysis]);
+  return { alterados: result.changes, servicos: await listServices(db, idAnalysis) };
+}
+
 async function createEvent(db, idAnalysis, data) {
   const result = await run(db, `
     INSERT INTO riscos_eventos
@@ -320,6 +335,7 @@ module.exports = {
   listServices,
   getService,
   updateService,
+  selectServicesByScope,
   listEvents,
   createEvent,
   getEvent,

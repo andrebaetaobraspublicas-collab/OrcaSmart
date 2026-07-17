@@ -178,6 +178,7 @@ const API = {
     update: (id, data) => API.put(`/riscos-contingencia/analises/${id}`, data),
     delete: id => API.delete(`/riscos-contingencia/analises/${id}`),
     updateServico: (id, data) => API.put(`/riscos-contingencia/servicos/${id}`, data),
+    selecionarEscopoServicos: (id, escopo) => API.post(`/riscos-contingencia/analises/${id}/servicos/selecionar-escopo`, { escopo }),
     createEvento: (id, data) => API.post(`/riscos-contingencia/analises/${id}/eventos`, data),
     updateEvento: (id, data) => API.put(`/riscos-contingencia/eventos/${id}`, data),
     deleteEvento: id => API.delete(`/riscos-contingencia/eventos/${id}`),

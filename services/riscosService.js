@@ -76,6 +76,19 @@ async function updateServiceRisk(db, id, data) {
   return repo.updateService(db, numericId, payload);
 }
 
+async function selectServiceScope(db, id, data) {
+  const numericId = parseId(id, 'Analise');
+  if (!(await repo.getAnalysisRow(db, numericId))) throw httpError(404, 'Analise de riscos nao encontrada.');
+  const scope = String(data?.escopo || '').toUpperCase();
+  if (!['A', 'AB', 'ALL'].includes(scope)) throw httpError(400, 'Escopo de servicos invalido.');
+  const result = await repo.selectServicesByScope(db, numericId, scope);
+  return {
+    mensagem: `Escopo atualizado para ${scope === 'ALL' ? 'orcamento completo' : scope === 'AB' ? 'classes A e B' : 'classe A'}.`,
+    alterados: result.alterados,
+    servicos: result.servicos,
+  };
+}
+
 function validateEvent(data) {
   requiredText(data.descricao, 'Descricao do risco');
   const probability = Number(data.probabilidade);
@@ -333,6 +346,7 @@ module.exports = {
   updateAnalysis,
   deleteAnalysis,
   updateServiceRisk,
+  selectServiceScope,
   createEvent,
   updateEvent,
   deleteEvent,

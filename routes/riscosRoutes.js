@@ -32,6 +32,10 @@ module.exports = function riscosRoutes(db, options = {}) {
     res.json(await service.updateServiceRisk(db, req.params.id, req.body || {}));
   }));
 
+  router.post('/analises/:id/servicos/selecionar-escopo', asyncHandler(async (req, res) => {
+    res.json(await service.selectServiceScope(db, req.params.id, req.body || {}));
+  }));
+
   router.post('/analises/:id/eventos', asyncHandler(async (req, res) => {
     res.status(201).json(await service.createEvent(db, req.params.id, req.body || {}));
   }));

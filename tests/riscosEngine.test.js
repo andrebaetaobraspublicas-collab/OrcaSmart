@@ -1,12 +1,34 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const fixture = require('./fixtures/orcamento-riscos-modelo.json');
 const engine = require('../js/riscosEngine');
+const repo = require('../repositories/riscosRepository');
 
 function approx(actual, expected, tolerance, message) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${message}: esperado ${expected}, obtido ${actual}`);
 }
 
-function run() {
+async function validarSelecaoEmLote() {
+  const calls = [];
+  const fakeDb = {
+    run(sql, params, callback) {
+      calls.push({ sql, params });
+      callback.call({ changes: 285, lastID: 0 }, null);
+    },
+    all(_sql, _params, callback) { callback(null, []); },
+  };
+  const result = await repo.selectServicesByScope(fakeDb, 9, 'ALL');
+  assert.strictEqual(calls.length, 1, 'selecao em massa deve usar uma unica atualizacao');
+  assert.deepStrictEqual(calls[0].params, ['ALL', 'ALL', 'ALL', 9]);
+  assert.strictEqual(result.alterados, 285);
+}
+
+async function run() {
+  await validarSelecaoEmLote();
+  const frontend = fs.readFileSync(path.resolve(__dirname, '../js/riscosContingencia.js'), 'utf8');
+  assert.ok(frontend.includes('data-model-service'), 'modelagem deve exibir todo o universo da curva ABC');
+  assert.ok(frontend.includes('selecionarEscopoServicos'), 'selecao de escopo deve usar operacao em lote');
   const parsed = engine.parseBudgetRows(fixture);
   assert.strictEqual(parsed.services.length, 3, 'parser deve identificar somente servicos');
   assert.strictEqual(parsed.ignored.length, 2, 'parser deve excluir grupo e subtotal');
@@ -88,4 +110,7 @@ function run() {
   console.log('riscosEngine.test.js: OK');
 }
 
-run();
+run().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
