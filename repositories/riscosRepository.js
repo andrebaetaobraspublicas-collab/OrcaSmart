@@ -238,16 +238,17 @@ async function updateService(db, id, data) {
 
 async function selectServicesByScope(db, idAnalysis, scope) {
   const normalized = String(scope || '').toUpperCase();
+  if (!['ALL', 'AB', 'A'].includes(normalized)) throw new Error('Escopo de servicos invalido.');
+  const selection = normalized === 'ALL'
+    ? '1'
+    : normalized === 'AB'
+      ? "CASE WHEN ASCII(UPPER(COALESCE(classificacao_abc,''))) IN (65,66) THEN 1 ELSE 0 END"
+      : "CASE WHEN ASCII(UPPER(COALESCE(classificacao_abc,''))) = 65 THEN 1 ELSE 0 END";
   const result = await run(db, `
     UPDATE riscos_servicos
-    SET selecionado = CASE
-      WHEN ? = 'ALL' THEN 1
-      WHEN ? = 'AB' AND classificacao_abc IN ('A','B') THEN 1
-      WHEN ? = 'A' AND classificacao_abc = 'A' THEN 1
-      ELSE 0
-    END,
-    atualizado_em = CURRENT_TIMESTAMP
-    WHERE id_analise=?`, [normalized, normalized, normalized, idAnalysis]);
+    SET selecionado = ${selection},
+        atualizado_em = CURRENT_TIMESTAMP
+    WHERE id_analise=?`, [idAnalysis]);
   return { alterados: result.changes, servicos: await listServices(db, idAnalysis) };
 }
 

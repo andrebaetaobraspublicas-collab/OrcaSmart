@@ -20,7 +20,8 @@ async function validarSelecaoEmLote() {
   };
   const result = await repo.selectServicesByScope(fakeDb, 9, 'ALL');
   assert.strictEqual(calls.length, 1, 'selecao em massa deve usar uma unica atualizacao');
-  assert.deepStrictEqual(calls[0].params, ['ALL', 'ALL', 'ALL', 9]);
+  assert.deepStrictEqual(calls[0].params, [9]);
+  assert.ok(!calls[0].sql.includes("? = 'ALL'"), 'escopo nao deve comparar parametro textual com literal SQL');
   assert.strictEqual(result.alterados, 285);
 }
 
@@ -85,6 +86,18 @@ async function run() {
   assert.deepStrictEqual(Array.from(sim1.values.slice(0, 20)), Array.from(sim2.values.slice(0, 20)), 'semente fixa deve reproduzir a simulacao');
   assert.ok(sim1.resumo.taxa_contingencia >= 0, 'taxa de contingencia nao pode ser negativa');
   assert.strictEqual(sim1.resumo.iteracoes, 2500, 'numero de iteracoes');
+
+  const serviceWithBdi = [{ ...services[0], valor_base: 1250, minimo: 0, mais_provavel: 10, maximo: 20 }];
+  const simWithBdi = engine.simulateMonteCarlo({ ...analysis, incluir_eventos: 0 }, serviceWithBdi, [], {});
+  assert.strictEqual(simWithBdi.resumo.orcamento_base, 1250, 'orcamento base deve preservar o valor do servico com BDI');
+  assert.ok(simWithBdi.resumo.contingencia_monetaria > 0, 'risco positivo deve gerar contingencia mesmo quando valor_base inclui BDI');
+  const noVariation = engine.simulateMonteCarlo(
+    { ...analysis, incluir_eventos: 0 },
+    [{ ...serviceWithBdi[0], minimo: 0, mais_provavel: 0, maximo: 0 }],
+    [],
+    {},
+  );
+  approx(noVariation.resumo.valor_percentil_alvo, 1250, 1e-9, 'variacao zero deve reproduzir valor_base com BDI');
 
   const vme = engine.expectedMonetaryValue(analysis, services, events);
   assert.ok(vme.contingencia_total > 0, 'VME deve incluir riscos e eventos');

@@ -357,28 +357,32 @@
       try { parts = JSON.parse(parts); } catch (_) { parts = []; }
     }
     if (!Array.isArray(parts) || !parts.length) return null;
-    return parts.reduce((sum, part) => {
+    return parts.reduce((result, part) => {
       const base = number(part.valor_base ?? part.valor ?? part.parcela);
       const variation = sampleDistribution(part, rng, false);
-      return sum + base * (1 + variation / 100);
-    }, 0);
+      result.base += base;
+      result.sampled += base * (1 + variation / 100);
+      return result;
+    }, { base: 0, sampled: 0 });
   }
 
   function simulateIteration(context, rng) {
     let total = context.fixedBase;
     for (const service of context.simulatedServices) {
-      let quantity = number(service.quantidade);
-      let unitCost = number(service.custo_unitario);
+      const directBase = number(service.quantidade) * number(service.custo_unitario);
+      let serviceValue = number(service.valor_base, directBase);
       const sampled = sampleDistribution(service, rng, false);
       const occurs = sampleBernoulli(number(service.probabilidade, 100), rng);
       const variation = occurs ? sampled / 100 : 0;
-      const compositionCost = sampleComposition(service, rng);
-      if (compositionCost !== null) unitCost = compositionCost;
-      else if (String(service.tipo_risco) !== 'variacao_quantitativo') unitCost *= (1 + variation);
-      if (String(service.tipo_risco) === 'variacao_quantitativo' && context.includeQuantities && quantityRiskAllowed(context.analysis, service)) {
-        quantity *= (1 + variation);
+      const composition = occurs ? sampleComposition(service, rng) : null;
+      if (composition !== null && composition.base > 0) {
+        serviceValue *= composition.sampled / composition.base;
+      } else if (String(service.tipo_risco) !== 'variacao_quantitativo') {
+        serviceValue *= (1 + variation);
+      } else if (context.includeQuantities && quantityRiskAllowed(context.analysis, service)) {
+        serviceValue *= (1 + variation);
       }
-      total += Math.max(0, quantity) * Math.max(0, unitCost);
+      total += Math.max(0, serviceValue);
     }
     if (context.includeEvents) {
       for (const event of context.events) {
