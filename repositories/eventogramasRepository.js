@@ -141,7 +141,8 @@ async function getEventosTree(db, idEventograma) {
 
   const byId = new Map();
   for (const ev of eventos) {
-    byId.set(ev.id_evento, { ...ev, itens: byEvent.get(ev.id_evento) || [], subeventos: [] });
+    const eventItems = byEvent.get(ev.id_evento) || [];
+    byId.set(ev.id_evento, { ...ev, itens: eventItems, qtd_itens: eventItems.length, subeventos: [] });
   }
 
   const roots = [];
@@ -150,6 +151,38 @@ async function getEventosTree(db, idEventograma) {
     else roots.push(ev);
   });
   return roots;
+}
+
+async function recalcularValoresEventograma(db, idEventograma) {
+  if (!idEventograma) return;
+  const orc = await one(db, `SELECT o.bdi_percentual
+    FROM eventogramas eg JOIN orcamentos o ON o.id_orcamento=eg.id_orcamento
+    WHERE eg.id_eventograma=?`, [idEventograma]);
+  const events = await all(db, 'SELECT id_evento,id_evento_pai FROM ev_eventos WHERE id_eventograma=?', [idEventograma]);
+  const rows = await all(db, `
+    SELECT ei.id_evento,s.*
+    FROM ev_evento_itens ei
+    JOIN ev_eventos ev ON ev.id_evento=ei.id_evento
+    JOIN orcamento_sintetico s ON s.id_item=ei.id_item
+    WHERE ev.id_eventograma=?`, [idEventograma]);
+  const totals = new Map(events.map(event => [event.id_evento, 0]));
+  rows.forEach(row => totals.set(row.id_evento, (totals.get(row.id_evento) || 0) + valorItem(row, toNum(orc?.bdi_percentual))));
+  const children = new Map();
+  events.forEach((event) => {
+    if (!event.id_evento_pai) return;
+    if (!children.has(event.id_evento_pai)) children.set(event.id_evento_pai, []);
+    children.get(event.id_evento_pai).push(event.id_evento);
+  });
+  const aggregate = (id, visiting = new Set()) => {
+    if (visiting.has(id)) return totals.get(id) || 0;
+    visiting.add(id);
+    const value = (totals.get(id) || 0) + (children.get(id) || []).reduce((sum, child) => sum + aggregate(child, visiting), 0);
+    visiting.delete(id);
+    totals.set(id, Number(value.toFixed(2)));
+    return value;
+  };
+  events.filter(event => !event.id_evento_pai).forEach(event => aggregate(event.id_evento));
+  for (const event of events) await run(db, 'UPDATE ev_eventos SET valor_calculado=? WHERE id_evento=? AND id_eventograma=?', [totals.get(event.id_evento) || 0, event.id_evento, idEventograma]);
 }
 
 async function listEventogramas(db, filters = {}) {
@@ -368,8 +401,13 @@ async function updateEvento(db, idEventograma, idEvento, data = {}) {
   return one(db, 'SELECT * FROM ev_eventos WHERE id_evento=?', [idEvento]);
 }
 
+async function getEventoRaw(db, idEventograma, idEvento) {
+  return one(db, 'SELECT * FROM ev_eventos WHERE id_evento=? AND id_eventograma=?', [idEvento, idEventograma]);
+}
+
 async function deleteEvento(db, idEventograma, idEvento) {
   await run(db, 'DELETE FROM ev_eventos WHERE id_evento=? AND id_eventograma=?', [idEvento, idEventograma]);
+  await recalcularValoresEventograma(db, idEventograma);
   return { status: 'ok' };
 }
 
@@ -377,11 +415,15 @@ async function addItensEvento(db, idEvento, ids = []) {
   for (const idItem of ids) {
     await run(db, 'INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES (?,?)', [idEvento, idItem]);
   }
+  const event = await one(db, 'SELECT id_eventograma FROM ev_eventos WHERE id_evento=?', [idEvento]);
+  await recalcularValoresEventograma(db, event?.id_eventograma);
   return { status: 'ok', inseridos: ids.length };
 }
 
 async function removeItemEvento(db, idEvento, idItem) {
   await run(db, 'DELETE FROM ev_evento_itens WHERE id_evento=? AND id_item=?', [idEvento, idItem]);
+  const event = await one(db, 'SELECT id_eventograma FROM ev_eventos WHERE id_evento=?', [idEvento]);
+  await recalcularValoresEventograma(db, event?.id_eventograma);
   return { status: 'ok' };
 }
 
@@ -390,6 +432,8 @@ async function moveItensEvento(db, idEventoOrigem, idEventoDestino, ids = []) {
     await run(db, 'DELETE FROM ev_evento_itens WHERE id_evento=? AND id_item=?', [idEventoOrigem, idItem]);
     await run(db, 'INSERT OR IGNORE INTO ev_evento_itens (id_evento,id_item) VALUES (?,?)', [idEventoDestino, idItem]);
   }
+  const event = await one(db, 'SELECT id_eventograma FROM ev_eventos WHERE id_evento=?', [idEventoDestino]);
+  await recalcularValoresEventograma(db, event?.id_eventograma);
   return { status: 'ok' };
 }
 
@@ -412,6 +456,7 @@ module.exports = {
   validarEventograma,
   createEvento,
   updateEvento,
+  getEventoRaw,
   deleteEvento,
   addItensEvento,
   removeItemEvento,
@@ -419,4 +464,5 @@ module.exports = {
   reordenarEventos,
   getEventogramaRaw,
   insertEventoItens,
+  recalcularValoresEventograma,
 };

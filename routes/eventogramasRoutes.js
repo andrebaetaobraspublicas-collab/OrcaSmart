@@ -17,12 +17,40 @@ module.exports = function eventogramasRoutes(db) {
     res.status(201).json(await withWriteConnection(writeDb => service.createEventograma(writeDb, req.body || {})));
   }));
 
+  router.get('/ia/config', asyncHandler(async (req, res) => {
+    res.json(service.configIA());
+  }));
+
   router.get('/:id', asyncHandler(async (req, res) => {
     res.json(await service.getEventograma(db, req.params.id));
   }));
 
   router.post('/:id/gerar', asyncHandler(async (req, res) => {
     res.json(await withWriteConnection(writeDb => service.gerar(writeDb, req.params.id, req.body || {})));
+  }));
+
+  router.post('/:id/ia/planejar', express.raw({ type: () => true, limit: '60mb' }), asyncHandler(async (req, res) => {
+    res.json(await service.planejarIA(db, req.params.id, req.body, req.headers['content-type']));
+  }));
+
+  router.post('/:id/ia/planejar-job', express.raw({ type: () => true, limit: '60mb' }), asyncHandler(async (req, res) => {
+    res.status(202).json(service.iniciarPlanejamentoIA(db, req.params.id, req.body, req.headers['content-type']));
+  }));
+
+  router.get('/:id/ia/jobs/:jobId', asyncHandler(async (req, res) => {
+    res.json(await service.consultarPlanejamentoIA(db, req.params.id, req.params.jobId));
+  }));
+
+  router.post('/:id/ia/aplicar', asyncHandler(async (req, res) => {
+    res.json(await withWriteConnection(writeDb => service.aplicarPlanoIA(writeDb, req.params.id, req.body || {})));
+  }));
+
+  router.post('/:id/ia/refinar', asyncHandler(async (req, res) => {
+    res.json(await withWriteConnection(writeDb => service.refinarIA(writeDb, req.params.id, req.body || {})));
+  }));
+
+  router.post('/:id/ia/feedback', asyncHandler(async (req, res) => {
+    res.json(await withWriteConnection(writeDb => service.registrarFeedbackIA(writeDb, req.params.id, req.body || {})));
   }));
 
   router.get('/:id/validar', asyncHandler(async (req, res) => {

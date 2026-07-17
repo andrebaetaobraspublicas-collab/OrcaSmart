@@ -14,7 +14,20 @@ Router.register('eventograma', async () => {
     expandidos:  new Set(),
     eventoEdit:  null,     // evento sendo editado no modal
     salvando:    false,
+    aiPlanning:  null,
+    aiConfig:    null,
+    aiBusy:      false,
   };
+
+  if (window._evgAiProgressHandler) window.removeEventListener('eventograma-ai-progress', window._evgAiProgressHandler);
+  window._evgAiProgressHandler = (event) => {
+    const stage = event.detail?.etapa || '';
+    if (stage && stage !== state.aiStage && event.detail?.status === 'processando') {
+      state.aiStage = stage;
+      Toast.info(`${stage} — ${Number(event.detail.progresso || 0)}%`);
+    }
+  };
+  window.addEventListener('eventograma-ai-progress', window._evgAiProgressHandler);
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   renderList();
@@ -94,9 +107,10 @@ Router.register('eventograma', async () => {
   async function abrirModalNovo() {
     let orcs = [];
     try { orcs = await API.orcamentos.list({}); } catch(e) {}
+    try { state.aiConfig = await API.eventogramas.iaConfig(); } catch(e) { state.aiConfig = null; }
     Modal.open({
       title: 'Novo Eventograma',
-      size: 'modal-md',
+      size: 'modal-lg',
       body: `
         <div style="display:flex;flex-direction:column;gap:14px">
           <div>
@@ -115,10 +129,56 @@ Router.register('eventograma', async () => {
           <div>
             <label class="form-label">Modo de Geração</label>
             <select class="form-control" id="ev_modo">
-              <option value="automatico">🤖 Automático — agrupa serviços por etapa construtiva</option>
+              <option value="automatico">✦ Automático inteligente — IA analisa engenharia, documentos e orçamento</option>
               <option value="semiautomatico">✏️ Semiautomático — sugestão ajustável</option>
               <option value="manual">🖊 Manual — criação livre dos eventos</option>
             </select>
+          </div>
+          <div id="ev_ia_campos" style="border:1px solid #bfdbfe;background:linear-gradient(135deg,#eff6ff,#f8fafc);border-radius:12px;padding:14px">
+            <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+              <div style="width:32px;height:32px;border-radius:9px;background:#1d4ed8;color:white;display:flex;align-items:center;justify-content:center;font-size:17px">✦</div>
+              <div><div style="font-weight:700;color:#12366a">Engenheiro de Planejamento IA</div><div style="font-size:.74rem;color:#58708f">Os anexos são opcionais e não ficam armazenados.</div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div>
+                <label class="form-label">Regime de contratação</label>
+                <select class="form-control" id="ev_regime">
+                  <option value="empreitada_por_preco_unitario">Empreitada por preço unitário</option>
+                  <option value="empreitada_por_preco_global">Empreitada por preço global</option>
+                  <option value="contratacao_integrada">Contratação integrada</option>
+                  <option value="contratacao_semi_integrada">Contratação semi-integrada</option>
+                  <option value="sicro">Obra rodoviária / SICRO</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Objetivo inicial</label>
+                <select class="form-control" id="ev_objetivo">
+                  <option value="equilibrado">Modelo equilibrado</option>
+                  <option value="poucos_eventos">Poucos eventos</option>
+                  <option value="maior_controle">Maior controle</option>
+                  <option value="fluxo_caixa">Maior fluxo de caixa</option>
+                  <option value="menor_risco">Menor risco para a Administração</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <label class="form-label">Sua API key da Anthropic (opcional)</label>
+              <input class="form-control" id="ev_api_key" type="password" autocomplete="off" placeholder="sk-ant-...">
+              <div style="font-size:.72rem;color:#58708f;line-height:1.45;margin-top:5px">
+                ${state.aiConfig?.servidor_configurado ? 'A chave segura do servidor está disponível; informe a sua apenas se preferir usar sua própria conta.' : 'A chave do servidor não está disponível; informe temporariamente a sua para esta análise.'}
+                Crie ou consulte uma chave no <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:#1d4ed8">Console da Anthropic</a>. A chave permanece somente nesta requisição e nunca é gravada.
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+              ${_aiFileInput('ev_projeto', 'projeto', 'Projeto em PDF ou imagens', '.pdf,.png,.jpg,.jpeg,.webp')}
+              ${_aiFileInput('ev_memorial', 'memorial', 'Memorial descritivo', '.pdf,.docx,.txt,.md')}
+              ${_aiFileInput('ev_cronograma', 'cronograma', 'Cronograma físico-financeiro', '.pdf,.xlsx,.xlsm,.csv')}
+              ${_aiFileInput('ev_outros', 'outros', 'Outros documentos', '.pdf,.docx,.xlsx,.xlsm,.csv,.txt,.json,.png,.jpg,.jpeg,.webp', true)}
+            </div>
+            <div style="margin-top:12px">
+              <label class="form-label">Orientações específicas para a IA</label>
+              <textarea class="form-control" id="ev_instrucoes" rows="2" placeholder="Ex.: separar instalações elétricas; considerar execução por blocos; limitar eventos muito grandes..."></textarea>
+            </div>
           </div>
           <div>
             <label class="form-label">Observações</label>
@@ -129,22 +189,65 @@ Router.register('eventograma', async () => {
         <button class="btn btn-secondary" onclick="Modal.close()">Cancelar</button>
         <button class="btn btn-primary" id="btnCriarEvg">Criar Eventograma</button>`
     });
+    const toggleAiFields = () => {
+      document.getElementById('ev_ia_campos').style.display = document.getElementById('ev_modo').value === 'automatico' ? 'block' : 'none';
+    };
+    document.getElementById('ev_modo').addEventListener('change', toggleAiFields);
+    toggleAiFields();
     document.getElementById('btnCriarEvg').addEventListener('click', async () => {
       const id_orc = document.getElementById('ev_id_orc').value;
       const nome   = document.getElementById('ev_nome').value.trim();
       const modo   = document.getElementById('ev_modo').value;
       if (!id_orc || !nome) { Toast.warning('Preencha o orçamento e o nome.'); return; }
       try {
+        const formularioIA = modo === 'automatico' ? coletarFormularioIA() : null;
         const evg = await API.eventogramas.create({ id_orcamento: id_orc, nome, modo_geracao: modo,
           observacoes: document.getElementById('ev_obs').value.trim() });
         Modal.close();
-        if (modo !== 'manual') {
+        if (modo === 'automatico') {
+          await executarPlanejamentoIA(evg.id_eventograma, formularioIA);
+        } else if (modo === 'semiautomatico') {
           Toast.info('Gerando eventos automaticamente…');
           await API.eventogramas.gerar(evg.id_eventograma, { modo, limpar_existentes: true });
         }
         abrirEditor(evg.id_eventograma);
       } catch(e) { Toast.error('Erro: ' + e.message); }
     });
+  }
+
+  function _aiFileInput(id, field, label, accept, multiple = false) {
+    return `<label style="display:block;border:1px dashed #93b4df;border-radius:8px;padding:9px 10px;background:white;cursor:pointer">
+      <span style="display:block;font-size:.75rem;font-weight:650;color:#284d7d;margin-bottom:5px">${label}</span>
+      <input id="${id}" data-field="${field}" type="file" accept="${accept}" ${multiple ? 'multiple' : ''} style="font-size:.72rem;max-width:100%">
+    </label>`;
+  }
+
+  function coletarFormularioIA() {
+    const form = new FormData();
+    form.append('anthropic_api_key', document.getElementById('ev_api_key')?.value.trim() || '');
+    form.append('regime_contratacao', document.getElementById('ev_regime')?.value || 'empreitada_por_preco_unitario');
+    form.append('objetivo', document.getElementById('ev_objetivo')?.value || 'equilibrado');
+    form.append('instrucoes', document.getElementById('ev_instrucoes')?.value.trim() || '');
+    ['ev_projeto','ev_memorial','ev_cronograma','ev_outros'].forEach((id) => {
+      const input = document.getElementById(id);
+      [...(input?.files || [])].forEach(file => form.append(input.dataset.field, file));
+    });
+    return form;
+  }
+
+  async function executarPlanejamentoIA(idEventograma, formData) {
+    Toast.info('A IA está analisando orçamento, composições, documentos e sequência executiva…');
+    const planning = await API.eventogramas.planejarIA(idEventograma, formData);
+    const objective = formData.get('objetivo') || 'equilibrado';
+    const desiredCode = { poucos_eventos:'A', equilibrado:'B', maior_controle:'C', fluxo_caixa:'D', menor_risco:'E' }[objective] || 'B';
+    const selected = planning.alternativas.find(item => item.codigo === desiredCode) || planning.alternativas.find(item => item.codigo === 'B') || planning.alternativas[0];
+    await API.eventogramas.aplicarPlanoIA(idEventograma, {
+      plano: selected.plano, codigo: selected.codigo, model: planning.model,
+      resumo_engenharia: planning.resumo_engenharia, premissas: planning.premissas,
+      alertas_documentais: planning.alertas_documentais, documentos: planning.documentos,
+    });
+    state.aiPlanning = planning;
+    Toast.success(`Eventograma inteligente criado — Modelo ${selected.codigo}: ${selected.nome}.`);
   }
 
   window._evgAbrir = (id) => abrirEditor(id);
@@ -188,6 +291,8 @@ Router.register('eventograma', async () => {
     try { state.validacao = await API.eventogramas.validar(state.evgId); }
     catch(e) { state.validacao = null; }
     renderPainelResumo();
+    renderPainelIA();
+    renderIndicadoresIA();
   }
 
   // ─── Shell do editor ──────────────────────────────────────────────────────
@@ -195,17 +300,18 @@ Router.register('eventograma', async () => {
     const evg = state.evgData;
     if (!evg) return;
     const vt  = evg.valor_total || 0;
+    const isIA = evg.modo_geracao === 'automatico_ia';
 
     document.getElementById('pageContent').innerHTML = `
       <!-- Topbar -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" id="btnVoltarLista">← Voltar</button>
         <div style="flex:1;min-width:0">
-          <h2 style="margin:0;font-size:1rem;font-weight:700">${Utils.esc(evg.nome)}</h2>
+          <h2 style="margin:0;font-size:1rem;font-weight:700">${Utils.esc(evg.nome)} ${isIA ? '<span style="font-size:.68rem;background:#dbeafe;color:#1d4ed8;border-radius:99px;padding:3px 8px;margin-left:6px">✦ Planejado com IA</span>' : ''}</h2>
           <div style="font-size:.77rem;color:var(--c-text-2)">${Utils.esc(evg.nome_obra)} · ${Utils.esc(evg.nome_orcamento)} · BDI ${Number(evg.bdi_percentual||0).toFixed(2)}% · Total: ${Utils.moeda(vt)}</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" id="btnReGerar" title="Regerar automaticamente">🔄 Regerar</button>
+          <button class="btn btn-secondary btn-sm" id="btnReGerar" title="${isIA ? 'Executar nova análise inteligente' : 'Regerar automaticamente'}">${isIA ? '✦ Nova análise IA' : '🔄 Regerar'}</button>
           <button class="btn btn-secondary btn-sm" id="btnNovoEvento">+ Evento</button>
           <div style="position:relative">
             <button class="btn btn-secondary btn-sm" id="btnExportar">⬇ Exportar ▾</button>
@@ -219,7 +325,7 @@ Router.register('eventograma', async () => {
       </div>
 
       <!-- Layout 3 colunas -->
-      <div style="display:grid;grid-template-columns:280px 1fr 260px;gap:12px;align-items:start">
+      <div class="evg-workspace" style="display:grid;grid-template-columns:280px minmax(420px,1fr) 300px;gap:12px;align-items:start">
 
         <!-- Col 1: Itens não alocados -->
         <div>
@@ -249,10 +355,12 @@ Router.register('eventograma', async () => {
 
         <!-- Col 3: Resumo -->
         <div>
+          ${isIA ? '<div id="painelIA"></div>' : ''}
           <div id="painelResumo"></div>
         </div>
 
       </div>
+      ${isIA ? '<div id="painelIndicadoresIA" style="margin-top:12px"></div>' : ''}
 
       <style>
         .evt-card {
@@ -306,10 +414,17 @@ Router.register('eventograma', async () => {
         }
         .alerta-error   { background:#fef2f2;color:#991b1b; }
         .alerta-warning { background:#fef9c3;color:#854d0e; }
+        .ai-kpi { background:white;border:1px solid var(--c-border);border-radius:9px;padding:10px 12px;min-width:120px; }
+        .ai-kpi-label { font-size:.64rem;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.45px; }
+        .ai-kpi-value { font-size:1rem;font-weight:750;color:#12366a;margin-top:3px; }
+        @media(max-width:1180px){.evg-workspace{grid-template-columns:240px 1fr!important}.evg-workspace>div:last-child{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+        @media(max-width:820px){.evg-workspace{grid-template-columns:1fr!important}.evg-workspace>div:last-child{display:block}}
       </style>`;
 
     renderPainelItens();
     renderPainelEventos();
+    renderPainelIA();
+    renderIndicadoresIA();
     attachEditorEvents();
   }
 
@@ -452,6 +567,11 @@ Router.register('eventograma', async () => {
         <span style="color:var(--c-text-3);font-size:1rem">${aberto ? '▲' : '▼'}</span>
       </div>
       ${aberto ? `<div class="evt-body">
+        ${ev.ai_metadata ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;padding:8px 10px;margin-bottom:8px;font-size:.72rem;line-height:1.45;color:#294c78">
+          <div><b>Justificativa da IA:</b> ${Utils.esc(ev.ai_metadata.justificativa || 'Agrupamento definido pela sequência executiva e pela possibilidade de medição independente.')}</div>
+          ${(ev.ai_metadata.dependencias||[]).length ? `<div style="margin-top:3px"><b>Dependências:</b> ${Utils.esc(ev.ai_metadata.dependencias.join(', '))}</div>` : ''}
+          ${(ev.ai_metadata.riscos||[]).length ? `<div style="margin-top:3px;color:#92400e"><b>Riscos:</b> ${Utils.esc(ev.ai_metadata.riscos.join('; '))}</div>` : ''}
+        </div>` : ''}
         <div class="drop-zone" data-dropevid="${ev.id_evento}" id="dz_${ev.id_evento}">
           ${renderItensEvento(ev)}
         </div>
@@ -474,6 +594,94 @@ Router.register('eventograma', async () => {
           style="background:none;border:none;cursor:pointer;color:var(--c-danger);opacity:.5;padding:0;font-size:12px;flex-shrink:0">✕</button>
       </div>`).join('');
   }
+
+  function renderPainelIA() {
+    const el = document.getElementById('painelIA');
+    if (!el || !state.evgData) return;
+    const meta = state.evgData.ai_metadata || {};
+    const alternatives = state.aiPlanning?.alternativas || [];
+    const alerts = [...(meta.alertas_documentais || []), ...(state.aiPlanning?.alertas_documentais || [])];
+    el.innerHTML = `
+      <div class="section-card" style="padding:0;margin-bottom:10px;overflow:hidden;border-color:#bfdbfe">
+        <div style="padding:12px 14px;background:linear-gradient(135deg,#0f2d57,#185ea8);color:white">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">✦</span><div><div style="font-weight:750;font-size:.88rem">Assistente de Planejamento</div><div style="font-size:.68rem;color:#c9ddf7">${Utils.esc(meta.modelo || state.aiPlanning?.model || 'Anthropic Claude')}</div></div></div>
+        </div>
+        <div style="padding:12px 14px">
+          <div style="font-size:.76rem;line-height:1.5;color:var(--c-text-2);margin-bottom:10px">${Utils.esc(meta.resumo_engenharia || state.aiPlanning?.resumo_engenharia || 'Use o assistente para revisar agrupamentos, dependências e critérios de medição.')}</div>
+          ${alternatives.length ? `<div style="font-size:.68rem;font-weight:700;color:var(--c-text-2);text-transform:uppercase;margin-bottom:6px">Alternativas disponíveis</div>
+            <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px">${alternatives.map(alt => `
+              <button onclick="window._evgAplicarAlternativaIA('${alt.codigo}')" style="text-align:left;border:1px solid ${meta.alternativa===alt.codigo?'#2563eb':'#dbe5f1'};background:${meta.alternativa===alt.codigo?'#eff6ff':'white'};border-radius:7px;padding:7px 8px;cursor:pointer;color:#17365f">
+                <span style="font-weight:750">${alt.codigo}</span> · ${Utils.esc(alt.nome)} <span style="float:right;font-size:.68rem;color:#64748b">${alt.quantidade_eventos} eventos</span>
+              </button>`).join('')}</div>` : ''}
+          <label class="form-label" style="font-size:.72rem">Peça uma alteração</label>
+          <textarea class="form-control" id="aiInstrucao" rows="3" style="font-size:.76rem" placeholder="Ex.: divida o evento de instalações; agrupe acabamentos; reduza o número de medições..."></textarea>
+          <input class="form-control" id="aiRefineKey" type="password" autocomplete="off" style="font-size:.72rem;margin-top:6px" placeholder="API key própria (opcional)">
+          <button class="btn btn-primary btn-sm" id="btnRefinarIA" style="width:100%;margin-top:7px">✦ Analisar e aplicar alteração</button>
+          ${alerts.length ? `<div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:9px"><div style="font-size:.68rem;font-weight:700;color:#92400e;margin-bottom:4px">ALERTAS DOCUMENTAIS</div>${alerts.slice(0,4).map(alert => `<div style="font-size:.7rem;color:#854d0e;margin-bottom:3px">• ${Utils.esc(alert)}</div>`).join('')}</div>` : ''}
+          <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e2e8f0;margin-top:10px;padding-top:8px;font-size:.68rem;color:#64748b">
+            <span>Esta sugestão foi útil?</span><span><button onclick="window._evgFeedbackIA(true)" class="btn-icon-sm" title="Útil">👍</button><button onclick="window._evgFeedbackIA(false)" class="btn-icon-sm" title="Não útil">👎</button></span>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('btnRefinarIA')?.addEventListener('click', refinarComIA);
+  }
+
+  function renderIndicadoresIA() {
+    const el = document.getElementById('painelIndicadoresIA');
+    if (!el) return;
+    const ind = state.validacao?.indicadores;
+    if (!ind) { el.innerHTML = ''; return; }
+    const curve = ind.curva_s || [];
+    const maxValue = Math.max(1, ...(ind.histograma || []).map(point => Number(point.valor || 0)));
+    el.innerHTML = `
+      <div class="section-card" style="padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px"><div><div style="font-weight:750;font-size:.88rem">Diagnóstico do Eventograma</div><div style="font-size:.7rem;color:var(--c-text-2)">Indicadores calculados sobre eventos, rastreabilidade financeira e critérios de medição</div></div><div style="width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${ind.score_qualidade>=80?'#dcfce7':ind.score_qualidade>=60?'#fef3c7':'#fee2e2'};color:${ind.score_qualidade>=80?'#166534':ind.score_qualidade>=60?'#92400e':'#991b1b'};font-weight:800;font-size:1.05rem" title="Score de qualidade">${ind.score_qualidade}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          ${_aiKpi('Eventos', ind.numero_eventos)}${_aiKpi('Valor médio', Utils.moeda(ind.valor_medio))}${_aiKpi('Desvio padrão', Utils.moeda(ind.desvio_padrao))}
+          ${_aiKpi('Equilíbrio', `${Number(ind.indice_equilibrio).toFixed(0)}%`)}${_aiKpi('Risco', `${Number(ind.indice_risco).toFixed(0)}%`)}${_aiKpi('Complexidade', `${Number(ind.indice_complexidade).toFixed(0)}%`)}
+          ${_aiKpi('Rastreabilidade', `${Number(ind.indice_rastreabilidade).toFixed(0)}%`)}${_aiKpi('Auditabilidade', `${Number(ind.indice_auditabilidade).toFixed(0)}%`)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div><div style="font-size:.68rem;font-weight:700;color:var(--c-text-2);margin-bottom:6px">CURVA S — PERCENTUAL ACUMULADO</div><div style="height:105px;display:flex;align-items:flex-end;gap:3px;border-left:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;padding:5px 4px">${curve.map(point => `<div title="Evento ${point.evento}: ${point.percentual_acumulado}%" style="flex:1;min-width:4px;height:${Math.max(2,point.percentual_acumulado)}%;background:linear-gradient(#60a5fa,#1d4ed8);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
+          <div><div style="font-size:.68rem;font-weight:700;color:var(--c-text-2);margin-bottom:6px">FLUXO FINANCEIRO POR EVENTO</div><div style="height:105px;display:flex;align-items:flex-end;gap:3px;border-left:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;padding:5px 4px">${(ind.histograma||[]).map(point => `<div title="Evento ${point.evento}: ${Utils.moeda(point.valor)}" style="flex:1;min-width:4px;height:${Math.max(2,Number(point.valor||0)/maxValue*100)}%;background:linear-gradient(#34d399,#059669);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
+        </div>
+      </div>`;
+  }
+
+  function _aiKpi(label, value) {
+    return `<div class="ai-kpi"><div class="ai-kpi-label">${label}</div><div class="ai-kpi-value">${value}</div></div>`;
+  }
+
+  async function refinarComIA() {
+    const instruction = document.getElementById('aiInstrucao')?.value.trim();
+    if (!instruction) { Toast.warning('Descreva a alteração que a IA deve realizar.'); return; }
+    if (!await Confirm.ask('A IA revisará o eventograma completo e substituirá a versão atual pela proposta refinada. Continuar?', 'Refinar com IA')) return;
+    const button = document.getElementById('btnRefinarIA');
+    button.disabled = true; button.textContent = 'Analisando engenharia e dependências…';
+    try {
+      const result = await API.eventogramas.refinarIA(state.evgId, {
+        instrucao: instruction, anthropic_api_key: document.getElementById('aiRefineKey')?.value.trim() || '', aplicar: true,
+      });
+      await recarregarDados(); renderEditor(); await revalidar();
+      Toast.success(result.mensagem || 'Eventograma refinado pela IA.');
+    } catch(error) { Toast.error(error.message); button.disabled = false; button.textContent = '✦ Analisar e aplicar alteração'; }
+  }
+
+  window._evgAplicarAlternativaIA = async (codigo) => {
+    const alternative = state.aiPlanning?.alternativas?.find(item => item.codigo === codigo);
+    if (!alternative) { Toast.warning('As alternativas completas ficam disponíveis durante a sessão de análise. Execute “Nova análise IA” para recriá-las.'); return; }
+    if (!await Confirm.ask(`Aplicar o Modelo ${codigo} — ${alternative.nome}? A estrutura atual será substituída.`, 'Aplicar alternativa')) return;
+    try {
+      const planning = state.aiPlanning;
+      await API.eventogramas.aplicarPlanoIA(state.evgId, { plano: alternative.plano, codigo, model: planning.model, resumo_engenharia: planning.resumo_engenharia, premissas: planning.premissas, alertas_documentais: planning.alertas_documentais, documentos: planning.documentos });
+      await recarregarDados(); renderEditor(); await revalidar(); Toast.success(`Modelo ${codigo} aplicado.`);
+    } catch(error) { Toast.error(error.message); }
+  };
+
+  window._evgFeedbackIA = async (util) => {
+    try { await API.eventogramas.feedbackIA(state.evgId, { util }); Toast.success('Feedback registrado para este planejamento.'); }
+    catch(error) { Toast.error(error.message); }
+  };
 
   // ─── Painel resumo ────────────────────────────────────────────────────────
   function renderPainelResumo() {
@@ -713,6 +921,10 @@ Router.register('eventograma', async () => {
     document.getElementById('btnNovoEvento')?.addEventListener('click', () => abrirModalEvento(null, null));
 
     document.getElementById('btnReGerar')?.addEventListener('click', async () => {
+      if (state.evgData?.modo_geracao === 'automatico_ia') {
+        abrirModalNovaAnaliseIA();
+        return;
+      }
       if (!await Confirm.ask('Regerar eventos automaticamente? Os eventos atuais serão removidos.', 'Regerar Eventograma')) return;
       abrirModalReGerar();
     });
@@ -731,6 +943,43 @@ Router.register('eventograma', async () => {
     document.getElementById('filtroBuscaItem')?.addEventListener('input', renderPainelItens);
     document.getElementById('filtroGrupoEvt')?.addEventListener('change', renderPainelEventos);
     document.getElementById('filtroBuscaEvt')?.addEventListener('input', renderPainelEventos);
+  }
+
+  function abrirModalNovaAnaliseIA() {
+    Modal.open({
+      title: '✦ Nova análise inteligente', size: 'modal-lg',
+      body: `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:10px 12px;font-size:.78rem;color:#284d7d;margin-bottom:12px">A nova proposta somente substituirá a atual depois que a análise for concluída com sucesso. Os modos manual e semiautomático não são afetados.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label class="form-label">Regime de contratação</label><select class="form-control" id="rea_regime"><option value="empreitada_por_preco_unitario">Empreitada por preço unitário</option><option value="empreitada_por_preco_global">Empreitada por preço global</option><option value="contratacao_integrada">Contratação integrada</option><option value="contratacao_semi_integrada">Contratação semi-integrada</option><option value="sicro">Obra rodoviária / SICRO</option></select></div>
+          <div><label class="form-label">Objetivo</label><select class="form-control" id="rea_objetivo"><option value="equilibrado">Modelo equilibrado</option><option value="poucos_eventos">Poucos eventos</option><option value="maior_controle">Maior controle</option><option value="fluxo_caixa">Maior fluxo de caixa</option><option value="menor_risco">Menor risco para a Administração</option></select></div>
+        </div>
+        <div style="margin-top:12px"><label class="form-label">API key própria (opcional)</label><input class="form-control" type="password" autocomplete="off" id="rea_key" placeholder="sk-ant-..."><div style="font-size:.7rem;color:#64748b;margin-top:4px">Usada somente nesta requisição e nunca armazenada.</div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+          ${_aiFileInput('rea_projeto','projeto','Projeto em PDF ou imagens','.pdf,.png,.jpg,.jpeg,.webp')}
+          ${_aiFileInput('rea_memorial','memorial','Memorial descritivo','.pdf,.docx,.txt,.md')}
+          ${_aiFileInput('rea_cronograma','cronograma','Cronograma físico-financeiro','.pdf,.xlsx,.xlsm,.csv')}
+          ${_aiFileInput('rea_outros','outros','Outros documentos','.pdf,.docx,.xlsx,.xlsm,.csv,.txt,.json,.png,.jpg,.jpeg,.webp',true)}
+        </div>
+        <div style="margin-top:12px"><label class="form-label">Orientações</label><textarea class="form-control" id="rea_instrucoes" rows="3" placeholder="Informe condicionantes, prioridades ou a divisão pretendida."></textarea></div>`,
+      footer: '<button class="btn btn-secondary" onclick="Modal.close()">Cancelar</button><button class="btn btn-primary" id="btnExecutarNovaIA">✦ Analisar e substituir</button>',
+    });
+    document.getElementById('btnExecutarNovaIA').addEventListener('click', async () => {
+      const form = new FormData();
+      form.append('anthropic_api_key', document.getElementById('rea_key').value.trim());
+      form.append('regime_contratacao', document.getElementById('rea_regime').value);
+      form.append('objetivo', document.getElementById('rea_objetivo').value);
+      form.append('instrucoes', document.getElementById('rea_instrucoes').value.trim());
+      ['rea_projeto','rea_memorial','rea_cronograma','rea_outros'].forEach((id) => {
+        const input = document.getElementById(id);
+        [...(input.files || [])].forEach(file => form.append(input.dataset.field, file));
+      });
+      const button = document.getElementById('btnExecutarNovaIA');
+      button.disabled = true; button.textContent = 'Analisando…';
+      try {
+        Modal.close(); await executarPlanejamentoIA(state.evgId, form);
+        state.expandidos.clear(); await recarregarDados(); renderEditor(); await revalidar();
+      } catch(error) { Toast.error(error.message); }
+    });
   }
 
   function abrirModalReGerar() {

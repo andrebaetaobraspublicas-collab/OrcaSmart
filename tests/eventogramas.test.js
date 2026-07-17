@@ -4,6 +4,7 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const repo = require('../repositories/eventogramasRepository');
 const service = require('../services/eventogramasService');
+const aiService = require('../services/eventogramasAiService');
 
 function exec(db, sql) {
   return new Promise((resolve, reject) => db.exec(sql, error => (error ? reject(error) : resolve())));
@@ -28,10 +29,10 @@ async function main() {
   const db = new sqlite3.Database(':memory:');
   try {
     await exec(db, `
-      CREATE TABLE obras (id_obra INTEGER PRIMARY KEY, nome_obra TEXT);
+      CREATE TABLE obras (id_obra INTEGER PRIMARY KEY, nome_obra TEXT, descricao TEXT, tipo_obra TEXT, municipio TEXT, uf TEXT);
       CREATE TABLE orcamentos (
         id_orcamento INTEGER PRIMARY KEY, id_obra INTEGER, nome_orcamento TEXT,
-        valor_total REAL, bdi_percentual REAL
+        valor_total REAL, bdi_percentual REAL, descricao TEXT, regime_previdenciario TEXT
       );
       CREATE TABLE orcamento_sintetico (
         id_item INTEGER PRIMARY KEY, id_orcamento INTEGER, item TEXT, codigo TEXT,
@@ -56,8 +57,8 @@ async function main() {
         UNIQUE(id_evento, id_item)
       );
 
-      INSERT INTO obras VALUES (1, 'Obra Teste');
-      INSERT INTO orcamentos VALUES (1, 1, 'teste importacao', 330, 10);
+      INSERT INTO obras VALUES (1, 'Obra Teste', 'Obra para validar planejamento', 'Edificacao', 'Fortaleza', 'CE');
+      INSERT INTO orcamentos VALUES (1, 1, 'teste importacao', 330, 10, 'Orcamento de teste', 'Onerado');
       INSERT INTO orcamento_sintetico VALUES
         (1,1,'1',NULL,'SERVICOS PRELIMINARES',NULL,0,0,NULL,'section',0,1,NULL),
         (2,1,'1.1','A-01','Placa de obra','M2',2,100,NULL,'item',1,2,'SINAPI'),
@@ -88,6 +89,43 @@ async function main() {
     assert.ok(itens.every(item => item.id_evento_alocado));
     assert.ok(itens.every(item => item.numero_evento_alocado === '01'));
     assert.deepStrictEqual(detalhe.eventos[0].itens.slice(0, 2).map(item => item.valor), [220, 110]);
+
+    const budgetItems = detalhe.itens_orcamento.filter(item => item.tipo_linha === 'item').map(item => ({ ...item, valor: item.valor, secao: 'Servicos preliminares' }));
+    const balanced = aiService.normalizePlan({
+      nome: 'Modelo B - Equilibrado',
+      justificativa: 'Sequencia executiva testada.',
+      eventos: [
+        { descricao: 'Mobilizacao', grupo: 'Preliminares', item_ids: [2], criterio_medicao: 'Placa instalada e aceita.', documentos_comprobatorios: 'Boletim e foto.', justificativa: 'Precede as frentes.' },
+        { descricao: 'Implantacao', grupo: 'Preliminares', item_ids: [3], dependencias: ['01'], criterio_medicao: 'Mobilizacao concluida.', documentos_comprobatorios: 'Boletim de medicao.', justificativa: 'Marco independente.' },
+      ],
+    }, budgetItems);
+    const alternatives = aiService.buildAlternatives({ alternativas: [] }, balanced, budgetItems);
+    assert.deepStrictEqual(alternatives.map(alt => alt.codigo), ['A', 'B', 'C', 'D', 'E']);
+
+    await service.aplicarPlanoIA(db, evg.id_eventograma, {
+      plano: balanced,
+      codigo: 'B',
+      model: 'claude-test',
+      resumo_engenharia: 'Plano equilibrado de teste.',
+      premissas: ['Medicao objetiva'],
+      documentos: [{ nome: 'memorial.pdf', categoria: 'memorial', bytes: 100 }],
+    });
+    const detalheIA = await service.getEventograma(db, evg.id_eventograma);
+    assert.strictEqual(detalheIA.modo_geracao, 'automatico_ia');
+    assert.strictEqual(detalheIA.ai_metadata.modelo, 'claude-test');
+    assert.strictEqual(detalheIA.eventos.length, 2);
+    assert.strictEqual(detalheIA.eventos[0].ai_metadata.justificativa, 'Precede as frentes.');
+    assert.deepStrictEqual(detalheIA.eventos.map(event => event.valor_calculado), [220, 110]);
+    assert.ok(!String(detalheIA.observacoes || '').includes('ORCASMART_EVENTOGRAMA_IA'));
+
+    const quality = await service.validar(db, evg.id_eventograma);
+    assert.strictEqual(quality.percentual_alocado, 100);
+    assert.ok(quality.indicadores.score_qualidade >= 0);
+    assert.strictEqual(quality.indicadores.curva_s.length, 2);
+
+    const jsonExport = await service.exportJson(db, evg.id_eventograma);
+    assert.strictEqual(jsonExport.eventograma.ai_metadata.alternativa, 'B');
+    assert.ok(jsonExport.validacao.indicadores);
 
     const pdf = await service.exportPdf(db, evg.id_eventograma);
     assert.match(pdf.filename, /\.pdf$/);

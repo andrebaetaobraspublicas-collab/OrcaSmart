@@ -1,4 +1,5 @@
 const repo = require('../repositories/eventogramasRepository');
+const aiService = require('./eventogramasAiService');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -26,7 +27,7 @@ async function createEventograma(db, data) {
 async function getEventograma(db, id) {
   const evg = await repo.getEventograma(db, id);
   if (!evg) throw httpError(404, 'Eventograma nao encontrado.');
-  return evg;
+  return aiService.enrichMetadata(evg);
 }
 
 async function gerar(db, id, data) {
@@ -36,9 +37,33 @@ async function gerar(db, id, data) {
 }
 
 async function validar(db, id) {
-  const result = await repo.validarEventograma(db, id);
-  if (!result) throw httpError(404, 'Eventograma nao encontrado.');
-  return result;
+  const eventograma = await repo.getEventograma(db, id);
+  if (!eventograma) throw httpError(404, 'Eventograma nao encontrado.');
+  return aiService.analyzeQuality(aiService.enrichMetadata(eventograma));
+}
+
+async function planejarIA(db, id, body, contentType) {
+  return aiService.planejar(db, id, body, contentType);
+}
+
+function iniciarPlanejamentoIA(db, id, body, contentType) {
+  return aiService.startPlanningJob(db, id, body, contentType);
+}
+
+async function consultarPlanejamentoIA(db, id, jobId) {
+  return aiService.planningJobStatus(db, id, jobId);
+}
+
+async function aplicarPlanoIA(db, id, data) {
+  return aiService.aplicar(db, id, data || {});
+}
+
+async function refinarIA(db, id, data) {
+  return aiService.refinar(db, id, data || {});
+}
+
+async function registrarFeedbackIA(db, id, data) {
+  return aiService.feedback(db, id, data || {});
 }
 
 async function createEvento(db, idEventograma, data) {
@@ -46,7 +71,10 @@ async function createEvento(db, idEventograma, data) {
 }
 
 async function updateEvento(db, idEventograma, idEvento, data) {
-  const updated = await repo.updateEvento(db, idEventograma, idEvento, data || {});
+  const current = await repo.getEventoRaw(db, idEventograma, idEvento);
+  const payload = { ...(data || {}) };
+  if (current) payload.observacoes = aiService.preserveEventMetadata(current.observacoes, payload.observacoes || '');
+  const updated = await repo.updateEvento(db, idEventograma, idEvento, payload);
   if (!updated) throw httpError(404, 'Evento nao encontrado.');
   return updated;
 }
@@ -65,9 +93,12 @@ async function moveItensEvento(db, idEventoOrigem, data) {
 }
 
 async function exportJson(db, id) {
-  const evg = await repo.getEventogramaRaw(db, id);
-  if (!evg) throw httpError(404, 'Eventograma nao encontrado.');
-  return evg;
+  const evg = await getEventograma(db, id);
+  return {
+    exportado_em: new Date().toISOString(),
+    eventograma: evg,
+    validacao: aiService.analyzeQuality(evg),
+  };
 }
 
 function esc(value) {
@@ -396,4 +427,11 @@ module.exports = {
   exportJson,
   exportExcel,
   exportPdf,
+  planejarIA,
+  iniciarPlanejamentoIA,
+  consultarPlanejamentoIA,
+  aplicarPlanoIA,
+  refinarIA,
+  registrarFeedbackIA,
+  configIA: aiService.publicConfig,
 };

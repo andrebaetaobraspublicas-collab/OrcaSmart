@@ -109,6 +109,28 @@ const API = {
     delete:      (id)           => API.delete(`/eventogramas/${id}`),
     gerar:       (id, data)     => API.post(`/eventogramas/${id}/gerar`, data),
     validar:     (id)           => API.get(`/eventogramas/${id}/validar`),
+    iaConfig:    ()             => API.get('/eventogramas/ia/config'),
+    planejarIA: async (id, formData) => {
+      const response = await fetch(`${API.BASE}/eventogramas/${id}/ia/planejar-job`, { method: 'POST', body: formData });
+      formData.delete('anthropic_api_key');
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) window.location.href = '/login.html';
+      if (!response.ok) throw new Error(data.erro || data.message || `Erro HTTP ${response.status}`);
+      const jobId = data.job_id;
+      if (!jobId) throw new Error('O servidor não retornou o identificador da análise.');
+      const started = Date.now();
+      while (Date.now() - started < 8 * 60 * 1000) {
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        const job = await API.get(`/eventogramas/${id}/ia/jobs/${encodeURIComponent(jobId)}`);
+        window.dispatchEvent(new CustomEvent('eventograma-ai-progress', { detail: job }));
+        if (job.status === 'concluido') return job.resultado;
+        if (job.status === 'erro') throw new Error(job.erro || 'A análise inteligente falhou.');
+      }
+      throw new Error('A análise inteligente excedeu oito minutos. Tente novamente com menos documentos.');
+    },
+    aplicarPlanoIA: (id, data) => API.post(`/eventogramas/${id}/ia/aplicar`, data),
+    refinarIA:      (id, data) => API.post(`/eventogramas/${id}/ia/refinar`, data),
+    feedbackIA:     (id, data) => API.post(`/eventogramas/${id}/ia/feedback`, data),
     reordenar:   (id, ordens)   => API.post(`/eventogramas/${id}/reordenar`, ordens),
     exportarJson:  (id) => `${API.BASE}/eventogramas/${id}/exportar/json`,
     exportarExcel: (id) => `${API.BASE}/eventogramas/${id}/exportar/excel`,

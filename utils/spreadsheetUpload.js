@@ -169,6 +169,7 @@ function parseMultipartAll(buffer, contentType) {
 
 module.exports = {
   decodeXml,
+  unzipOfficeArchive: unzipXlsx,
   parseMultipart,
   parseMultipartAll,
   parseXlsxBuffer,
