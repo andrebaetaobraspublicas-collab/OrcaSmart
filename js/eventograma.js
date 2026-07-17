@@ -473,7 +473,10 @@ Router.register('eventograma', async () => {
               <option value="">Todos os grupos</option>
               ${getGruposUnicos().map(g=>`<option value="${Utils.esc(g)}">${Utils.esc(g)}</option>`).join('')}
             </select>
-            <input id="filtroBuscaEvt" class="form-control" style="font-size:.78rem;padding:4px 8px;flex:1" placeholder="Buscar evento…">
+            <input id="filtroBuscaEvt" name="eventograma_filtro_eventos" class="form-control"
+              type="search" value="" autocomplete="off" data-form-type="other"
+              data-lpignore="true" data-1p-ignore style="font-size:.78rem;padding:4px 8px;flex:1"
+              placeholder="Buscar evento…">
           </div>
           <div id="painelEventos"></div>
         </div>
@@ -780,7 +783,9 @@ Router.register('eventograma', async () => {
               </button>`).join('')}</div>` : ''}
           <label class="form-label" style="font-size:.72rem">Peça uma alteração</label>
           <textarea class="form-control" id="aiInstrucao" rows="3" style="font-size:.76rem" placeholder="Ex.: divida o evento de instalações; agrupe acabamentos; reduza o número de medições..."></textarea>
-          <input class="form-control" id="aiRefineKey" type="password" autocomplete="off" style="font-size:.72rem;margin-top:6px" placeholder="API key própria (opcional)">
+          <input class="form-control" id="aiRefineKey" name="anthropic_api_key_refinamento"
+            type="password" autocomplete="new-password" data-form-type="other"
+            data-lpignore="true" data-1p-ignore style="font-size:.72rem;margin-top:6px" placeholder="API key própria (opcional)">
           <button class="btn btn-primary btn-sm" id="btnRefinarIA" style="width:100%;margin-top:7px">✦ Analisar e aplicar alteração</button>
           ${alerts.length ? `<div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:9px"><div style="font-size:.68rem;font-weight:700;color:#92400e;margin-bottom:4px">ALERTAS DOCUMENTAIS</div>${alerts.slice(0,4).map(alert => `<div style="font-size:.7rem;color:#854d0e;margin-bottom:3px">• ${Utils.esc(alert)}</div>`).join('')}</div>` : ''}
           <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e2e8f0;margin-top:10px;padding-top:8px;font-size:.68rem;color:#64748b">
@@ -1148,7 +1153,7 @@ Router.register('eventograma', async () => {
           <div><label class="form-label">Regime de contratação</label><select class="form-control" id="rea_regime"><option value="empreitada_por_preco_unitario">Empreitada por preço unitário</option><option value="empreitada_por_preco_global">Empreitada por preço global</option><option value="contratacao_integrada">Contratação integrada</option><option value="contratacao_semi_integrada">Contratação semi-integrada</option><option value="sicro">Obra rodoviária / SICRO</option></select></div>
           <div><label class="form-label">Objetivo</label><select class="form-control" id="rea_objetivo"><option value="equilibrado">Modelo equilibrado</option><option value="poucos_eventos">Poucos eventos</option><option value="maior_controle">Maior controle</option><option value="fluxo_caixa">Maior fluxo de caixa</option><option value="menor_risco">Menor risco para a Administração</option></select></div>
         </div>
-        <div style="margin-top:12px"><label class="form-label">API key própria (opcional)</label><input class="form-control" type="password" autocomplete="off" id="rea_key" placeholder="sk-ant-..."><div style="font-size:.7rem;color:#64748b;margin-top:4px">Usada somente nesta requisição e nunca armazenada.</div></div>
+        <div style="margin-top:12px"><label class="form-label">API key própria (opcional)</label><input class="form-control" type="password" autocomplete="new-password" id="rea_key" name="anthropic_api_key_nova_analise" data-form-type="other" data-lpignore="true" data-1p-ignore placeholder="sk-ant-..."><div style="font-size:.7rem;color:#64748b;margin-top:4px">Usada somente nesta requisição e nunca armazenada.</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
           ${_aiFileInput('rea_projeto','projeto','Projeto em PDF ou imagens','.pdf,.png,.jpg,.jpeg,.webp')}
           ${_aiFileInput('rea_memorial','memorial','Memorial descritivo','.pdf,.docx,.txt,.md')}

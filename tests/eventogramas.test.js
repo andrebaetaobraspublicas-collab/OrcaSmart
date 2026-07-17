@@ -34,6 +34,8 @@ async function main() {
   assert.ok(frontendSource.includes('height:210px'), 'graficos do diagnostico devem usar escala vertical ampliada');
   assert.ok(frontendSource.includes('Percentual acumulado (%)'), 'Curva S deve identificar o eixo vertical');
   assert.ok(frontendSource.includes('Valor do evento (R$)'), 'fluxo financeiro deve identificar o eixo vertical');
+  assert.ok(frontendSource.includes('name="eventograma_filtro_eventos"'), 'busca de eventos deve ser independente do login');
+  assert.ok(frontendSource.includes('name="anthropic_api_key_refinamento"'), 'chave de refinamento deve ser isolada do campo de busca');
   const db = new sqlite3.Database(':memory:');
   try {
     await exec(db, `
