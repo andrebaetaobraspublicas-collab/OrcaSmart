@@ -118,6 +118,7 @@ const API = {
       if (!response.ok) throw new Error(data.erro || data.message || `Erro HTTP ${response.status}`);
       const jobId = data.job_id;
       if (!jobId) throw new Error('O servidor não retornou o identificador da análise.');
+      window.dispatchEvent(new CustomEvent('eventograma-ai-progress', { detail: data }));
       const started = Date.now();
       while (Date.now() - started < 8 * 60 * 1000) {
         await new Promise(resolve => setTimeout(resolve, 1800));

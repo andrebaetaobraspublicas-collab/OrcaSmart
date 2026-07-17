@@ -17,11 +17,20 @@ Router.register('eventograma', async () => {
     aiPlanning:  null,
     aiConfig:    null,
     aiBusy:      false,
+    aiProgress:  null,
+    aiProgressTimer: null,
   };
 
+  if (window._evgAiProgressTimer) clearInterval(window._evgAiProgressTimer);
   if (window._evgAiProgressHandler) window.removeEventListener('eventograma-ai-progress', window._evgAiProgressHandler);
   window._evgAiProgressHandler = (event) => {
     const stage = event.detail?.etapa || '';
+    const jobConcluido = event.detail?.status === 'concluido';
+    atualizarProgressoIA({
+      status: event.detail?.status === 'erro' ? 'erro' : 'processando',
+      progresso: jobConcluido ? 90 : Number(event.detail?.progresso || 0),
+      etapa: jobConcluido ? 'Análise concluída; preparando aplicação dos eventos' : (stage || 'Processando análise inteligente'),
+    });
     if (stage && stage !== state.aiStage && event.detail?.status === 'processando') {
       state.aiStage = stage;
       Toast.info(`${stage} — ${Number(event.detail.progresso || 0)}%`);
@@ -210,7 +219,12 @@ Router.register('eventograma', async () => {
           observacoes: document.getElementById('ev_obs').value.trim() });
         Modal.close();
         if (modo === 'automatico') {
+          await abrirEditor(evg.id_eventograma);
           await executarPlanejamentoIA(evg.id_eventograma, formularioIA);
+          await recarregarDados();
+          renderEditor();
+          await revalidar();
+          return;
         } else if (modo === 'semiautomatico') {
           Toast.info('Gerando eventos automaticamente…');
           await API.eventogramas.gerar(evg.id_eventograma, { modo, limpar_existentes: true });
@@ -240,19 +254,123 @@ Router.register('eventograma', async () => {
     return form;
   }
 
+  function iniciarProgressoIA() {
+    if (state.aiProgressTimer) clearInterval(state.aiProgressTimer);
+    state.aiProgress = {
+      status: 'processando', progresso: 4,
+      etapa: 'Criando o ambiente de planejamento', inicio: Date.now(),
+    };
+    state.aiBusy = true;
+    atualizarPainelProgressoIA();
+    state.aiProgressTimer = window.setInterval(() => {
+      if (!state.aiProgress || state.aiProgress.status !== 'processando') return;
+      const atual = Number(state.aiProgress.progresso || 0);
+      const incremento = atual < 20 ? 1.4 : atual < 70 ? 0.55 : 0.18;
+      state.aiProgress.progresso = Math.min(90, atual + incremento);
+      atualizarPainelProgressoIA();
+    }, 1200);
+    window._evgAiProgressTimer = state.aiProgressTimer;
+  }
+
+  function atualizarProgressoIA(dados = {}) {
+    if (!state.aiProgress) {
+      state.aiProgress = { status: 'processando', progresso: 0, etapa: '', inicio: Date.now() };
+    }
+    const recebido = Number(dados.progresso);
+    if (Number.isFinite(recebido)) {
+      state.aiProgress.progresso = Math.max(Number(state.aiProgress.progresso || 0), recebido);
+    }
+    if (dados.status) state.aiProgress.status = dados.status;
+    if (dados.etapa) state.aiProgress.etapa = dados.etapa;
+    atualizarPainelProgressoIA();
+  }
+
+  function concluirProgressoIA(sucesso, mensagem) {
+    if (state.aiProgressTimer) clearInterval(state.aiProgressTimer);
+    state.aiProgressTimer = null;
+    window._evgAiProgressTimer = null;
+    state.aiBusy = false;
+    state.aiProgress = {
+      ...(state.aiProgress || { inicio: Date.now() }),
+      status: sucesso ? 'concluido' : 'erro', progresso: 100,
+      etapa: mensagem,
+    };
+    atualizarPainelProgressoIA();
+    if (sucesso) {
+      window.setTimeout(() => {
+        if (state.aiProgress?.status !== 'concluido') return;
+        state.aiProgress = null;
+        atualizarPainelProgressoIA();
+      }, 7000);
+    }
+  }
+
+  function formatarTempoIA(inicio) {
+    const segundos = Math.max(0, Math.floor((Date.now() - Number(inicio || Date.now())) / 1000));
+    if (segundos < 60) return `${segundos}s`;
+    return `${Math.floor(segundos / 60)}min ${String(segundos % 60).padStart(2, '0')}s`;
+  }
+
+  function htmlProgressoIA() {
+    const progresso = state.aiProgress;
+    if (!progresso) return '';
+    const erro = progresso.status === 'erro';
+    const concluido = progresso.status === 'concluido';
+    const percentual = Math.max(0, Math.min(100, Math.round(Number(progresso.progresso || 0))));
+    const cor = erro ? '#dc2626' : concluido ? '#059669' : '#2563eb';
+    const fundo = erro ? '#fef2f2' : concluido ? '#ecfdf5' : '#eff6ff';
+    const borda = erro ? '#fecaca' : concluido ? '#a7f3d0' : '#bfdbfe';
+    const titulo = erro ? 'Falha na criação automática' : concluido ? 'Eventograma criado com sucesso' : 'Criação automática em andamento';
+    const orientacao = erro
+      ? 'Revise a mensagem e use “Nova análise IA” para tentar novamente.'
+      : concluido ? 'Os eventos já estão disponíveis para conferência e ajustes.'
+      : 'A IA está estruturando os eventos. Mantenha esta tela aberta até a conclusão.';
+    return `<div class="evg-ai-progress" style="background:${fundo};border-color:${borda}">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div class="evg-ai-progress-icon" style="background:${cor}">${erro ? '!' : concluido ? '✓' : '✦'}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+            <div style="font-weight:750;color:#12366a">${titulo}</div>
+            <div style="font-weight:800;color:${cor};font-variant-numeric:tabular-nums">${percentual}%</div>
+          </div>
+          <div style="font-size:.82rem;color:#375a7f;margin-top:3px">${Utils.esc(progresso.etapa || 'Processando…')}</div>
+          <div class="evg-ai-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentual}" aria-label="Progresso da criação do eventograma">
+            <div class="evg-ai-progress-fill ${progresso.status === 'processando' ? 'is-running' : ''}" style="width:${percentual}%;background:${cor}"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:12px;margin-top:7px;font-size:.72rem;color:#58708f">
+            <span>${orientacao}</span><span style="white-space:nowrap">Tempo: ${formatarTempoIA(progresso.inicio)}</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function atualizarPainelProgressoIA() {
+    const painel = document.getElementById('painelProgressoIA');
+    if (painel) painel.innerHTML = htmlProgressoIA();
+  }
+
   async function executarPlanejamentoIA(idEventograma, formData) {
+    iniciarProgressoIA();
     Toast.info('A IA está analisando orçamento, composições, documentos e sequência executiva…');
-    const planning = await API.eventogramas.planejarIA(idEventograma, formData);
-    const objective = formData.get('objetivo') || 'equilibrado';
-    const desiredCode = { poucos_eventos:'A', equilibrado:'B', maior_controle:'C', fluxo_caixa:'D', menor_risco:'E' }[objective] || 'B';
-    const selected = planning.alternativas.find(item => item.codigo === desiredCode) || planning.alternativas.find(item => item.codigo === 'B') || planning.alternativas[0];
-    await API.eventogramas.aplicarPlanoIA(idEventograma, {
-      plano: selected.plano, codigo: selected.codigo, model: planning.model,
-      resumo_engenharia: planning.resumo_engenharia, premissas: planning.premissas,
-      alertas_documentais: planning.alertas_documentais, documentos: planning.documentos,
-    });
-    state.aiPlanning = planning;
-    Toast.success(`Eventograma inteligente criado — Modelo ${selected.codigo}: ${selected.nome}.`);
+    try {
+      const planning = await API.eventogramas.planejarIA(idEventograma, formData);
+      const objective = formData.get('objetivo') || 'equilibrado';
+      const desiredCode = { poucos_eventos:'A', equilibrado:'B', maior_controle:'C', fluxo_caixa:'D', menor_risco:'E' }[objective] || 'B';
+      const selected = planning.alternativas.find(item => item.codigo === desiredCode) || planning.alternativas.find(item => item.codigo === 'B') || planning.alternativas[0];
+      atualizarProgressoIA({ progresso: 94, etapa: `Aplicando o Modelo ${selected.codigo} ao eventograma` });
+      await API.eventogramas.aplicarPlanoIA(idEventograma, {
+        plano: selected.plano, codigo: selected.codigo, model: planning.model,
+        resumo_engenharia: planning.resumo_engenharia, premissas: planning.premissas,
+        alertas_documentais: planning.alertas_documentais, documentos: planning.documentos,
+      });
+      state.aiPlanning = planning;
+      concluirProgressoIA(true, `Eventograma concluído — Modelo ${selected.codigo}: ${selected.nome}`);
+      Toast.success(`Eventograma inteligente criado — Modelo ${selected.codigo}: ${selected.nome}.`);
+    } catch (error) {
+      concluirProgressoIA(false, error.message || 'Não foi possível concluir a análise inteligente.');
+      throw error;
+    }
   }
 
   window._evgAbrir = (id) => abrirEditor(id);
@@ -329,6 +447,8 @@ Router.register('eventograma', async () => {
         </div>
       </div>
 
+      <div id="painelProgressoIA">${htmlProgressoIA()}</div>
+
       <!-- Layout 3 colunas -->
       <div class="evg-workspace" style="display:grid;grid-template-columns:280px minmax(420px,1fr) 300px;gap:12px;align-items:start">
 
@@ -368,6 +488,25 @@ Router.register('eventograma', async () => {
       ${isIA ? '<div id="painelIndicadoresIA" style="margin-top:12px"></div>' : ''}
 
       <style>
+        .evg-ai-progress {
+          border:1px solid #bfdbfe;border-radius:12px;padding:14px 16px;margin-bottom:14px;
+          box-shadow:0 5px 18px rgba(37,99,235,.08);
+        }
+        .evg-ai-progress-icon {
+          width:34px;height:34px;border-radius:10px;color:white;display:flex;align-items:center;
+          justify-content:center;font-size:18px;font-weight:800;flex-shrink:0;
+        }
+        .evg-ai-progress-track {
+          height:10px;background:rgba(148,163,184,.24);border-radius:99px;overflow:hidden;margin-top:10px;
+        }
+        .evg-ai-progress-fill {
+          height:100%;border-radius:99px;transition:width .55s ease;position:relative;overflow:hidden;
+        }
+        .evg-ai-progress-fill.is-running::after {
+          content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+          animation:evgAiShimmer 1.5s linear infinite;transform:translateX(-100%);
+        }
+        @keyframes evgAiShimmer { to { transform:translateX(100%); } }
         .evt-card {
           background:var(--c-surface);border:1px solid var(--c-border);
           border-radius:var(--radius);margin-bottom:8px;overflow:hidden;
