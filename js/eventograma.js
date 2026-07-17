@@ -124,7 +124,10 @@ Router.register('eventograma', async () => {
           </div>
           <div>
             <label class="form-label">Nome do Eventograma *</label>
-            <input class="form-control" id="ev_nome" placeholder="Ex: Eventograma v1 — Contrato XXXXXX">
+            <input class="form-control" id="ev_nome" name="eventograma_titulo_livre"
+              type="text" value="" autocomplete="off" autocapitalize="sentences"
+              data-form-type="other" data-lpignore="true" data-1p-ignore
+              placeholder="Ex: Eventograma v1 — Contrato XXXXXX">
           </div>
           <div>
             <label class="form-label">Modo de Geração</label>
@@ -163,7 +166,9 @@ Router.register('eventograma', async () => {
             </div>
             <div style="margin-top:12px">
               <label class="form-label">Sua API key da Anthropic (opcional)</label>
-              <input class="form-control" id="ev_api_key" type="password" autocomplete="off" placeholder="sk-ant-...">
+              <input class="form-control" id="ev_api_key" name="anthropic_api_key_temporaria"
+                type="password" autocomplete="new-password" data-form-type="other"
+                data-lpignore="true" data-1p-ignore placeholder="sk-ant-...">
               <div style="font-size:.72rem;color:#58708f;line-height:1.45;margin-top:5px">
                 ${state.aiConfig?.servidor_configurado ? 'A chave segura do servidor está disponível; informe a sua apenas se preferir usar sua própria conta.' : 'A chave do servidor não está disponível; informe temporariamente a sua para esta análise.'}
                 Crie ou consulte uma chave no <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:#1d4ed8">Console da Anthropic</a>. A chave permanece somente nesta requisição e nunca é gravada.
