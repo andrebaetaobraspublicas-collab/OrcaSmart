@@ -31,6 +31,9 @@ async function main() {
     frontendSource.includes("querySelectorAll('.evt-card[data-evid], .subevt-card[data-evid]')"),
     'eventos principais e subeventos devem aceitar itens arrastados'
   );
+  assert.ok(frontendSource.includes('height:210px'), 'graficos do diagnostico devem usar escala vertical ampliada');
+  assert.ok(frontendSource.includes('Percentual acumulado (%)'), 'Curva S deve identificar o eixo vertical');
+  assert.ok(frontendSource.includes('Valor do evento (R$)'), 'fluxo financeiro deve identificar o eixo vertical');
   const db = new sqlite3.Database(':memory:');
   try {
     await exec(db, `

@@ -564,8 +564,26 @@ Router.register('eventograma', async () => {
         .ai-kpi { background:white;border:1px solid var(--c-border);border-radius:9px;padding:10px 12px;min-width:120px; }
         .ai-kpi-label { font-size:.64rem;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.45px; }
         .ai-kpi-value { font-size:1rem;font-weight:750;color:#12366a;margin-top:3px; }
+        .ai-charts-grid { display:grid;grid-template-columns:1fr 1fr;gap:20px; }
+        .ai-chart-heading { font-size:.68rem;font-weight:700;color:var(--c-text-2);margin-bottom:8px; }
+        .ai-chart-shell { display:grid;grid-template-columns:18px 62px minmax(0,1fr);height:210px; }
+        .ai-chart-y-title {
+          writing-mode:vertical-rl;transform:rotate(180deg);display:flex;align-items:center;justify-content:center;
+          font-size:.65rem;font-weight:650;color:#64748b;letter-spacing:.2px;
+        }
+        .ai-chart-y-scale {
+          height:210px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;
+          padding-right:7px;font-size:.62rem;color:#64748b;font-variant-numeric:tabular-nums;
+        }
+        .ai-chart-plot {
+          height:210px;position:relative;border-left:1px solid #94a3b8;border-bottom:1px solid #94a3b8;
+          overflow:hidden;background:#fff;
+        }
+        .ai-chart-gridline { position:absolute;left:0;right:0;border-top:1px dashed #dbe4ef;pointer-events:none; }
+        .ai-chart-bars { position:absolute;inset:0;display:flex;align-items:flex-end;gap:3px;padding:5px 4px 0;z-index:1; }
+        .ai-chart-x-title { margin:7px 0 0 80px;text-align:center;font-size:.64rem;color:#64748b; }
         @media(max-width:1180px){.evg-workspace{grid-template-columns:240px 1fr!important}.evg-workspace>div:last-child{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px}}
-        @media(max-width:820px){.evg-workspace{grid-template-columns:1fr!important}.evg-workspace>div:last-child{display:block}}
+        @media(max-width:820px){.evg-workspace{grid-template-columns:1fr!important}.evg-workspace>div:last-child{display:block}.ai-charts-grid{grid-template-columns:1fr}}
       </style>`;
 
     renderPainelItens();
@@ -779,7 +797,13 @@ Router.register('eventograma', async () => {
     const ind = state.validacao?.indicadores;
     if (!ind) { el.innerHTML = ''; return; }
     const curve = ind.curva_s || [];
-    const maxValue = Math.max(1, ...(ind.histograma || []).map(point => Number(point.valor || 0)));
+    const histogram = ind.histograma || [];
+    const maxValue = Math.max(1, ...histogram.map(point => Number(point.valor || 0)));
+    const percentualTicks = [100, 75, 50, 25, 0];
+    const financeiroTicks = percentualTicks.map(percentual => maxValue * percentual / 100);
+    const linhasGuia = percentualTicks.map((_, index) =>
+      `<span class="ai-chart-gridline" style="top:${index * 25}%"></span>`
+    ).join('');
     el.innerHTML = `
       <div class="section-card" style="padding:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px"><div><div style="font-weight:750;font-size:.88rem">Diagnóstico do Eventograma</div><div style="font-size:.7rem;color:var(--c-text-2)">Indicadores calculados sobre eventos, rastreabilidade financeira e critérios de medição</div></div><div style="width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${ind.score_qualidade>=80?'#dcfce7':ind.score_qualidade>=60?'#fef3c7':'#fee2e2'};color:${ind.score_qualidade>=80?'#166534':ind.score_qualidade>=60?'#92400e':'#991b1b'};font-weight:800;font-size:1.05rem" title="Score de qualidade">${ind.score_qualidade}</div></div>
@@ -788,11 +812,35 @@ Router.register('eventograma', async () => {
           ${_aiKpi('Equilíbrio', `${Number(ind.indice_equilibrio).toFixed(0)}%`)}${_aiKpi('Risco', `${Number(ind.indice_risco).toFixed(0)}%`)}${_aiKpi('Complexidade', `${Number(ind.indice_complexidade).toFixed(0)}%`)}
           ${_aiKpi('Rastreabilidade', `${Number(ind.indice_rastreabilidade).toFixed(0)}%`)}${_aiKpi('Auditabilidade', `${Number(ind.indice_auditabilidade).toFixed(0)}%`)}
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-          <div><div style="font-size:.68rem;font-weight:700;color:var(--c-text-2);margin-bottom:6px">CURVA S — PERCENTUAL ACUMULADO</div><div style="height:105px;display:flex;align-items:flex-end;gap:3px;border-left:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;padding:5px 4px">${curve.map(point => `<div title="Evento ${point.evento}: ${point.percentual_acumulado}%" style="flex:1;min-width:4px;height:${Math.max(2,point.percentual_acumulado)}%;background:linear-gradient(#60a5fa,#1d4ed8);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
-          <div><div style="font-size:.68rem;font-weight:700;color:var(--c-text-2);margin-bottom:6px">FLUXO FINANCEIRO POR EVENTO</div><div style="height:105px;display:flex;align-items:flex-end;gap:3px;border-left:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;padding:5px 4px">${(ind.histograma||[]).map(point => `<div title="Evento ${point.evento}: ${Utils.moeda(point.valor)}" style="flex:1;min-width:4px;height:${Math.max(2,Number(point.valor||0)/maxValue*100)}%;background:linear-gradient(#34d399,#059669);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
+        <div class="ai-charts-grid">
+          <div>
+            <div class="ai-chart-heading">CURVA S — PERCENTUAL ACUMULADO</div>
+            <div class="ai-chart-shell">
+              <div class="ai-chart-y-title">Percentual acumulado (%)</div>
+              <div class="ai-chart-y-scale">${percentualTicks.map(value => `<span>${value}%</span>`).join('')}</div>
+              <div class="ai-chart-plot">${linhasGuia}<div class="ai-chart-bars">${curve.map(point => `<div title="Evento ${point.evento}: ${point.percentual_acumulado}%" style="flex:1;min-width:4px;height:${Math.max(2,point.percentual_acumulado)}%;background:linear-gradient(#60a5fa,#1d4ed8);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
+            </div>
+            <div class="ai-chart-x-title">Sequência dos eventos</div>
+          </div>
+          <div>
+            <div class="ai-chart-heading">FLUXO FINANCEIRO POR EVENTO</div>
+            <div class="ai-chart-shell">
+              <div class="ai-chart-y-title">Valor do evento (R$)</div>
+              <div class="ai-chart-y-scale">${financeiroTicks.map(value => `<span>${_formatarEixoMoedaIA(value)}</span>`).join('')}</div>
+              <div class="ai-chart-plot">${linhasGuia}<div class="ai-chart-bars">${histogram.map(point => `<div title="Evento ${point.evento}: ${Utils.moeda(point.valor)}" style="flex:1;min-width:4px;height:${Math.max(2,Number(point.valor||0)/maxValue*100)}%;background:linear-gradient(#34d399,#059669);border-radius:3px 3px 0 0"></div>`).join('')}</div></div>
+            </div>
+            <div class="ai-chart-x-title">Sequência dos eventos</div>
+          </div>
         </div>
       </div>`;
+  }
+
+  function _formatarEixoMoedaIA(value) {
+    const numero = Number(value || 0);
+    if (numero >= 1e9) return `R$ ${(numero / 1e9).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} bi`;
+    if (numero >= 1e6) return `R$ ${(numero / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+    if (numero >= 1e3) return `R$ ${(numero / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} mil`;
+    return `R$ ${numero.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
   }
 
   function _aiKpi(label, value) {
