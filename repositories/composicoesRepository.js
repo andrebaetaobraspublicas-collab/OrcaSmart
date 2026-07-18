@@ -532,12 +532,12 @@ async function materializarComposicoesReferencia(db, source, filters = {}) {
   if (!(await tableExists(db, isTenant ? 'tenant_composicoes' : 'composicoes', isTenant ? 'main' : 'catalog'))) return { criadas: 0 };
 
   const templates = await all(db, `
-    SELECT ${idCol} AS id, *
-    FROM ${table}
-    WHERE UPPER(COALESCE(fonte,''))='SINAPI'
-      AND mes_referencia=?
-      AND (uf_referencia IS NULL OR TRIM(COALESCE(uf_referencia,'')) = '')
-      ${isTenant ? "AND COALESCE(tenant_override_status,'active')='active'" : ''}`, [mesRef]);
+    SELECT c.${idCol} AS id, c.*
+    FROM ${table} c
+    WHERE UPPER(COALESCE(c.fonte,''))='SINAPI'
+      AND c.mes_referencia=?
+      AND (c.uf_referencia IS NULL OR TRIM(COALESCE(c.uf_referencia,'')) = '')
+      ${isTenant ? "AND COALESCE(c.tenant_override_status,'active')='active'" : ''}`, [mesRef]);
   if (!templates.length) return { criadas: 0 };
 
   const existentes = new Set((await all(db, `
