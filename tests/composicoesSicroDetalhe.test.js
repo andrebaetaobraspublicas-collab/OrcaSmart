@@ -45,26 +45,31 @@ async function run() {
     INSERT INTO catalog.composicoes VALUES
       (77,'0307731','SICRO','PRODUCAO_HORARIA','Catalogo sem detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,NULL,NULL,NULL,NULL);
     INSERT INTO tenant_composicoes VALUES
+      (99,'0307731','SICRO','PRODUCAO_HORARIA','Importacao legada sem detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,NULL,NULL,NULL,NULL,NULL,'create','active'),
       (1,'SICRO.0307731','SICRO','PRODUCAO_HORARIA','Importada com detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,63.2188,31.6094,0.899,168.6221,NULL,'create','active');
     INSERT INTO tenant_composicoes_secoes VALUES
-      (1,1,'B','Mao de Obra',63.2188,1,'active'),
-      (2,1,'C','Material',136.1137,2,'active');
+      (1,2,'B','Mao de Obra',63.2188,1,'active'),
+      (2,2,'C','Material',136.1137,2,'active');
     INSERT INTO tenant_composicoes_secao_itens VALUES
-      (1,1,1,'B','P9821','Pedreiro',2,'h',31.6094,63.2188,0,'active'),
-      (2,1,2,'C','M0798','Apoio de neoprene fretado',1,'dm3',133.7092,133.7092,0,'active');
+      (1,2,1,'B','P9821','Pedreiro',2,'h',31.6094,63.2188,0,'active'),
+      (2,2,2,'C','M0798','Apoio de neoprene fretado',1,'dm3',133.7092,133.7092,0,'active');
   `);
 
   const list = await repo.listComposicoes(db, { fonte: 'SICRO', uf: 'DF', mes_ref: '04/2026', q: '0307731' });
-  assert.strictEqual(list.total, 2, 'a listagem geral nao deve executar deduplicacao correlacionada custosa');
-  assert(list.items.some(item => item.id_composicao === 'tenant:1'));
+  assert.strictEqual(list.total, 3, 'a listagem geral nao deve executar deduplicacao correlacionada custosa');
+  assert(list.items.some(item => item.id_composicao === 'tenant:2'));
 
-  const detail = await repo.getComposicao(db, 'tenant:1');
+  const detail = await repo.getComposicao(db, 'tenant:2');
   assert.strictEqual(detail.secoes.length, 2);
   assert.strictEqual(detail.secoes[0].itens[0].codigo_item, 'P9821');
   assert.strictEqual(detail.secoes[1].itens[0].codigo_item, 'M0798');
 
+  const detailFromLegacyTenant = await repo.getComposicao(db, 'tenant:1');
+  assert.strictEqual(detailFromLegacyTenant.id_composicao, 'tenant:2', 'o resumo legado deve redirecionar para o registro detalhado equivalente');
+  assert.strictEqual(detailFromLegacyTenant.secoes.length, 2);
+
   const detailFromCatalog = await repo.getComposicao(db, 77);
-  assert.strictEqual(detailFromCatalog.id_composicao, 'tenant:1', 'a consulta pontual deve preferir a importacao detalhada');
+  assert.strictEqual(detailFromCatalog.id_composicao, 'tenant:2', 'a consulta pontual deve preferir a importacao detalhada');
   assert.strictEqual(detailFromCatalog.secoes.length, 2);
   await close(db);
   console.log('composicoesSicroDetalhe.test.js: OK');

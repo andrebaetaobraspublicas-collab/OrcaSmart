@@ -167,6 +167,14 @@ function chunks(items, size) {
   return result;
 }
 
+function compositionKey(codigo, uf, mesReferenciaValor) {
+  const normalizedCode = String(codigo || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^SICRO\./, '');
+  return `${normalizedCode}|${String(uf || '').trim().toUpperCase()}|${String(mesReferenciaValor || '').trim()}`;
+}
+
 async function insertMany(db, table, columns, rows, batchSize = 200) {
   for (const batch of chunks(rows, batchSize)) {
     if (!batch.length) continue;
@@ -208,8 +216,9 @@ async function importarSicro(db, buffer, options = {}) {
     try {
       await dbGet(conn, 'SELECT GET_LOCK(?, 30) AS acquired', [`sicro-import-${tenantId}`]).catch(() => ({ acquired: 1 }));
       const existing = await dbAll(conn, `SELECT id_composicao, codigo, uf_referencia, mes_referencia
-        FROM tenant_composicoes WHERE fonte='SICRO' AND COALESCE(tenant_override_status,'active')='active'`);
-      const map = new Map(existing.map(row => [`${row.codigo}|${row.uf_referencia}|${row.mes_referencia}`, Number(row.id_composicao)]));
+        FROM tenant_composicoes WHERE fonte='SICRO' AND COALESCE(tenant_override_status,'active')='active'
+        ORDER BY id_composicao`);
+      const map = new Map(existing.map(row => [compositionKey(row.codigo, row.uf_referencia, row.mes_referencia), Number(row.id_composicao)]));
       const maxComp = Number((await dbGet(conn, 'SELECT COALESCE(MAX(id_composicao),0) AS n FROM tenant_composicoes'))?.n || 0);
       const maxSec = Number((await dbGet(conn, 'SELECT COALESCE(MAX(id_secao),0) AS n FROM tenant_composicoes_secoes'))?.n || 0);
       const maxItem = Number((await dbGet(conn, 'SELECT COALESCE(MAX(id_item_secao),0) AS n FROM tenant_composicoes_secao_itens'))?.n || 0);
@@ -226,7 +235,7 @@ async function importarSicro(db, buffer, options = {}) {
 
       for (const comp of composicoes) {
         const uf = ufOverride || comp.uf;
-        const key = `${comp.codigo}|${uf}|${comp.mes_referencia}`;
+        const key = compositionKey(comp.codigo, uf, comp.mes_referencia);
         let id = map.get(key);
         if (id && !sobrepor) { counts.composicoes_ignoradas += 1; continue; }
         if (id) {

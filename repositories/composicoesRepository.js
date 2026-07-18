@@ -369,6 +369,29 @@ async function listComposicoes(db, query = {}) {
   return { items, total: Number(total?.total || 0), limit, offset };
 }
 
+async function findDetailedTenantSicro(db, identity = {}) {
+  const variants = codigoVariantes(identity.codigo);
+  if (!variants.length) return null;
+  const marks = variants.map(() => '?').join(',');
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
+  const isMysql = databaseEngine() === 'mysql';
+  const row = await one(db, `
+    SELECT c.${tenantComposicaoPk} AS tenant_rowid
+    FROM tenant_composicoes c
+    JOIN tenant_composicoes_secoes s
+      ON s.id_composicao = c.${tenantComposicaoPk}
+     AND COALESCE(s.tenant_override_status,'active')='active'
+    WHERE COALESCE(c.tenant_override_status,'active')='active'
+      AND ${isMysql ? "CAST(UPPER(COALESCE(c.fonte,'')) AS BINARY)=CAST('SICRO' AS BINARY)" : "UPPER(COALESCE(c.fonte,''))='SICRO'"}
+      AND ${isMysql ? `CAST(c.codigo AS BINARY) IN (${marks})` : `c.codigo IN (${marks})`}
+      AND ${isMysql ? "CAST(UPPER(COALESCE(c.uf_referencia,'')) AS BINARY)=CAST(UPPER(COALESCE(?,'')) AS BINARY)" : "UPPER(COALESCE(c.uf_referencia,''))=UPPER(COALESCE(?,''))"}
+      AND ${isMysql ? "CAST(COALESCE(c.mes_referencia,'') AS BINARY)=CAST(COALESCE(?, '') AS BINARY)" : "COALESCE(c.mes_referencia,'')=COALESCE(?, '')"}
+    GROUP BY c.${tenantComposicaoPk}
+    ORDER BY COUNT(s.id_secao) DESC, c.${tenantComposicaoPk} DESC
+    LIMIT 1`, [...variants, identity.uf_referencia, identity.mes_referencia]);
+  return row ? getTenantComposicao(db, row.tenant_rowid) : null;
+}
+
 function parseMesRef(ref) {
   const match = String(ref || '').match(/^(\d{1,2})\/(\d{4})$/);
   if (!match) return null;
@@ -834,7 +857,13 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
 async function getComposicao(db, idComposicao) {
   if (await useTenantCatalogRead(db)) {
     const scoped = scopedComposicaoId(idComposicao);
-    if (scoped.scope === 'tenant') return getTenantComposicao(db, scoped.value);
+    if (scoped.scope === 'tenant') {
+      const tenantDetail = await getTenantComposicao(db, scoped.value);
+      if (String(tenantDetail?.fonte || '').toUpperCase() === 'SICRO' && !tenantDetail.secoes?.length) {
+        return (await findDetailedTenantSicro(db, tenantDetail)) || tenantDetail;
+      }
+      return tenantDetail;
+    }
     const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
     const hasOverrides = await hasTenantReferentialOverrides(db);
     const deleted = hasOverrides ? await one(db, `
@@ -862,20 +891,8 @@ async function getComposicao(db, idComposicao) {
       WHERE id_composicao = ?
       LIMIT 1`, [scoped.value]);
     if (String(catalogIdentity?.fonte || '').toUpperCase() === 'SICRO') {
-      const variants = codigoVariantes(catalogIdentity.codigo);
-      const variantMarks = variants.map(() => '?').join(',');
-      const isMysql = databaseEngine() === 'mysql';
-      const imported = await one(db, `
-        SELECT ${tenantComposicaoPk} AS tenant_rowid
-        FROM tenant_composicoes
-        WHERE COALESCE(tenant_override_status,'active')='active'
-          AND ${isMysql ? "CAST(UPPER(COALESCE(fonte,'')) AS BINARY)=CAST('SICRO' AS BINARY)" : "UPPER(COALESCE(fonte,''))='SICRO'"}
-          AND ${isMysql ? `CAST(codigo AS BINARY) IN (${variantMarks})` : `codigo IN (${variantMarks})`}
-          AND ${isMysql ? "CAST(UPPER(COALESCE(uf_referencia,'')) AS BINARY)=CAST(UPPER(COALESCE(?,'')) AS BINARY)" : "UPPER(COALESCE(uf_referencia,''))=UPPER(COALESCE(?,''))"}
-          AND ${isMysql ? "CAST(COALESCE(mes_referencia,'') AS BINARY)=CAST(COALESCE(?, '') AS BINARY)" : "COALESCE(mes_referencia,'')=COALESCE(?, '')"}
-        ORDER BY ${tenantComposicaoPk} DESC
-        LIMIT 1`, [...variants, catalogIdentity.uf_referencia, catalogIdentity.mes_referencia]);
-      if (imported) return getTenantComposicao(db, imported.tenant_rowid);
+      const imported = await findDetailedTenantSicro(db, catalogIdentity);
+      if (imported) return imported;
     }
 
     const built = buildTenantCatalogListSelect({}, 'catalog', hasOverrides);
