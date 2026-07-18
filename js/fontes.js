@@ -196,24 +196,42 @@ Router.register('fontes', async () => {
 
   async function acompanharSinapiJob(jobId, containerId) {
     let lastStatus = null;
-    for (let tentativa = 0; tentativa < 360; tentativa += 1) {
-      await new Promise(resolve => setTimeout(resolve, 700));
-      const response = await fetch(`/api/sinapi/importar/${encodeURIComponent(jobId)}`);
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.erro) throw new Error(data.erro || `Erro HTTP ${response.status}`);
-      lastStatus = data;
-      const counts = data.counts || {};
-      const resumo = [
-        counts.insumos_inseridos != null ? `${Number(counts.insumos_inseridos || 0).toLocaleString('pt-BR')} insumos novos` : null,
-        counts.precos_inseridos != null ? `${Number(counts.precos_inseridos || 0).toLocaleString('pt-BR')} precos novos` : null,
-        counts.composicoes_inseridas != null ? `${Number(counts.composicoes_inseridas || 0).toLocaleString('pt-BR')} composicoes novas` : null,
-        counts.itens_inseridos != null ? `${Number(counts.itens_inseridos || 0).toLocaleString('pt-BR')} itens` : null,
-      ].filter(Boolean).join(' | ');
-      _setProgress(containerId, data.percent, data.fase, resumo ? `${data.mensagem || ''} ${resumo}`.trim() : data.mensagem);
-      if (data.status === 'done') return data.result || data.counts || {};
-      if (data.status === 'error') throw new Error(data.erro || data.mensagem || 'Falha na importacao SINAPI.');
+    const inicio = Date.now();
+    const limiteMs = 4 * 60 * 60 * 1000;
+    let falhasConsecutivas = 0;
+    while (Date.now() - inicio < limiteMs) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+        const response = await fetch(`/api/sinapi/importar/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || (data.erro && data.status !== 'error')) {
+          throw new Error(data.erro || `Erro HTTP ${response.status}`);
+        }
+        falhasConsecutivas = 0;
+        lastStatus = data;
+        const counts = data.counts || {};
+        const resumo = [
+          counts.insumos_inseridos != null ? `${Number(counts.insumos_inseridos || 0).toLocaleString('pt-BR')} insumos novos` : null,
+          counts.precos_inseridos != null ? `${Number(counts.precos_inseridos || 0).toLocaleString('pt-BR')} precos novos` : null,
+          counts.composicoes_inseridas != null ? `${Number(counts.composicoes_inseridas || 0).toLocaleString('pt-BR')} composicoes novas` : null,
+          counts.itens_inseridos != null ? `${Number(counts.itens_inseridos || 0).toLocaleString('pt-BR')} itens` : null,
+        ].filter(Boolean).join(' | ');
+        _setProgress(containerId, data.percent, data.fase, resumo ? `${data.mensagem || ''} ${resumo}`.trim() : data.mensagem);
+        if (data.status === 'done') return data.result || data.counts || {};
+        if (data.status === 'error') throw new Error(data.erro || data.mensagem || 'Falha na importacao SINAPI.');
+      } catch (err) {
+        if (lastStatus?.status === 'error') throw err;
+        falhasConsecutivas += 1;
+        if (falhasConsecutivas >= 12) throw err;
+        _setProgress(
+          containerId,
+          lastStatus?.percent || 1,
+          lastStatus?.fase || 'Reconectando ao servidor',
+          `A importacao continua em segundo plano. Reconectando (${falhasConsecutivas}/12)...`,
+        );
+      }
     }
-    throw new Error(lastStatus?.mensagem || 'Tempo limite acompanhando a importacao SINAPI.');
+    throw new Error(lastStatus?.mensagem || 'Tempo limite de quatro horas acompanhando a importacao SINAPI.');
   }
 
   async function _importFetch(url, formData, containerId, faseLabel) {

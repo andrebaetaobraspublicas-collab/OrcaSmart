@@ -238,8 +238,15 @@ module.exports = function sinapiRoutes(db) {
 
   function persistSinapiJobSoon(job) {
     if (!job?.id) return;
-    setImmediate(() => persistSinapiJob(job).catch(() => {}));
+    if (sinapiJobPersistTimers.has(job.id)) return;
+    const timer = setTimeout(() => {
+      sinapiJobPersistTimers.delete(job.id);
+      persistSinapiJob(job).catch(() => {});
+    }, 1000);
+    sinapiJobPersistTimers.set(job.id, timer);
   }
+
+  const sinapiJobPersistTimers = new Map();
 
   const UFS_SINAPI = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
   const TIPO_SINAPI_MAP = {
@@ -1659,14 +1666,21 @@ module.exports = function sinapiRoutes(db) {
           };
           reportProgress(43, 'Importando composicoes', `Conferindo composicoes SINAPI existentes para ${mesRef} / ${ufs.join(', ')}.`);
           const compMap = new Map((await allC(`
-            SELECT codigo, ${compIdSelect}, uf_referencia, mes_referencia, descricao
-            FROM ${compTable}
-            WHERE fonte='SINAPI'
-              AND mes_referencia=?
-              AND uf_referencia IN (${ufWherePlaceholders})`, [mesRef, ...ufs]))
+            SELECT MAX(c.codigo) AS codigo, c.${compIdWhere} AS id_composicao,
+                   MAX(c.uf_referencia) AS uf_referencia,
+                   MAX(c.mes_referencia) AS mes_referencia,
+                   MAX(c.descricao) AS descricao,
+                   COUNT(i.${itemIdWhere}) AS itens_count
+            FROM ${compTable} c
+            LEFT JOIN ${itemTable} i ON i.id_composicao=c.${compIdWhere}
+            WHERE c.fonte='SINAPI'
+              AND c.mes_referencia=?
+              AND c.uf_referencia IN (${ufWherePlaceholders})
+            GROUP BY c.${compIdWhere}`, [mesRef, ...ufs]))
             .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), {
               id: r.id_composicao,
               descricao: r.descricao,
+              itens_count: Number(r.itens_count || 0),
             }]));
           reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
           const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
@@ -1681,8 +1695,141 @@ module.exports = function sinapiRoutes(db) {
           reportProgress(45, 'Importando composicoes', `Importando ${comps.length} composicoes para ${ufs.length} UF(s).`);
           const totalCompWork = Math.max(1, comps.length * ufs.length);
           let compWork = 0;
-          for (const comp of comps) {
+          async function inserirItensComposicoesEmLote(alvos) {
+            const rows = [];
+            for (const alvo of alvos) {
+              for (let ordem = 0; ordem < alvo.itens.length; ordem += 1) {
+                rows.push({ idComp: alvo.idComp, item: alvo.itens[ordem], ordem });
+              }
+            }
+            const batchSize = 300;
+            for (let offset = 0; offset < rows.length; offset += batchSize) {
+              const batch = rows.slice(offset, offset + batchSize);
+              const params = [];
+              const values = batch.map(({ idComp, item, ordem }) => {
+                params.push(
+                  idComp,
+                  item.tipo_item,
+                  item.codigo_item,
+                  item.descricao,
+                  item.unidade,
+                  item.coeficiente,
+                  item.situacao,
+                  ordem,
+                );
+                return '(?,?,?,?,?,?,?,?)';
+              }).join(',');
+              await runC(`
+                INSERT INTO ${itemTable}
+                  (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
+                VALUES ${values}`, params);
+            }
+            return rows.length;
+          }
+
+          for (let compIndex = 0; compIndex < comps.length; compIndex += 1) {
+            const comp = comps[compIndex];
             const idGrupo = await getGrupo(comp.grupo);
+
+            // O catalogo global aceita insercao em lote. Para "todas as UFs", isso
+            // reduz 27 INSERTs de composicao + 27 INSERTs de itens para apenas dois
+            // pequenos lotes por composicao-base. O caminho tenant permanece unitario
+            // porque o runtime injeta tenant_id e a chave local em cada INSERT.
+            if (!useTenantComps) {
+              const existentes = [];
+              const faltantes = [];
+              for (const compUf of ufs) {
+                const keyComp = compKey(comp.codigo, compUf, mesRef);
+                const existingComp = compMap.get(keyComp);
+                if (existingComp?.id) existentes.push({ uf: compUf, keyComp, ...existingComp });
+                else faltantes.push(compUf);
+              }
+
+              const alvosItens = [];
+              if (existentes.length && forceReferentialUpdate) {
+                const ids = existentes.map(row => row.id);
+                const placeholders = ids.map(() => '?').join(',');
+                await runC(`
+                  UPDATE ${compTable}
+                  SET descricao=?,unidade=?,id_grupo_comp=?,mes_referencia=?,situacao_ref=?
+                  WHERE ${compIdWhere} IN (${placeholders})`,
+                [comp.descricao, comp.unidade, idGrupo, mesRef, comp.situacao, ...ids]);
+                await runC(`DELETE FROM ${itemTable} WHERE id_composicao IN (${placeholders})`, ids);
+                existentes.forEach(row => alvosItens.push({ idComp: row.id, itens: comp.itens }));
+                out.composicoes_atualizadas += existentes.length;
+              } else if (existentes.length) {
+                const incompletas = existentes
+                  .filter(row => Number(row.itens_count || 0) !== comp.itens.length);
+                if (incompletas.length) {
+                  const idsIncompletas = incompletas.map(row => row.id);
+                  const placeholders = idsIncompletas.map(() => '?').join(',');
+                  await runC(`DELETE FROM ${itemTable} WHERE id_composicao IN (${placeholders})`, idsIncompletas);
+                  incompletas.forEach(row => alvosItens.push({ idComp: row.id, itens: comp.itens }));
+                  out.composicoes_atualizadas += incompletas.length;
+                }
+                const idsDescricao = existentes
+                  .filter(row => isDescricaoComposicaoInvalida(row.descricao, comp.grupo)
+                    && !isDescricaoComposicaoInvalida(comp.descricao, comp.grupo))
+                  .map(row => row.id);
+                if (idsDescricao.length) {
+                  const placeholders = idsDescricao.map(() => '?').join(',');
+                  await runC(`
+                    UPDATE ${compTable}
+                    SET descricao=?,unidade=?,id_grupo_comp=?,situacao_ref=?
+                    WHERE ${compIdWhere} IN (${placeholders})`,
+                  [comp.descricao, comp.unidade, idGrupo, comp.situacao, ...idsDescricao]);
+                  out.composicoes_atualizadas += idsDescricao.length;
+                }
+              }
+
+              if (faltantes.length) {
+                const values = [];
+                const params = [];
+                for (const compUf of faltantes) {
+                  values.push("(?,'SINAPI','UNITARIO',?,?,?,?,?,?,'Ativo')");
+                  params.push(comp.codigo, comp.descricao, comp.unidade, idGrupo, mesRef, compUf, comp.situacao);
+                }
+                await runC(`
+                  INSERT INTO ${compTable}
+                    (codigo,fonte,formato,descricao,unidade,id_grupo_comp,mes_referencia,uf_referencia,situacao_ref,situacao)
+                  VALUES ${values.join(',')}`, params);
+
+                const ufPlaceholdersNovas = faltantes.map(() => '?').join(',');
+                const novasRows = await allC(`
+                  SELECT ${compIdSelect}, uf_referencia, descricao
+                  FROM ${compTable}
+                  WHERE fonte='SINAPI' AND codigo=? AND mes_referencia=?
+                    AND uf_referencia IN (${ufPlaceholdersNovas})
+                  ORDER BY ${compIdWhere} DESC`, [comp.codigo, mesRef, ...faltantes]);
+                const novaPorUf = new Map();
+                for (const row of novasRows) {
+                  const uf = String(row.uf_referencia || '').toUpperCase();
+                  if (!novaPorUf.has(uf)) novaPorUf.set(uf, row);
+                }
+                for (const compUf of faltantes) {
+                  const nova = novaPorUf.get(compUf);
+                  if (!nova?.id_composicao) {
+                    throw new Error(`Composicao ${comp.codigo}/${compUf} foi gravada, mas nao pode ser relida para incluir os itens.`);
+                  }
+                  const keyComp = compKey(comp.codigo, compUf, mesRef);
+                  compMap.set(keyComp, { id: nova.id_composicao, descricao: comp.descricao });
+                  alvosItens.push({ idComp: nova.id_composicao, itens: comp.itens });
+                }
+                out.composicoes_inseridas += faltantes.length;
+              }
+
+              if (alvosItens.length) {
+                out.itens_inseridos += await inserirItensComposicoesEmLote(alvosItens);
+              }
+              compWork += ufs.length;
+              if ((compIndex + 1) % 25 === 0 || compIndex + 1 === comps.length) {
+                const pct = 45 + Math.round((35 * compWork) / totalCompWork);
+                reportProgress(pct, 'Importando composicoes', `${compWork}/${totalCompWork} composicoes por UF gravadas.`);
+                await yieldToEventLoop();
+              }
+              continue;
+            }
+
             for (const compUf of ufs) {
               const keyComp = compKey(comp.codigo, compUf, mesRef);
               const existingComp = compMap.get(keyComp);
@@ -1695,13 +1842,18 @@ module.exports = function sinapiRoutes(db) {
                   await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
                   out.composicoes_atualizadas += 1;
                 } else {
+                  if (Number(existingComp?.itens_count || 0) !== comp.itens.length) {
+                    await runC(`DELETE FROM ${itemTable} WHERE id_composicao=?`, [idComp]);
+                    out.composicoes_atualizadas += 1;
+                  } else {
+                    gravarItens = false;
+                  }
                   if (isDescricaoComposicaoInvalida(existingComp?.descricao, comp.grupo)
                     && !isDescricaoComposicaoInvalida(comp.descricao, comp.grupo)) {
                     await runC(`UPDATE ${compTable} SET descricao=?,unidade=?,id_grupo_comp=?,situacao_ref=? WHERE ${compIdWhere}=?`,
                       [comp.descricao, comp.unidade, idGrupo, comp.situacao, idComp]);
                     out.composicoes_atualizadas += 1;
                   }
-                  gravarItens = false;
                 }
               } else {
                 const r = useTenantComps
@@ -1727,81 +1879,148 @@ module.exports = function sinapiRoutes(db) {
           }
 
           const recalcUfs = ufs.map(uf => String(uf || '').toUpperCase()).filter(Boolean);
-          const ufPlaceholders = recalcUfs.map(() => '?').join(',');
-          const deveRecalcular = out.composicoes_inseridas || out.composicoes_atualizadas || out.precos_inseridos || out.precos_atualizados;
-          if (ufPlaceholders && deveRecalcular) {
-            reportProgress(82, 'Recalculando custos', 'Lendo precos e itens para recalculo das composicoes.');
-            const precos = await allC(`
-              SELECT i.codigo_insumo, UPPER(COALESCE(p.uf_referencia,'')) AS uf_referencia,
-                     COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0) AS preco
-              FROM ${precoTable} p
-              JOIN ${insumoTable} i ON i.id_insumo = p.id_insumo
-              WHERE p.id_data_base=?
-                AND UPPER(COALESCE(i.origem,''))='SINAPI'
-                AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufPlaceholders})`, [idDataBase, ...recalcUfs]);
-            const precoPorInsumo = new Map(precos.map(p => [`${String(p.codigo_insumo || '').trim()}|${p.uf_referencia}`, Number(p.preco || 0)]));
-            const compRows = await allC(`
-              SELECT ${compIdSelect}, codigo, UPPER(COALESCE(uf_referencia,'')) AS uf_referencia, mes_referencia, custo_unitario
-              FROM ${compTable}
-              WHERE UPPER(COALESCE(fonte,''))='SINAPI'
-                AND mes_referencia=?
-                AND UPPER(COALESCE(uf_referencia,'')) IN (${ufPlaceholders})`, [mesRef, ...recalcUfs]);
-            const custoPorComposicao = new Map(compRows.map(c => [
-              `${String(c.codigo || '').trim()}|${c.uf_referencia}|${c.mes_referencia}`,
-              Number(c.custo_unitario || 0),
-            ]));
-            const itensCalc = await allC(`
-              SELECT i.${itemIdWhere} AS item_pk, i.id_composicao, i.tipo_item, i.codigo_item, i.coeficiente,
-                     c.${compIdWhere} AS comp_pk, c.codigo AS comp_codigo, UPPER(COALESCE(c.uf_referencia,'')) AS uf_referencia, c.mes_referencia
-              FROM ${itemTable} i
-              JOIN ${compTable} c ON i.id_composicao = c.${compIdWhere}
-              WHERE UPPER(COALESCE(c.fonte,''))='SINAPI'
-                AND c.mes_referencia=?
-                AND UPPER(COALESCE(c.uf_referencia,'')) IN (${ufPlaceholders})
-              ORDER BY c.${compIdWhere}, i.ordem`, [mesRef, ...recalcUfs]);
-            const itensPorComposicao = new Map();
-            for (const item of itensCalc) {
-              const key = String(item.comp_pk);
-              if (!itensPorComposicao.has(key)) itensPorComposicao.set(key, []);
-              itensPorComposicao.get(key).push(item);
-            }
-            const compPorId = new Map(compRows.map(c => [String(c.id_composicao), c]));
-            const atualizadas = new Set();
+          const custoPendente = recalcUfs.length ? await getC(`
+            SELECT COUNT(*) AS total
+            FROM ${compTable}
+            WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+              AND mes_referencia=?
+              AND UPPER(COALESCE(uf_referencia,'')) IN (${recalcUfs.map(() => '?').join(',')})
+              AND COALESCE(custo_unitario,0)<=0`, [mesRef, ...recalcUfs]) : { total: 0 };
+          const deveRecalcular = out.composicoes_inseridas
+            || out.composicoes_atualizadas
+            || out.precos_inseridos
+            || out.precos_atualizados
+            || Number(custoPendente?.total || 0) > 0;
+          if (recalcUfs.length && deveRecalcular) {
             const isCompItem = value => normalizeText(value).includes('composicao');
-            for (let pass = 0; pass < Math.min(10, Math.max(3, compRows.length)); pass += 1) {
-              reportProgress(84 + Math.min(12, pass + 1), 'Recalculando custos', `Passe de recalculo ${pass + 1}.`);
-              let mudou = false;
-              for (const comp of compRows) {
-                const itens = itensPorComposicao.get(String(comp.id_composicao)) || [];
-                let total = 0;
-                let calculou = false;
-                for (const item of itens) {
-                  const codigoItem = String(item.codigo_item || '').trim();
-                  const coef = toNum(item.coeficiente, 0);
-                  const preco = isCompItem(item.tipo_item)
-                    ? (custoPorComposicao.get(`${codigoItem}|${item.uf_referencia}|${item.mes_referencia}`) || 0)
-                    : (precoPorInsumo.get(`${codigoItem}|${item.uf_referencia}`) || 0);
-                  if (!preco || !coef) continue;
-                  const parcial = Number((coef * preco).toFixed(4));
-                  total += parcial;
-                  calculou = true;
-                  await runC(`UPDATE ${itemTable} SET preco_unitario=?, custo_parcial=? WHERE ${itemIdWhere}=?`, [preco, parcial, item.item_pk]).catch(() => {});
-                }
-                if (!calculou || total <= 0) continue;
-                const custo = Number(total.toFixed(4));
-                const key = `${String(comp.codigo || '').trim()}|${comp.uf_referencia}|${comp.mes_referencia}`;
-                if (Math.abs((custoPorComposicao.get(key) || 0) - custo) > 0.0001) {
-                  custoPorComposicao.set(key, custo);
-                  const ref = compPorId.get(String(comp.id_composicao));
-                  if (ref) ref.custo_unitario = custo;
-                  await runC(`UPDATE ${compTable} SET custo_unitario=? WHERE ${compIdWhere}=?`, [custo, comp.id_composicao]);
-                  atualizadas.add(String(comp.id_composicao));
-                  mudou = true;
-                }
+            for (let ufIndex = 0; ufIndex < recalcUfs.length; ufIndex += 1) {
+              const recalcUf = recalcUfs[ufIndex];
+              const basePct = 82 + Math.floor((16 * ufIndex) / recalcUfs.length);
+              reportProgress(basePct, 'Recalculando custos', `Recalculando composicoes ${recalcUf} (${ufIndex + 1}/${recalcUfs.length}).`);
+              const precos = await allC(`
+                SELECT i.codigo_insumo,
+                       COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0) AS preco
+                FROM ${precoTable} p
+                JOIN ${insumoTable} i ON i.id_insumo = p.id_insumo
+                WHERE p.id_data_base=?
+                  AND UPPER(COALESCE(i.origem,''))='SINAPI'
+                  AND UPPER(COALESCE(p.uf_referencia,''))=?`, [idDataBase, recalcUf]);
+              const precoPorInsumo = new Map(precos.map(p => [String(p.codigo_insumo || '').trim(), Number(p.preco || 0)]));
+              const compRows = await allC(`
+                SELECT ${compIdSelect}, codigo, mes_referencia, custo_unitario
+                FROM ${compTable}
+                WHERE UPPER(COALESCE(fonte,''))='SINAPI'
+                  AND mes_referencia=?
+                  AND UPPER(COALESCE(uf_referencia,''))=?`, [mesRef, recalcUf]);
+              const custoPorComposicao = new Map(compRows.map(c => [
+                String(c.codigo || '').trim(), Number(c.custo_unitario || 0),
+              ]));
+              const itensCalc = await allC(`
+                SELECT i.${itemIdWhere} AS item_pk, i.id_composicao, i.tipo_item, i.codigo_item, i.coeficiente,
+                       c.${compIdWhere} AS comp_pk, c.codigo AS comp_codigo
+                FROM ${itemTable} i
+                JOIN ${compTable} c ON i.id_composicao = c.${compIdWhere}
+                WHERE UPPER(COALESCE(c.fonte,''))='SINAPI'
+                  AND c.mes_referencia=?
+                  AND UPPER(COALESCE(c.uf_referencia,''))=?
+                ORDER BY c.${compIdWhere}, i.ordem`, [mesRef, recalcUf]);
+              const itensPorComposicao = new Map();
+              for (const item of itensCalc) {
+                const key = String(item.comp_pk);
+                if (!itensPorComposicao.has(key)) itensPorComposicao.set(key, []);
+                itensPorComposicao.get(key).push(item);
               }
-              if (!mudou) break;
+              const compPorId = new Map(compRows.map(c => [String(c.id_composicao), c]));
+              const atualizadas = new Set();
+              for (let pass = 0; pass < Math.min(10, Math.max(3, compRows.length)); pass += 1) {
+                let mudou = false;
+                for (const comp of compRows) {
+                  const itens = itensPorComposicao.get(String(comp.id_composicao)) || [];
+                  let total = 0;
+                  let calculou = false;
+                  for (const item of itens) {
+                    const codigoItem = String(item.codigo_item || '').trim();
+                    const coef = toNum(item.coeficiente, 0);
+                    const preco = isCompItem(item.tipo_item)
+                      ? (custoPorComposicao.get(codigoItem) || 0)
+                      : (precoPorInsumo.get(codigoItem) || 0);
+                    if (!preco || !coef) continue;
+                    const parcial = Number((coef * preco).toFixed(4));
+                    total += parcial;
+                    calculou = true;
+                    item.preco_calculado = preco;
+                    item.parcial_calculado = parcial;
+                  }
+                  if (!calculou || total <= 0) continue;
+                  const custo = Number(total.toFixed(4));
+                  const key = String(comp.codigo || '').trim();
+                  if (Math.abs((custoPorComposicao.get(key) || 0) - custo) > 0.0001) {
+                    custoPorComposicao.set(key, custo);
+                    const ref = compPorId.get(String(comp.id_composicao));
+                    if (ref) ref.custo_unitario = custo;
+                    atualizadas.add(String(comp.id_composicao));
+                    mudou = true;
+                  }
+                }
+                if (!mudou) break;
+              }
+
+              const itensAtualizar = itensCalc.filter(item => Number.isFinite(item.preco_calculado));
+              const updateBatchSize = 250;
+              for (let offset = 0; offset < itensAtualizar.length; offset += updateBatchSize) {
+                const batch = itensAtualizar.slice(offset, offset + updateBatchSize);
+                const precoCase = [];
+                const parcialCase = [];
+                const ids = [];
+                const params = [];
+                for (const item of batch) {
+                  precoCase.push('WHEN ? THEN ?');
+                  params.push(item.item_pk, item.preco_calculado);
+                }
+                for (const item of batch) {
+                  parcialCase.push('WHEN ? THEN ?');
+                  params.push(item.item_pk, item.parcial_calculado);
+                }
+                for (const item of batch) {
+                  ids.push('?');
+                  params.push(item.item_pk);
+                }
+                await runC(`
+                  UPDATE ${itemTable}
+                  SET preco_unitario=CASE ${itemIdWhere} ${precoCase.join(' ')} ELSE preco_unitario END,
+                      custo_parcial=CASE ${itemIdWhere} ${parcialCase.join(' ')} ELSE custo_parcial END
+                  WHERE ${itemIdWhere} IN (${ids.join(',')})`, params);
+              }
+
+              const compsAtualizar = [...atualizadas]
+                .map(id => compPorId.get(id))
+                .filter(Boolean);
+              for (let offset = 0; offset < compsAtualizar.length; offset += updateBatchSize) {
+                const batch = compsAtualizar.slice(offset, offset + updateBatchSize);
+                const custoCase = [];
+                const ids = [];
+                const params = [];
+                for (const comp of batch) {
+                  custoCase.push('WHEN ? THEN ?');
+                  params.push(comp.id_composicao, comp.custo_unitario);
+                }
+                for (const comp of batch) {
+                  ids.push('?');
+                  params.push(comp.id_composicao);
+                }
+                await runC(`
+                  UPDATE ${compTable}
+                  SET custo_unitario=CASE ${compIdWhere} ${custoCase.join(' ')} ELSE custo_unitario END
+                  WHERE ${compIdWhere} IN (${ids.join(',')})`, params);
+              }
+              out.composicoes_recalculadas += atualizadas.size;
+              reportProgress(
+                82 + Math.floor((16 * (ufIndex + 1)) / recalcUfs.length),
+                'Recalculando custos',
+                `${recalcUf} concluida: ${atualizadas.size} composicoes recalculadas.`,
+              );
+              await yieldToEventLoop();
             }
-            out.composicoes_recalculadas = atualizadas.size;
           }
         }
 
