@@ -90,9 +90,22 @@ async function hasTenantReferentialOverrides(db) {
 
 function visibleCatalogClause(alias = 'c', hasOverrides = true) {
   const nonUserCatalog = `UPPER(COALESCE(${alias}.fonte,'')) <> 'USUARIO'`;
-  if (!hasOverrides) return nonUserCatalog;
+  const tenantIdentityShadow = `
+    (
+      UPPER(COALESCE(${alias}.fonte,'')) <> 'SICRO'
+      OR NOT EXISTS (
+        SELECT 1 FROM tenant_composicoes tc
+        WHERE COALESCE(tc.tenant_override_status,'active')='active'
+          AND UPPER(COALESCE(tc.fonte,''))='SICRO'
+          AND tc.codigo=${alias}.codigo
+          AND UPPER(COALESCE(tc.uf_referencia,''))=UPPER(COALESCE(${alias}.uf_referencia,''))
+          AND COALESCE(tc.mes_referencia,'')=COALESCE(${alias}.mes_referencia,'')
+      )
+    )`;
+  if (!hasOverrides) return `${nonUserCatalog} AND ${tenantIdentityShadow}`;
   return `
     ${nonUserCatalog}
+    AND ${tenantIdentityShadow}
     AND
     NOT EXISTS (
       SELECT 1 FROM tenant_referential_overrides r
