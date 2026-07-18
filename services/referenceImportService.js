@@ -146,6 +146,153 @@ function mergeInsumos(...lists) {
   return [...map.values()];
 }
 
+async function renderPdfRows(pageData) {
+  const content = await pageData.getTextContent({ normalizeWhitespace: true });
+  const rows = [];
+  for (const item of content.items || []) {
+    const x = Number(item.transform?.[4] || 0);
+    const y = Number(item.transform?.[5] || 0);
+    let row = rows.find(candidate => Math.abs(candidate.y - y) < 1);
+    if (!row) { row = { y, items: [] }; rows.push(row); }
+    row.items.push({ x, value: text(item.str) });
+  }
+  return rows
+    .sort((a, b) => b.y - a.y)
+    .map(row => row.items.sort((a, b) => a.x - b.x).map(item => item.value).filter(Boolean).join('\t'))
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function extractPdfRows(buffer) {
+  const parsed = await pdfParse(buffer, { pagerender: renderPdfRows });
+  return String(parsed.text || '');
+}
+
+function pdfLines(raw) {
+  return String(raw || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
+
+function parseGoinfraReference(raw, fallbackMes = 2, fallbackAno = 2026) {
+  const match = ascii(raw).match(/DATA BASE:\s*(\d{2})\/(\d{2})\/(20\d{2})/i);
+  return match ? { mes: Number(match[2]), ano: Number(match[3]) } : parseReference(raw, fallbackMes, fallbackAno);
+}
+
+function parseGoinfraLaborRows(raw) {
+  const out = [];
+  for (const line of pdfLines(raw)) {
+    const parts = line.split('\t').map(text).filter(Boolean);
+    if (!/^\d{4}$/.test(parts[0] || '') || parts.length < 5) continue;
+    const preco = number(parts[parts.length - 1]);
+    if (preco == null) continue;
+    out.push({ codigo: parts[0], descricao: parts[1], unidade: code(parts[2]) || 'H', tipo: 'Mao de Obra', preco });
+  }
+  return out;
+}
+
+function parseGoinfraMaterialRows(raw) {
+  const out = [];
+  for (const line of pdfLines(raw)) {
+    const parts = line.split('\t').map(text).filter(Boolean);
+    const codigo = code(parts[0]);
+    if (/^[A-Z]?\d{3,4}$/.test(codigo) && parts.length >= 4) {
+      const preco = number(parts[parts.length - 1]);
+      if (preco == null) continue;
+      out.push({
+        codigo,
+        descricao: parts.slice(1, -2).join(' ').trim(),
+        unidade: code(parts[parts.length - 2]) || 'UN',
+        tipo: 'Material',
+        preco,
+      });
+    } else if (out.length && parts.length === 1 && !/^(GOINFRA|PAGINA|TABELA|DATA BASE|SCO -)/i.test(ascii(parts[0]))) {
+      out[out.length - 1].descricao = `${out[out.length - 1].descricao} ${parts[0]}`.trim();
+    }
+  }
+  return out.filter(item => item.descricao);
+}
+
+function parseGoinfraCompositionRows(raw) {
+  const sections = { A: 'Equipamentos', B: 'Mao de Obra', C: 'Materiais', D: 'Servicos Auxiliares', E: 'Transportes' };
+  const out = [];
+  let current = null;
+  let currentSection = '';
+  let collectingDescription = false;
+  const finish = () => {
+    if (current?.codigo) {
+      if (!current.custo) current.custo = current.itens.reduce((sum, item) => sum + (item.custoParcial || 0), 0);
+      out.push(current);
+    }
+    current = null;
+    currentSection = '';
+    collectingDescription = false;
+  };
+
+  for (const line of pdfLines(raw)) {
+    const parts = line.split('\t').map(text).filter(Boolean);
+    const flat = parts.join('\t');
+    const normalized = ascii(flat).toUpperCase();
+    const header = flat.match(/^Servi\S*o:\s*(\d{6})\s*-\s*(.*)$/i);
+    if (header) {
+      finish();
+      const rest = header[2].trim();
+      const withUnit = rest.match(/^(.*?)\t+Unidade:\s*(\S+)/i);
+      current = {
+        codigo: header[1],
+        descricao: (withUnit ? withUnit[1] : rest).trim(),
+        unidade: code(withUnit?.[2] || ''),
+        itens: [],
+        custo: 0,
+      };
+      collectingDescription = true;
+      continue;
+    }
+    if (!current) continue;
+    if (normalized.startsWith('CODIGO AUXILIAR')) {
+      const section = normalized.match(/\(([A-E])\)/)?.[1];
+      currentSection = section || currentSection;
+      collectingDescription = false;
+      continue;
+    }
+    const unitOnly = flat.match(/^Unidade:\s*(\S+)/i);
+    if (unitOnly) { current.unidade = code(unitOnly[1]); continue; }
+    if (collectingDescription
+        && !/^(GOINFRA|RELATORIO|PAGINA|TABELA DE PRECOS|DATA BASE|DESONERACAO|SCO -)/i.test(normalized)) {
+      current.descricao = `${current.descricao} ${flat}`.trim();
+      continue;
+    }
+    const directCost = normalized.startsWith('CUSTO DIRETO TOTAL');
+    if (directCost) {
+      current.custo = number(parts[parts.length - 1]) || current.custo;
+      continue;
+    }
+    const itemCode = code(parts[0]);
+    if (!/^[A-Z]?\d{3,6}$/.test(itemCode) || parts.length < 4) continue;
+    const numericCells = parts.slice(2).map(value => ({ value, number: number(value) }))
+      .filter(cell => cell.number != null && /^-?[\d.]+,\d+$/.test(cell.value.replace(/\s/g, '')));
+    if (numericCells.length < 2) continue;
+    const coeficiente = numericCells[numericCells.length - 2].number || 0;
+    const custoParcial = numericCells[numericCells.length - 1].number || 0;
+    const precoInformado = currentSection === 'B' && numericCells.length >= 4
+      ? numericCells[numericCells.length - 4].number
+      : numericCells.length >= 3
+        ? numericCells[numericCells.length - 3].number
+        : null;
+    const itemUnit = parts[2] && number(parts[2]) == null ? code(parts[2]) : '';
+    current.itens.push({
+      tipo: itemCode.length === 6 ? 'COMPOSICAO' : 'INSUMO',
+      codigo: itemCode,
+      descricao: parts[1],
+      unidade: itemUnit,
+      coeficiente,
+      situacao: currentSection ? `${currentSection} - ${sections[currentSection] || currentSection}` : null,
+      preco: precoInformado ?? (coeficiente ? custoParcial / coeficiente : null),
+      custoParcial,
+    });
+  }
+  finish();
+  return out;
+}
+
 async function ensureCatalogContext(conn, sourceName, mes, ano, description) {
   let dbRow = await dbGet(conn, 'SELECT id_data_base FROM catalog.datas_base WHERE mes=? AND ano=? ORDER BY id_data_base DESC LIMIT 1', [mes, ano]);
   if (!dbRow) {
@@ -291,10 +438,73 @@ async function importSudecap(db, files, fields, tenantId) {
   return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'Sudecap/BH',ref.mes,ref.ano,`SUDECAP/BH ${mesRef}`);const ins=await persistInsumos(conn,insumos,{tenantId,origem:'SUDECAP',uf:'MG',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,[...build('Onerado','ON',on),...build('Desonerado','DES',des)],{tenantId,fonte:'SUDECAP',uf:'MG',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'MG',composicoes_sem_custo:[...on.values(),...des.values()].filter(v=>!v).length,mensagem:`SUDECAP/BH ${mesRef}: ${ins.insumos_inseridos} insumos e ${comp.composicoes_inseridas} composições novas.`};});
 }
 
+async function importGoinfra(db, files, fields, tenantId) {
+  const laborOnText = await extractPdfRows(files.mao_obra_onerado.buffer);
+  const laborDesText = await extractPdfRows(files.mao_obra_desonerado.buffer);
+  const materialText = await extractPdfRows(files.material.buffer);
+  const compOnText = await extractPdfRows(files.composicoes_onerado.buffer);
+  const compDesText = await extractPdfRows(files.composicoes_desonerado.buffer);
+  const detected = parseGoinfraReference(laborOnText, Number(fields.mes) || 2, Number(fields.ano) || 2026);
+  const ref = {
+    mes: Number(fields.mes) || detected.mes,
+    ano: Number(fields.ano) || detected.ano,
+  };
+  if (!Number.isInteger(ref.mes) || ref.mes < 1 || ref.mes > 12 || !Number.isInteger(ref.ano) || ref.ano < 2000) {
+    throw Object.assign(new Error('Mes e ano de referencia da GOINFRA sao invalidos.'), { status: 400 });
+  }
+  const mesRef = `${String(ref.mes).padStart(2, '0')}/${ref.ano}`;
+  const laborOn = parseGoinfraLaborRows(laborOnText).map(item => ({ ...item, precoNaoDesonerado: item.preco }));
+  const laborDes = parseGoinfraLaborRows(laborDesText).map(item => ({ ...item, precoDesonerado: item.preco }));
+  const materials = parseGoinfraMaterialRows(materialText).map(item => ({
+    ...item,
+    precoNaoDesonerado: item.preco,
+    precoDesonerado: item.preco,
+  }));
+  const insumos = mergeInsumos(laborOn, laborDes, materials).map(({ preco, ...item }) => item);
+  const compOn = parseGoinfraCompositionRows(compOnText).map(comp => ({
+    ...comp,
+    codigo: `GOINFRA.${comp.codigo}.ON`,
+    regime: 'Onerado',
+  }));
+  const compDes = parseGoinfraCompositionRows(compDesText).map(comp => ({
+    ...comp,
+    codigo: `GOINFRA.${comp.codigo}.DES`,
+    regime: 'Desonerado',
+  }));
+  if (!insumos.length) throw Object.assign(new Error('Nenhum insumo GOINFRA foi reconhecido nos PDFs enviados.'), { status: 400 });
+  if (!compOn.length && !compDes.length) throw Object.assign(new Error('Nenhuma composicao GOINFRA foi reconhecida nos PDFs enviados.'), { status: 400 });
+
+  return transaction(db, async conn => {
+    const context = await ensureCatalogContext(conn, 'Goinfra/GO', ref.mes, ref.ano, `GOINFRA/GO ${mesRef}`);
+    const ins = await persistInsumos(conn, insumos, {
+      tenantId,
+      origem: 'GOINFRA',
+      uf: 'GO',
+      idDataBase: context.idDataBase,
+      idFonte: context.idFonte,
+      sobrepor: fields.sobrepor !== 'false',
+    });
+    const comp = await persistCompositions(conn, [...compOn, ...compDes], {
+      tenantId,
+      fonte: 'GOINFRA',
+      uf: 'GO',
+      mesRef,
+      sobrepor: fields.sobrepor !== 'false',
+    });
+    return {
+      ...ins,
+      ...comp,
+      data_base: mesRef,
+      uf: 'GO',
+      mensagem: `GOINFRA/GO ${mesRef}: ${ins.insumos_inseridos} insumos novos, ${ins.precos_inseridos} precos novos e ${comp.composicoes_inseridas} composicoes novas.`,
+    };
+  });
+}
+
 function normalizeCdhu(value) { return ascii(value).toUpperCase().replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim(); }
 function cdhuCode(value) { const raw=text(value); const match=raw.match(/(\d{6})/); if(match)return match[1]; if(/^\d+(?:\.0+)?$/.test(raw))return String(Math.trunc(Number(raw))).padStart(6,'0'); return ''; }
 function parseCdhuSynthetic(buffer, divisor) { const rows=parseXlsxBuffer(buffer); const records=[]; const byCode=new Map(); const byText=new Map(); for(const row of rows){const codigo=cdhuCode(row[0]);const descricao=text(row[1]);const unidade=code(row[2]);const gross=number(row[3]);if(!codigo||!descricao||!unidade||gross==null)continue;const record={codigo,descricao,unidade,preco:gross/Number(divisor||1)};records.push(record);byCode.set(codigo,record);byText.set(`${normalizeCdhu(descricao)}|${unidade}`,record);}return{records,byCode,byText}; }
 function parseCdhuPdfText(raw) { const lines=String(raw||'').split(/\r?\n/).map(text).filter(Boolean); const comps=[]; let comp=null; let pending=null; const finishItem=()=>{if(pending&&comp&&pending.descricao)comp.itens.push(pending);pending=null;};const finish=()=>{finishItem();if(comp?.codigo)comps.push(comp);comp=null;}; const units='(M3|M2|M²|M³|UN|KG|H|L|M|HA|KM|VB|CJ|GL|PC|PÇ|PAR|JG|MES|MÊS)'; for(const line of lines){if(/^(Projeto:|Data Base:|Listagem de Compos|Código|Descricao|Unidade|Coeficiente|Pagina)/i.test(ascii(line)))continue;const item=line.match(new RegExp(`^([\\d.,]+)\\s*${units}\\s*(.+)$`,'i'));if(item){finishItem();const rest=item[3].trim();const cm=rest.match(/([A-Z]\.\d{2}\.\d{3}\.\d{6}|[A-Z]\d{8,})\s*$/i);pending={coeficiente:number(item[1])||0,unidade:code(item[2]).replace('²','2').replace('³','3'),descricao:cm?rest.slice(0,cm.index).trim():rest,codigo:cm?cm[1].toUpperCase():''};if(pending.codigo)finishItem();continue;}if(pending){pending.descricao=`${pending.descricao} ${line}`.trim();continue;}const header=line.match(new RegExp(`^${units}\\s*(.+?)(\\d{6})$`,'i'));if(header){finish();comp={codigo:header[3],descricao:header[2].trim(),unidade:code(header[1]),itens:[]};}}finish();return comps; }
 async function importCdhu(db,files,fields,tenantId){const divisor=number(fields.bdi_divisor)||1.2081;const synthetic=parseCdhuSynthetic(files.arquivo_sintetico.buffer,divisor);const pdf=await pdfParse(files.arquivo_pdf.buffer);const base=parseCdhuPdfText(pdf.text);const ref=parseReference(`${pdf.text.slice(0,3000)} ${parseXlsxBuffer(files.arquivo_sintetico.buffer).slice(0,8).flat().join(' ')}`,fields.mes||2,fields.ano||2026);const mesRef=`${String(ref.mes).padStart(2,'0')}/${ref.ano}`;if(!base.length||!synthetic.records.length)throw Object.assign(new Error('Não foi possível identificar as composições analíticas e os preços sintéticos da CDHU.'),{status:400});const inferred=[];const comps=base.map(comp=>{const own=synthetic.byCode.get(comp.codigo)||synthetic.byText.get(`${normalizeCdhu(comp.descricao)}|${comp.unidade}`);return{codigo:`CDHU.${comp.codigo}`,descricao:comp.descricao,unidade:comp.unidade,regime:own?'COM PREÇO':'SEM PREÇO',custo:own?.preco||0,observacoes:`CDHU/SP; BDI expurgado pelo divisor ${divisor}.`,itens:comp.itens.map(item=>{const rec=synthetic.byCode.get(cdhuCode(item.codigo))||synthetic.byText.get(`${normalizeCdhu(item.descricao)}|${item.unidade}`);if(item.codigo&&rec)inferred.push({codigo:item.codigo,descricao:item.descricao,unidade:item.unidade,tipo:item.unidade==='H'?'Mão de Obra':'Material',precoNaoDesonerado:rec.preco,precoDesonerado:rec.preco,observacoes:'Preço inferido do sintético CDHU/SP sem BDI.'});return{tipo:/^\d{6}$/.test(item.codigo)?'COMPOSICAO':'INSUMO',...item,preco:rec?.preco??null,custoParcial:rec?rec.preco*item.coeficiente:null};})};});return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'CDHU/SP',ref.mes,ref.ano,`CDHU/SP ${mesRef}`);const ins=await persistInsumos(conn,mergeInsumos(inferred),{tenantId,origem:'CDHU',uf:'SP',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,comps,{tenantId,fonte:'CDHU',uf:'SP',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'SP',bdi_percentual:number(fields.bdi_percentual)||20.81,bdi_divisor:divisor,composicoes_sem_preco:comps.filter(c=>!c.custo).length,itens_com_preco_inferido:inferred.length,mensagem:`CDHU/SP ${mesRef}: ${comp.composicoes_inseridas} composições novas e ${comp.itens_inseridos} itens importados.`};});}
 
-module.exports={ validOffice, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseCdhuSynthetic, parseCdhuPdfText, importSicroInputs, importSeinfra, importSudecap, importCdhu };
+module.exports={ validOffice, extractPdfRows, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseCdhuSynthetic, parseCdhuPdfText, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importCdhu };

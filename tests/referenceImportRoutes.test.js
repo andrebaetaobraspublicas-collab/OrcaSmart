@@ -2,7 +2,12 @@ const assert = require('assert');
 const sicroRoutes = require('../routes/sicroRoutes');
 const referenceImportRoutes = require('../routes/referenceImportRoutes');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
-const { parseCdhuPdfText } = require('../services/referenceImportService');
+const {
+  parseCdhuPdfText,
+  parseGoinfraLaborRows,
+  parseGoinfraMaterialRows,
+  parseGoinfraCompositionRows,
+} = require('../services/referenceImportService');
 
 function paths(router) {
   return router.stack
@@ -15,6 +20,7 @@ assert(paths(sicroRoutes(db)).includes('POST /importar-insumos'));
 const imports = paths(referenceImportRoutes(db));
 assert(imports.includes('POST /seinfra/importar'));
 assert(imports.includes('POST /sudecap/importar'));
+assert(imports.includes('POST /goinfra/importar'));
 assert(imports.includes('POST /cdhu/importar'));
 
 const boundary = 'orcasmart-import-test';
@@ -36,5 +42,23 @@ M2 Plantio de grama em placas 985040
 assert.strictEqual(cdhu.length, 1);
 assert.strictEqual(cdhu[0].codigo, '985040');
 assert.strictEqual(cdhu[0].itens.length, 1);
+
+const goinfraLabor = parseGoinfraLaborRows('0008\tAJUDANTE\th\t170,72\t8,28\t22,41');
+assert.strictEqual(goinfraLabor.length, 1);
+assert.strictEqual(goinfraLabor[0].preco, 22.41);
+
+const goinfraMaterial = parseGoinfraMaterialRows('0110\tACIDO MURIATICO\tl\t11,32');
+assert.strictEqual(goinfraMaterial.length, 1);
+assert.strictEqual(goinfraMaterial[0].preco, 11.32);
+
+const goinfraCompositions = parseGoinfraCompositionRows(`
+Servico: 020100 - DEMOLICAO MANUAL\tUnidade: m2
+Codigo Auxiliar\t(B) Maos-de-obra\tConsumo\tCusto Horario
+0004\tPEDREIRO\t11,56\t29,14\t152,12\t0,0225000\t0,65
+Custo direto total (A) + (B) + (C) + (D) + (E)\t0,65
+`);
+assert.strictEqual(goinfraCompositions.length, 1);
+assert.strictEqual(goinfraCompositions[0].itens.length, 1);
+assert.strictEqual(goinfraCompositions[0].custo, 0.65);
 
 console.log('referenceImportRoutes.test.js: OK');

@@ -1,6 +1,6 @@
 const express = require('express');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
-const { validOffice, importSeinfra, importSudecap, importCdhu } = require('../services/referenceImportService');
+const { validOffice, importSeinfra, importSudecap, importGoinfra, importCdhu } = require('../services/referenceImportService');
 
 function tenantId(req) {
   const value = Number(req.user?.id_tenant || req.user?.tenant_id);
@@ -12,7 +12,8 @@ function validateFiles(files, required, options = {}) {
   const missing = required.filter(name => !files[name]?.buffer?.length);
   if (missing.length) throw Object.assign(new Error(`Arquivos ausentes: ${missing.join(', ')}.`), { status: 400 });
   for (const name of required) {
-    if (options.pdf === name) {
+    const expectsPdf = options.pdf === true || options.pdf === name || (Array.isArray(options.pdf) && options.pdf.includes(name));
+    if (expectsPdf) {
       if (!/\.pdf$/i.test(files[name].originalname || '')) throw Object.assign(new Error(`O arquivo ${name} deve estar em PDF.`), { status: 400 });
     } else if (!validOffice(files[name])) {
       throw Object.assign(new Error(`O arquivo ${name} deve estar em .xlsx ou .xlsm.`), { status: 400 });
@@ -38,6 +39,10 @@ module.exports = function referenceImportRoutes(db) {
     ['insumos_onerado','composicoes_onerado','insumos_desonerado','composicoes_desonerado'], importSeinfra));
   router.post('/sudecap/importar', ...handler(
     ['insumos_onerado','insumos_desonerado','composicoes_construcao','composicoes_custo_horario'], importSudecap));
+  router.post('/goinfra/importar', ...handler(
+    ['mao_obra_onerado','mao_obra_desonerado','material','composicoes_onerado','composicoes_desonerado'],
+    importGoinfra,
+    { pdf: true }));
   router.post('/cdhu/importar', ...handler(
     ['arquivo_pdf','arquivo_sintetico'], importCdhu, { pdf: 'arquivo_pdf' }));
   return router;

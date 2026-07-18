@@ -1,3 +1,5 @@
+const { databaseEngine } = require('../utils/mysqlRuntime');
+
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
@@ -860,16 +862,19 @@ async function getComposicao(db, idComposicao) {
       WHERE id_composicao = ?
       LIMIT 1`, [scoped.value]);
     if (String(catalogIdentity?.fonte || '').toUpperCase() === 'SICRO') {
+      const variants = codigoVariantes(catalogIdentity.codigo);
+      const variantMarks = variants.map(() => '?').join(',');
+      const isMysql = databaseEngine() === 'mysql';
       const imported = await one(db, `
         SELECT ${tenantComposicaoPk} AS tenant_rowid
         FROM tenant_composicoes
         WHERE COALESCE(tenant_override_status,'active')='active'
-          AND UPPER(COALESCE(fonte,''))='SICRO'
-          AND codigo=?
-          AND UPPER(COALESCE(uf_referencia,''))=UPPER(COALESCE(?,''))
-          AND COALESCE(mes_referencia,'')=COALESCE(?, '')
+          AND ${isMysql ? "CAST(UPPER(COALESCE(fonte,'')) AS BINARY)=CAST('SICRO' AS BINARY)" : "UPPER(COALESCE(fonte,''))='SICRO'"}
+          AND ${isMysql ? `CAST(codigo AS BINARY) IN (${variantMarks})` : `codigo IN (${variantMarks})`}
+          AND ${isMysql ? "CAST(UPPER(COALESCE(uf_referencia,'')) AS BINARY)=CAST(UPPER(COALESCE(?,'')) AS BINARY)" : "UPPER(COALESCE(uf_referencia,''))=UPPER(COALESCE(?,''))"}
+          AND ${isMysql ? "CAST(COALESCE(mes_referencia,'') AS BINARY)=CAST(COALESCE(?, '') AS BINARY)" : "COALESCE(mes_referencia,'')=COALESCE(?, '')"}
         ORDER BY ${tenantComposicaoPk} DESC
-        LIMIT 1`, [catalogIdentity.codigo, catalogIdentity.uf_referencia, catalogIdentity.mes_referencia]);
+        LIMIT 1`, [...variants, catalogIdentity.uf_referencia, catalogIdentity.mes_referencia]);
       if (imported) return getTenantComposicao(db, imported.tenant_rowid);
     }
 

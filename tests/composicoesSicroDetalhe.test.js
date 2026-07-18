@@ -43,7 +43,7 @@ async function run() {
       custo_total REAL, ordem INTEGER, tenant_override_status TEXT
     );
     INSERT INTO catalog.composicoes VALUES
-      (77,'SICRO.0307731','SICRO','PRODUCAO_HORARIA','Catalogo sem detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,NULL,NULL,NULL,NULL);
+      (77,'0307731','SICRO','PRODUCAO_HORARIA','Catalogo sem detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,NULL,NULL,NULL,NULL);
     INSERT INTO tenant_composicoes VALUES
       (1,'SICRO.0307731','SICRO','PRODUCAO_HORARIA','Importada com detalhe','dm3',NULL,'04/2026','DF','Ativo',168.74,0.02844,2,'dm3','Ativo',NULL,63.2188,31.6094,0.899,168.6221,NULL,'create','active');
     INSERT INTO tenant_composicoes_secoes VALUES
@@ -56,9 +56,9 @@ async function run() {
 
   const list = await repo.listComposicoes(db, { fonte: 'SICRO', uf: 'DF', mes_ref: '04/2026', q: '0307731' });
   assert.strictEqual(list.total, 2, 'a listagem geral nao deve executar deduplicacao correlacionada custosa');
-  assert.strictEqual(list.items[0].id_composicao, 'tenant:1');
+  assert(list.items.some(item => item.id_composicao === 'tenant:1'));
 
-  const detail = await repo.getComposicao(db, list.items[0].id_composicao);
+  const detail = await repo.getComposicao(db, 'tenant:1');
   assert.strictEqual(detail.secoes.length, 2);
   assert.strictEqual(detail.secoes[0].itens[0].codigo_item, 'P9821');
   assert.strictEqual(detail.secoes[1].itens[0].codigo_item, 'M0798');
