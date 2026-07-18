@@ -249,6 +249,28 @@ Router.register('fontes', async () => {
       }
       return startData.job_id ? acompanharSinapiJob(startData.job_id, containerId) : startData;
     }
+    if (url === '/api/sicro/importar-composicoes') {
+      _setProgress(containerId, 1, 'Enviando relatorio SICRO', 'O arquivo sera processado em segundo plano.');
+      const startResponse = await fetch(url, { method: 'POST', body: formData });
+      const startText = await startResponse.text();
+      let startData;
+      try { startData = startText ? JSON.parse(startText) : {}; }
+      catch (_) { throw new Error('Resposta invalida do servidor: ' + startText.slice(0, 200)); }
+      if (!startResponse.ok || startData.erro) throw new Error(startData.erro || `Erro HTTP ${startResponse.status}`);
+      if (!startData.job_id) return startData;
+      let lastStatus = startData;
+      for (let tentativa = 0; tentativa < 2880; tentativa += 1) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        const response = await fetch(`/api/sicro/importar-composicoes/${encodeURIComponent(startData.job_id)}`);
+        const status = await response.json();
+        if (!response.ok || status.erro && status.status !== 'error') throw new Error(status.erro || `Erro HTTP ${response.status}`);
+        lastStatus = status;
+        _setProgress(containerId, status.percent || 1, status.fase || 'Processando SICRO', status.mensagem || 'Importacao em andamento.');
+        if (status.status === 'done') return status.result || status.counts || {};
+        if (status.status === 'error') throw new Error(status.erro || status.mensagem || 'Falha na importacao SICRO.');
+      }
+      throw new Error(lastStatus.mensagem || 'Tempo limite acompanhando a importacao SICRO.');
+    }
     const response = await fetch(url, { method: 'POST', body: formData });
     const txt = await response.text();
     let data;

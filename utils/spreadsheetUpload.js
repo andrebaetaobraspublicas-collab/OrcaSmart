@@ -105,6 +105,40 @@ function parseXlsxBuffer(buffer) {
   return rows;
 }
 
+function forEachXlsxRow(buffer, visitor, options = {}) {
+  if (typeof visitor !== 'function') throw new Error('O leitor XLSX exige uma funcao para processar as linhas.');
+  const files = unzipXlsx(buffer);
+  const sheet = files[firstSheetPath(files)] || files['xl/worksheets/sheet1.xml'];
+  if (!sheet) throw new Error('Nenhuma planilha foi encontrada no arquivo XLSX.');
+  const sst = sharedStrings(files);
+  const maxRows = Number.isFinite(Number(options.maxRows)) ? Math.max(0, Number(options.maxRows)) : Infinity;
+  const rowRe = /<row[^>]*>([\s\S]*?)<\/row>/g;
+  const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let rowMatch;
+  let visited = 0;
+  while (visited < maxRows && (rowMatch = rowRe.exec(sheet))) {
+    const row = [];
+    cellRe.lastIndex = 0;
+    let cellMatch;
+    while ((cellMatch = cellRe.exec(rowMatch[1]))) {
+      const attrs = cellMatch[1] || '';
+      const body = cellMatch[2] || '';
+      const ref = attrs.match(/\sr="([^"]+)"/)?.[1] || '';
+      const type = attrs.match(/\st="([^"]+)"/)?.[1] || '';
+      const idx = columnIndex(ref);
+      let value = '';
+      const v = body.match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1];
+      if (type === 's') value = sst[Number(v)] || '';
+      else if (type === 'inlineStr') value = decodeXml(body.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] || '');
+      else value = decodeXml(v || '');
+      row[idx] = value;
+    }
+    visited += 1;
+    if (visitor(row, visited) === false) break;
+  }
+  return visited;
+}
+
 function parseMultipart(buffer, contentType) {
   const boundary = String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[1]
     || String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/)?.[2];
@@ -173,4 +207,5 @@ module.exports = {
   parseMultipart,
   parseMultipartAll,
   parseXlsxBuffer,
+  forEachXlsxRow,
 };
