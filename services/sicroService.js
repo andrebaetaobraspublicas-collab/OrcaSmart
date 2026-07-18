@@ -124,26 +124,41 @@ function parseSicroWorkbook(buffer, options = {}) {
 }
 
 function dbAll(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
+  return new Promise((resolve, reject) => db.all(sql, params.map(value => value === undefined ? null : value), (err, rows) => err ? reject(err) : resolve(rows || [])));
 }
 function dbGet(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.get(sql, params, (err, row) => err ? reject(err) : resolve(row || null)));
+  return new Promise((resolve, reject) => db.get(sql, params.map(value => value === undefined ? null : value), (err, row) => err ? reject(err) : resolve(row || null)));
 }
 function dbRun(db, sql, params = []) {
-  return new Promise((resolve, reject) => db.run(sql, params, function done(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+  return new Promise((resolve, reject) => db.run(sql, params.map(value => value === undefined ? null : value), function done(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+}
+
+function analisarMetadadosSicro(buffer) {
+  let uf = '';
+  let mes = '';
+  let total = 0;
+  forEachXlsxRow(buffer, (row) => {
+    const first = String(row[0] ?? '').trim();
+    if (first.includes('SISTEMA DE CUSTOS REFERENCIAIS')) {
+      total += 1;
+      if (!uf) uf = codigoUf(row[3]);
+    } else if (!mes && semAcento(first) === 'Custo Unitario de Referencia') {
+      mes = mesReferencia(row[3]);
+    }
+  });
+  return { uf, mes_referencia: mes, qtd_composicoes_estimada: total };
 }
 
 async function analisarSicro(db, buffer) {
-  const amostra = parseSicroWorkbook(buffer, { maxRows: 5000 });
-  const primeira = amostra[0] || {};
+  const metadados = analisarMetadadosSicro(buffer);
   let sobreposicao = 0;
-  if (primeira.uf && primeira.mes_referencia) {
+  if (metadados.uf && metadados.mes_referencia) {
     const row = await dbGet(db, `SELECT COUNT(*) AS total FROM tenant_composicoes
       WHERE fonte='SICRO' AND uf_referencia=? AND mes_referencia=?
-        AND COALESCE(tenant_override_status,'active')='active'`, [primeira.uf, primeira.mes_referencia]).catch(() => null);
+        AND COALESCE(tenant_override_status,'active')='active'`, [metadados.uf, metadados.mes_referencia]).catch(() => null);
     sobreposicao = Number(row?.total || 0);
   }
-  return { uf: primeira.uf || '', mes_referencia: primeira.mes_referencia || '', qtd_composicoes_estimada: amostra.length, sobreposicao };
+  return { ...metadados, sobreposicao };
 }
 
 function chunks(items, size) {
@@ -260,4 +275,4 @@ async function importarSicro(db, buffer, options = {}) {
   });
 }
 
-module.exports = { numero, mesReferencia, parseSicroWorkbook, analisarSicro, importarSicro };
+module.exports = { numero, mesReferencia, parseSicroWorkbook, analisarMetadadosSicro, analisarSicro, importarSicro };

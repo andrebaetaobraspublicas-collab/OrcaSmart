@@ -1294,7 +1294,7 @@ Router.register('fontes', async () => {
             <div style="font-size:1.2rem;font-weight:800;color:#1e3a8a">${a.mes_referencia || '—'}</div>
           </div>
           <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius-sm);padding:12px">
-            <div style="font-size:.7rem;text-transform:uppercase;color:#3b82f6;font-weight:700;margin-bottom:4px">Composições estimadas</div>
+            <div style="font-size:.7rem;text-transform:uppercase;color:#3b82f6;font-weight:700;margin-bottom:4px">Composições no arquivo</div>
             <div style="font-size:1.2rem;font-weight:800;color:#1e3a8a">${(a.qtd_composicoes_estimada||0).toLocaleString('pt-BR')}</div>
           </div>
         </div>
