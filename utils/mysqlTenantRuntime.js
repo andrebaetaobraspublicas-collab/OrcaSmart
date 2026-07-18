@@ -134,7 +134,16 @@ function qualifyTenantSelect(sql, params, tenantId) {
   const id = Number(tenantId);
   if (!Number.isInteger(id) || id <= 0) throw new Error('Tenant invalido para consulta MySQL.');
   let text = sql;
-  const tableNames = [...TENANT_SCOPED_TABLES].map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  // Alguns nomes compartilham o mesmo prefixo (por exemplo,
+  // tenant_composicoes, tenant_composicoes_secoes e
+  // tenant_composicoes_secao_itens). Em uma alternancia de regex, a primeira
+  // correspondencia vence; portanto os nomes mais especificos precisam vir
+  // antes para que "tenant_composicoes_secoes" nao seja interpretada como a
+  // tabela "tenant_composicoes" com o alias "_secoes".
+  const tableNames = [...TENANT_SCOPED_TABLES]
+    .sort((a, b) => b.length - a.length)
+    .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
   const tableRef = `\\\`?(${tableNames})\\\`?(?:\\s+(?:AS\\s+)?(\\\`?[A-Za-z_][A-Za-z0-9_]*\\\`?))?`;
 
   text = text.replace(new RegExp(`\\bJOIN\\s+${tableRef}\\s+ON\\s+`, 'gi'), (match, table, alias) => {
@@ -447,4 +456,7 @@ async function checkBusinessRuntimeMysql(config) {
 module.exports = {
   createTenantMysqlRuntime,
   checkBusinessRuntimeMysql,
+  _test: {
+    qualifyTenantSelect,
+  },
 };
