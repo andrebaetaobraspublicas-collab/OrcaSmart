@@ -345,19 +345,19 @@ Router.register('fontes', async () => {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div class="form-group">
             <label class="form-label">Insumos onerado (encargos 114,15%) *</label>
-            <input class="form-control" id="seinfraInsumosOn" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="seinfraInsumosOn" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Composicoes onerado (encargos 114,15%) *</label>
-            <input class="form-control" id="seinfraCompsOn" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="seinfraCompsOn" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Insumos desonerado (encargos 84,44%) *</label>
-            <input class="form-control" id="seinfraInsumosDes" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="seinfraInsumosDes" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Composicoes desonerado (encargos 84,44%) *</label>
-            <input class="form-control" id="seinfraCompsDes" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="seinfraCompsDes" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Mes de referencia</label>
@@ -461,19 +461,19 @@ Router.register('fontes', async () => {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div class="form-group">
             <label class="form-label">Insumos onerados *</label>
-            <input class="form-control" id="sudecapInsumosOn" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="sudecapInsumosOn" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Insumos desonerados *</label>
-            <input class="form-control" id="sudecapInsumosDes" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="sudecapInsumosDes" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Composicoes de construcao *</label>
-            <input class="form-control" id="sudecapCompsConstrucao" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="sudecapCompsConstrucao" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Composicoes de custo horario *</label>
-            <input class="form-control" id="sudecapCompsHorario" type="file" accept=".xls,.xlsx,.xlsm">
+            <input class="form-control" id="sudecapCompsHorario" type="file" accept=".xlsx,.xlsm">
           </div>
           <div class="form-group">
             <label class="form-label">Mes de referencia</label>
@@ -703,8 +703,8 @@ Router.register('fontes', async () => {
           </div>
           <div class="form-group">
             <label class="form-label">Relatório sintético com BDI *</label>
-            <input class="form-control" id="cdhuSintetico" type="file" accept=".xls,.xlsx,.xlsm">
-            <div class="text-xs text-3" style="margin-top:4px">XLS/XLSX com preço unitário incluindo BDI.</div>
+            <input class="form-control" id="cdhuSintetico" type="file" accept=".xlsx,.xlsm">
+            <div class="text-xs text-3" style="margin-top:4px">XLSX com preço unitário incluindo BDI.</div>
           </div>
           <div class="form-group">
             <label class="form-label">BDI informado no sintético (%)</label>
@@ -1226,7 +1226,7 @@ Router.register('fontes', async () => {
           </svg>
           <div style="font-weight:600;color:#1d4ed8;font-size:.95rem">Arraste ou clique para selecionar</div>
           <div style="font-size:.78rem;color:#6b7280;margin-top:4px">Relatório Analítico de Composições de Custos (.xlsx)</div>
-          <input type="file" id="sicroCompFile" accept=".xlsx,.xls,.xlsm" style="display:none">
+          <input type="file" id="sicroCompFile" accept=".xlsx,.xlsm" style="display:none">
         </label>
         <div id="sicroCompInfo" style="display:none;background:#f8faff;border:1px solid var(--c-border);border-radius:var(--radius);padding:12px 14px;font-size:.83rem;margin-top:10px">
           📎 <span id="sicroCompNome"></span>
@@ -1394,7 +1394,7 @@ Router.register('fontes', async () => {
               ${['🧑‍🔧','🧱','🚜'][i]} ${labels[i]}
             </div>
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
-              <input type="file" id="sicroFile_${key}" accept=".xlsx,.xls,.xlsm" style="display:none">
+              <input type="file" id="sicroFile_${key}" accept=".xlsx,.xlsm" style="display:none">
               <button type="button" class="btn btn-sm" id="sicroBtn_${key}"
                 onclick="document.getElementById('sicroFile_${key}').click()"
                 style="background:${bgs[i]};border:1px solid ${colors[i]}40;color:${colors[i]}">

@@ -1007,6 +1007,7 @@ app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy, { readDb: share
 app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
 app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
 app.use('/api/sicro', require('./routes/sicroRoutes')(tenantDbProxy));
+app.use('/api', require('./routes/referenceImportRoutes')(tenantDbProxy));
 app.use('/api/compras-gov', require('./routes/comprasGovRoutes')(tenantDbProxy));
 app.use('/api/pesquisa-mercado', require('./routes/pesquisaMercadoRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/analiseProjetosRoutes')(tenantDbProxy));

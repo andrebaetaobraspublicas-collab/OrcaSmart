@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const express = require('express');
-const { parseMultipart } = require('../utils/spreadsheetUpload');
+const { parseMultipart, parseMultipartAll } = require('../utils/spreadsheetUpload');
 const { analisarSicro, importarSicro } = require('../services/sicroService');
+const { importSicroInputs, validOffice } = require('../services/referenceImportService');
 
 const JOBS = new Map();
 const JOB_TTL = 4 * 60 * 60 * 1000;
@@ -92,6 +93,23 @@ module.exports = function sicroRoutes(db) {
     const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
     if (!job || job.tenant_id !== tenantId) return res.status(404).json({ erro: 'Importacao SICRO nao encontrada.' });
     return res.json(publicJob(job));
+  });
+
+  router.post('/importar-insumos', upload, async (req, res) => {
+    try {
+      const { fields, files } = parseMultipartAll(req.body, req.headers['content-type']);
+      const required = ['arq_mo', 'arq_mat', 'arq_equip'];
+      const missing = required.filter(name => !files[name]?.buffer?.length);
+      if (missing.length) return res.status(400).json({ erro: `Arquivos ausentes: ${missing.join(', ')}.` });
+      const invalid = required.find(name => !validOffice(files[name]));
+      if (invalid) return res.status(400).json({ erro: `O arquivo ${invalid} deve estar em .xlsx ou .xlsm.` });
+      const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+      if (!Number.isInteger(tenantId) || tenantId <= 0) return res.status(400).json({ erro: 'Tenant do usuário não identificado.' });
+      return res.json(await importSicroInputs(db, files, fields, tenantId));
+    } catch (err) {
+      console.error('Falha na importação de insumos SICRO:', err);
+      return res.status(err.status || 500).json({ erro: err.message || 'Falha ao importar insumos SICRO.' });
+    }
   });
 
   return router;

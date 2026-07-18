@@ -60,6 +60,28 @@ function firstSheetPath(files) {
   return target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\.\//, '')}`;
 }
 
+function workbookSheets(files) {
+  const workbook = files['xl/workbook.xml'];
+  const rels = files['xl/_rels/workbook.xml.rels'] || '';
+  if (!workbook) return [{ name: 'Planilha1', path: 'xl/worksheets/sheet1.xml' }];
+  const relationships = new Map();
+  for (const match of rels.matchAll(/<Relationship\b([^>]*)\/?\s*>/g)) {
+    const attrs = match[1] || '';
+    const id = attrs.match(/\bId="([^"]+)"/)?.[1];
+    const target = attrs.match(/\bTarget="([^"]+)"/)?.[1];
+    if (!id || !target) continue;
+    relationships.set(id, target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\.\//, '')}`);
+  }
+  const sheets = [];
+  for (const match of workbook.matchAll(/<sheet\b([^>]*)\/?\s*>/g)) {
+    const attrs = match[1] || '';
+    const name = decodeXml(attrs.match(/\bname="([^"]+)"/)?.[1] || `Planilha${sheets.length + 1}`);
+    const relId = attrs.match(/\br:id="([^"]+)"/)?.[1];
+    sheets.push({ name, path: relationships.get(relId) || `xl/worksheets/sheet${sheets.length + 1}.xml` });
+  }
+  return sheets.length ? sheets : [{ name: 'Planilha1', path: firstSheetPath(files) }];
+}
+
 function sharedStrings(files) {
   const xml = files['xl/sharedStrings.xml'];
   if (!xml) return [];
@@ -79,7 +101,10 @@ function parseXlsxBuffer(buffer) {
   const files = unzipXlsx(buffer);
   const sheet = files[firstSheetPath(files)] || files['xl/worksheets/sheet1.xml'];
   if (!sheet) throw new Error('Nenhuma planilha foi encontrada no arquivo XLSX.');
-  const sst = sharedStrings(files);
+  return parseSheetXml(sheet, sharedStrings(files));
+}
+
+function parseSheetXml(sheet, sst) {
   const rows = [];
   const rowRe = /<row[^>]*>([\s\S]*?)<\/row>/g;
   const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
@@ -103,6 +128,15 @@ function parseXlsxBuffer(buffer) {
     if (row.some(v => String(v || '').trim())) rows.push(row);
   }
   return rows;
+}
+
+function parseXlsxSheets(buffer) {
+  const files = unzipXlsx(buffer);
+  const sst = sharedStrings(files);
+  return workbookSheets(files).map(sheet => ({
+    name: sheet.name,
+    rows: parseSheetXml(files[sheet.path] || '', sst),
+  })).filter(sheet => sheet.rows.length);
 }
 
 function forEachXlsxRow(buffer, visitor, options = {}) {
@@ -207,5 +241,6 @@ module.exports = {
   parseMultipart,
   parseMultipartAll,
   parseXlsxBuffer,
+  parseXlsxSheets,
   forEachXlsxRow,
 };
