@@ -1,81 +1,91 @@
 # Módulo de Riscos e Contingência Orçamentária
 
+Atualizado em 18/07/2026.
+
 ## Objetivo
 
-O módulo transforma um orçamento sintético já cadastrado no OrçaSmart em uma análise auditável de contingência. Ele combina seleção pela curva ABC, premissas contratuais, modelagem probabilística, Valor Monetário Esperado (VME), diagrama de tornado e simulação de Monte Carlo.
+Transformar um orçamento sintético em análise auditável de contingência por curva
+ABC, modelagem probabilística, VME, RMS, tornado e Monte Carlo.
 
-A rota da SPA é `#riscos-contingencia` e as APIs ficam sob `/api/riscos-contingencia`.
+- SPA: `#riscos-contingencia`.
+- API: `/api/riscos-contingencia`.
 
-## Fluxo funcional
+## Fluxo
 
-1. Seleção do orçamento sintético e criação da fotografia da curva ABC.
-2. Seleção de serviços por classe A, A+B ou orçamento completo.
-3. Definição do regime de execução, alocação dos riscos e justificativas.
-4. Modelagem do risco por serviço, com intervalos qualitativos editáveis e composição analítica opcional.
-5. Registro de eventos independentes, com ocorrência Bernoulli.
-6. VME e análise de sensibilidade por tornado.
-7. Monte Carlo em Web Worker, com progresso, cancelamento, semente e 1.000 a 100.000 iterações.
-8. Dashboard com KPIs, histograma, curva acumulada, percentis, ABC, tornado e contribuições.
-9. Relatório técnico exportável em PDF, Excel, CSV, JSON e Word.
-10. Criação de um novo BDI personalizado, usando um perfil selecionado apenas como modelo.
+1. Seleção do orçamento e fotografia da curva ABC.
+2. Seleção de classe A, A+B ou orçamento completo.
+3. Premissas e alocação contratual.
+4. Modelagem de todos os serviços selecionados.
+5. Registro de eventos independentes.
+6. Tornado, VME e RMS.
+7. Monte Carlo.
+8. Resultados e percentis.
+9. Relatório.
+10. Aplicação por criação de novo BDI personalizado.
 
 ## Regras contratuais
 
-- Risco atribuído exclusivamente à Administração não integra a contingência do contratado.
-- Variação de quantitativo em empreitada por preço unitário somente é incluída quando houver justificativa expressa.
-- Em preço global, contratação integrada e semi-integrada, a variação quantitativa pode ser modelada conforme a alocação informada.
-- O sistema não converte automaticamente imprecisão orçamentária em risco do contratado.
-- A aplicação nunca altera o perfil BDI padronizado usado como origem. O sistema sempre cria um novo perfil do usuário, classificado no quartil `Personalizado`.
-- A aplicação por soma, quando o modelo já possui rubrica de risco, exige confirmação explícita de possível dupla contagem.
-- Grupos de correlação são registrados, mas a versão inicial trata as variáveis como independentes e emite alerta.
+- Risco exclusivo da Administração não integra contingência do contratado.
+- Quantitativo em preço unitário exige justificativa expressa.
+- O sistema não converte erro orçamentário automaticamente em risco.
+- Aplicação ao BDI nunca sobrescreve perfil existente, sobretudo padronizado.
+- Soma sobre BDI com rubrica de risco exige confirmação de dupla contagem.
 
-## Fórmulas principais
+## Modelagem de serviços
 
-Valor Monetário Esperado:
+A tela deve exibir os serviços disponíveis na fotografia da curva e permitir
+modelar individualmente ou pelos atalhos de escopo. A seleção de orçamento
+completo deve afetar todas as linhas, sem comparação textual sensível a collation.
+
+O tornado e Monte Carlo devem usar as mesmas variáveis modeladas. Uma análise com
+múltiplos serviços não pode produzir uma única barra nem contingência zero por
+falha de carregamento do escopo.
+
+## Fórmulas
 
 ```text
 VME do risco = probabilidade × impacto esperado
 Contingência VME = soma dos VME incluídos
-Taxa VME = Contingência VME / base de cálculo × 100
+Taxa VME = contingência VME / base × 100
+
+RMS = raiz da soma dos quadrados das contribuições consideradas
+Taxa RMS = contingência RMS / base × 100
 ```
 
-Monte Carlo, a cada iteração:
+Monte Carlo:
 
 ```text
-Valor simulado = serviços simulados + serviços fixos + eventos ocorridos
-Valor do serviço = quantidade simulada × custo unitário simulado
-Contingência = max(0, percentil-alvo - orçamento-base)
-Taxa = Contingência / orçamento-base × 100
+valor simulado = serviços simulados + serviços fixos + eventos ocorridos
+contingência = max(0; percentil-alvo - orçamento-base)
+taxa = contingência / orçamento-base × 100
 ```
-
-Quando a análise usa somente a curva A e a extrapolação está ativada, a variação percentual da curva A é transportada para o orçamento total e essa condição fica identificada na tela e no relatório.
 
 ## Distribuições
 
-O motor em `js/riscosEngine.js` expõe funções puras e testáveis para uniforme, triangular, PERT beta, normal truncada, lognormal e Bernoulli, além de média, mediana, desvio-padrão e quantis. A semente usa gerador pseudoaleatório determinístico para permitir reprodução da análise.
+O motor em `js/riscosEngine.js` implementa uniforme, triangular, PERT beta,
+normal truncada, lognormal e Bernoulli, com semente reproduzível. O processamento
+pesado usa `js/riscosWorker.js`.
 
-## Persistência e isolamento
+## Persistência
 
-As seguintes tabelas pertencem ao banco privado de cada tenant:
+- `riscos_analises`;
+- `riscos_servicos`;
+- `riscos_eventos`;
+- `riscos_simulacoes`;
+- `riscos_bdi_aplicacoes`.
 
-- `riscos_analises`
-- `riscos_servicos`
-- `riscos_eventos`
-- `riscos_simulacoes`
-- `riscos_bdi_aplicacoes`
+São dados privados do tenant. A exclusão de uma análise exige confirmação e deve
+limpar dependências no mesmo escopo. A linha aberta recebe destaque visual.
 
-O bootstrap cria ou atualiza essas tabelas tanto no runtime MySQL quanto no modo SQLite de desenvolvimento. Nenhuma análise de risco é armazenada no catálogo global.
+## Arquivos
 
-## Arquivos principais
-
-- `js/riscosContingencia.js`: fluxo guiado e interface.
-- `js/riscosEngine.js`: regras e motor estatístico puro.
-- `js/riscosWorker.js`: processamento assíncrono da simulação.
-- `routes/riscosRoutes.js`: endpoints HTTP.
-- `services/riscosService.js`: validações, relatórios e integração com BDI.
-- `repositories/riscosRepository.js`: persistência por tenant.
-- `utils/riscosMysqlSchema.js`: evolução do esquema MySQL.
-- `tests/riscosEngine.test.js`: testes unitários do motor.
+- `js/riscosContingencia.js`;
+- `js/riscosEngine.js`;
+- `js/riscosWorker.js`;
+- `routes/riscosRoutes.js`;
+- `services/riscosService.js`;
+- `repositories/riscosRepository.js`;
+- `utils/riscosMysqlSchema.js`.
 
 ## Testes
 
@@ -84,4 +94,5 @@ npm.cmd run test:riscos
 npm.cmd run test:bdi
 ```
 
-O fixture `tests/fixtures/orcamento-riscos-modelo.json` cobre serviços, grupos e subtotais. O teste valida parser, curva ABC, VME, distribuições, reprodutibilidade por semente, tornado, regras contratuais e aplicação da taxa ao BDI.
+Validar ainda: escopo completo, número de barras do tornado, VME/RMS, Monte Carlo
+não nulo e criação de BDI personalizado sem alteração do perfil de origem.

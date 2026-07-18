@@ -1,59 +1,54 @@
-# Eventograma Inteligente - arquitetura e operacao
+# Eventograma — arquitetura, IA e operação
+
+Atualizado em 18/07/2026.
 
 ## Escopo
 
-O modo `automatico` do Eventograma utiliza a API Anthropic para interpretar o orcamento sintetico, as composicoes vinculadas e documentos facultativos da obra. Os modos `manual` e `semiautomatico` continuam usando seus fluxos anteriores.
+O módulo cria tabelas de eventos geradores de pagamento a partir de um orçamento
+sintético. Oferece modos manual, semiautomático, automático e assistido por IA.
 
-## Fontes analisadas
+O nome do eventograma é independente do login e deve ser livremente informado
+pelo usuário.
 
-- estrutura e plano de contas do orcamento sintetico;
-- servicos, unidades, quantitativos, custos, BDI e peso financeiro;
-- itens das composicoes vinculadas, quando disponiveis;
-- projeto em PDF ou imagem;
-- memorial em PDF, DOCX, TXT ou Markdown;
-- cronograma em PDF, XLSX, XLSM ou CSV;
-- outros documentos nos formatos suportados pela tela.
+## Arquivos principais
 
-Arquivos enviados para a analise nao sao gravados no banco. O banco conserva apenas nome, categoria e tamanho dos documentos utilizados, para rastreabilidade da decisao.
+- `js/eventogramas.js`: lista, editor, busca, arraste, gráficos e exportação.
+- `routes/eventogramasRoutes.js`: endpoints HTTP.
+- `services/eventogramasService.js`: regras, validação e exportações.
+- `services/eventogramasAiService.js`: planejamento e refinamento por IA.
+- `repositories/eventogramasRepository.js`: persistência.
+- `domain/eventogramaKnowledge.js`: conhecimento e heurísticas.
 
-## Chaves Anthropic
+## Dados analisados pela IA
 
-A ordem de uso e:
+- estrutura do orçamento e plano de contas;
+- serviços, unidades, quantitativos, custos, BDI e peso financeiro;
+- composições vinculadas;
+- projeto, memorial, cronograma e documentos facultativos suportados.
 
-1. chave temporaria informada pelo usuario;
-2. `ANTHROPIC_API_KEY` do ambiente do servidor.
+Arquivos enviados para análise não são persistidos; o banco guarda metadados
+necessários à rastreabilidade.
 
-A chave temporaria permanece apenas na memoria durante a requisicao e o processamento do job. Ela nao e gravada em banco, metadados, logs ou respostas da API. A tela direciona o usuario ao console oficial da Anthropic para criar sua chave.
+## Chaves e modelo
 
-O modelo pode ser configurado por `ANTHROPIC_MODEL`; o padrao atual e `claude-sonnet-4-6`.
+Ordem de uso:
 
-## Agentes logicos
+1. chave temporária informada pelo usuário;
+2. `ANTHROPIC_API_KEY` do ambiente.
 
-A implementacao em `services/eventogramasAiService.js` coordena cinco responsabilidades sobre um contexto comum:
+A chave temporária não pode ser gravada em banco, logs ou respostas. O modelo é
+configurável por `ANTHROPIC_MODEL`.
 
-- Planejador: sequencia executiva, CPM e Linha de Balanco;
-- Agrupamento: eventos mensuraveis e rastreaveis;
-- Financeiro: valores, pesos e concentracao;
-- Auditoria: omissoes, sobreposicoes, antecipacao e criterios insuficientes;
-- Explicador/Aprendizado: justificativas e feedback do usuario.
+## Planejamento
 
-As regras de conhecimento ficam em `domain/eventogramaKnowledge.js`.
+A IA coordena responsabilidades de planejamento, agrupamento, financeiro,
+auditoria e explicação. Pode produzir alternativas com poucos eventos, equilíbrio,
+maior controle, fluxo de caixa e menor risco para a Administração.
 
-## Alternativas
+Todos os serviços propostos devem ser reconciliados com IDs reais do orçamento.
+O backend calcula diagnósticos sem confiar cegamente na resposta da IA.
 
-A analise produz cinco modelos:
-
-- A - Poucos eventos;
-- B - Equilibrado;
-- C - Maior controle;
-- D - Maior fluxo de caixa, sem antecipacao indevida;
-- E - Menor risco para a Administracao.
-
-Todo servico e validado contra os IDs reais do orcamento e materializado uma unica vez. Itens eventualmente omitidos pela resposta da IA sao reconciliados localmente por secao e afinidade semantica.
-
-## Processamento assincrono
-
-A geracao pode levar alguns minutos. A tela inicia um job em memoria e consulta seu progresso, evitando manter uma requisicao HTTP aberta durante toda a chamada Anthropic. Jobs expiram em 30 minutos; apenas um job pode executar por eventograma e o servidor aceita ate quatro analises concorrentes.
+## Processamento e progresso
 
 Endpoints principais:
 
@@ -64,20 +59,54 @@ Endpoints principais:
 - `POST /api/eventogramas/:id/ia/refinar`;
 - `POST /api/eventogramas/:id/ia/feedback`.
 
-## Persistencia e compatibilidade
+A interface mantém um painel/barra de progresso após fechar o formulário inicial.
+Jobs são mantidos em memória, expiram e podem ser interrompidos por reinício do
+Node.
 
-Nao foram criadas tabelas novas. Os eventos continuam em `ev_eventos` e seus itens em `ev_evento_itens`. Metadados explicativos versionados usam o campo `observacoes`, sem remover o texto livre do usuario. A edicao posterior de observacoes preserva esses metadados.
+## Persistência
 
-## Auditoria e indicadores
+- Eventogramas: `eventogramas`.
+- Eventos: `ev_eventos`.
+- Itens: `ev_evento_itens`.
+- Todos são dados privados do tenant.
 
-O backend calcula, sem depender da resposta da IA:
+Ao reabrir, eventos e associações devem permanecer. Não substituir a estrutura
+persistida por um resultado vazio da interface.
 
-- servicos esquecidos ou duplicados;
-- eventos sem servico, criterio, dependencia ou documento;
-- suspeita de pagamento antecipado;
-- eventos pequenos ou excessivamente grandes;
-- numero de eventos, media, desvio padrao e concentracao;
-- equilibrio, risco, complexidade, rastreabilidade e auditabilidade;
-- score de qualidade, Curva S, fluxo financeiro e histograma.
+## Edição
 
-As exportacoes JSON, Excel e PDF permanecem disponiveis. O JSON inclui a estrutura completa e o diagnostico calculado.
+- Busca deve filtrar itens/eventos sem interferência de preenchimento automático
+  de login.
+- Itens podem ser arrastados entre etapas e subetapas compatíveis.
+- O backend persiste a movimentação e recalcula valores/pendências.
+- A exclusão do eventograma exige confirmação.
+
+## Auditoria e gráficos
+
+São calculados serviços esquecidos/duplicados, eventos sem critério/dependência,
+antecipação, concentração, equilíbrio, risco, complexidade, rastreabilidade e
+auditabilidade.
+
+Os gráficos finais têm altura ampliada e eixos identificados. Incluem percentual
+acumulado, fluxo financeiro e indicadores diagnósticos.
+
+## Exportações
+
+- JSON completo;
+- Excel;
+- PDF com cabeçalho, identificação, tabelas organizadas, totais e paginação.
+
+Rotas:
+
+- `GET /api/eventogramas/:id/exportar/json`;
+- `GET /api/eventogramas/:id/exportar/excel`;
+- `GET /api/eventogramas/:id/exportar/pdf`.
+
+## Teste
+
+```powershell
+npm.cmd run test:eventogramas
+```
+
+Validar também criação, progresso, reabertura, busca, arraste e as três
+exportações em um orçamento real.

@@ -1,5 +1,9 @@
 # OrcaSmart2 - Fase 1: consolidacao do backend Node.js
 
+> **Documento histórico.** A consolidação Node foi concluída e a produção atual
+> é o OrcaSmart3 em MySQL. Para o estado vigente, leia
+> `docs/ESTADO_ATUAL_ORCASMART_2026-07-18.md`.
+
 ## Objetivo
 
 Transformar a versao SaaS em uma aplicacao Node.js unica, sem depender de rotas ou regras mantidas apenas no backend Python legado.

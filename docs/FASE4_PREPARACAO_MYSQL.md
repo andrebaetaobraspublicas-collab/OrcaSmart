@@ -1,5 +1,8 @@
 # Fase 4 - Preparacao para MySQL
 
+> **Documento histórico de preparação.** A produção já opera em MySQL/MariaDB.
+> Consulte `docs/FASE4_STATUS_ATUAL_E_HANDOFF.md`.
+
 ## Objetivo
 
 Preparar o OrcaSmart2 para migrar de SQLite para MySQL sem alterar a versao desktop e sem afetar a versao SaaS em producao.

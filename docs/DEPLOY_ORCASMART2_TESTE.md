@@ -1,5 +1,8 @@
 # Deploy de Homologacao - OrcaSmart2
 
+> **Documento histórico de homologação.** O fluxo oficial atual está em
+> `docs/DEPLOY_HOSTINGER.md`.
+
 Este procedimento publica a branch `orcasmart2` em um diretorio separado do Hostinger, sem alterar a producao atual.
 
 ## Objetivo

@@ -1,83 +1,74 @@
-# Deploy Hostinger - OrçaSmart SaaS
+# Deploy do OrcaSmart3 no Hostinger
 
-Este pacote foi adaptado para o app Node.js/Express existente no Hostinger.
+Atualizado em 18/07/2026.
 
-## Situacao observada no hPanel
+## Fluxo oficial
 
-- Dominio/site: `calculoobra.com.br`
-- Plano: Business
-- App: Node.js Web App
-- Framework preset: Express
-- Node version: 22.x
-- Entry file: `server.js`
-- Deploy atual: upload manual de `SistemaOrcamentoObras.zip`
+O deploy é executado pelo workflow `.github/workflows/deploy-hostinger.yml` em
+push para `main`.
 
-## Publicacao
+O workflow:
 
-O hPanel atual nao exibiu conexao direta com GitHub no app existente. O caminho automatico preparado neste repositorio usa GitHub Actions + FTP.
+1. faz checkout;
+2. empacota dependências de runtime necessárias;
+3. grava `tmp/restart.txt`;
+4. publica via FTP no diretório configurado pelos secrets do GitHub.
 
-1. Crie ou redefina uma conta FTP no hPanel.
-2. Cadastre os secrets no GitHub:
+Arquivos `.env`, bancos SQLite, diretórios de tenant e exports são excluídos do
+upload.
+
+## Publicação a partir da branch local
+
+```powershell
+Set-Location C:\SistemaOrcamentoObras\saas
+git status --short
+git diff --check
+git add -- <somente arquivos da tarefa>
+git commit -m "Descrição objetiva"
+git push origin HEAD:main
+```
+
+Não adicionar alterações locais alheias à tarefa.
+
+## Servidor
+
+- Aplicação: `/home/u296746636/domains/calculoobra.com.br/nodejs`.
+- Dados persistentes: `/home/u296746636/domains/calculoobra.com.br/orcasmart2-data`.
+- Produção: `https://calculoobra.com.br/`.
+- Node configurado no Hostinger: 22.x.
+
+## Reinício
+
+O deploy sinaliza reinício por `tmp/restart.txt`, mas é necessário confirmar que
+o processo foi realmente reciclado. Um arquivo novo no disco não significa que o
+Node já recarregou os módulos em memória.
+
+Validação mínima:
+
+1. confirmar o arquivo/commit no servidor;
+2. conferir data de início do processo Node;
+3. se o processo for anterior ao deploy, reiniciar controladamente;
+4. aguardar novo processo e conferir a página de login;
+5. consultar `/api/status`.
+
+Evitar reiniciar durante importação SINAPI/SICRO ou job de IA, pois alguns jobs
+atuais são mantidos em memória.
+
+## Validação pós-deploy
 
 ```text
-HOSTINGER_FTP_SERVER=82.180.153.142
-HOSTINGER_FTP_USERNAME=u296746636.orcasmartnode
-HOSTINGER_FTP_PASSWORD=<senha FTP>
-HOSTINGER_TARGET_DIR=/
+GET https://calculoobra.com.br/api/status
 ```
 
-3. Faça push na branch `main`.
-4. Confirme no hPanel se o app Node reiniciou. Se necessario, use `Settings and redeploy` com `Use previous files`.
+Esperado: `status=ok`, `runtime=node`, MySQL e master MySQL ativos,
+`mysqlReady=true`, `cutoverReady=true`.
 
-## Variaveis no Hostinger
+Também é obrigatório testar o fluxo funcional modificado. O status saudável não
+garante que uma regra de negócio específica esteja correta.
 
-Em `Environment variables`, configure:
+## Segurança
 
-```env
-NODE_ENV=production
-PUBLIC_DOMAIN=https://calculoobra.com.br
-SESSION_SECRET=<chave longa aleatoria>
-STRIPE_SECRET_KEY=<chave secreta Stripe>
-STRIPE_WEBHOOK_SECRET=<segredo do webhook Stripe>
-STRIPE_PRICE_ID=<price mensal Stripe>
-ORCASMART_DATA_DIR=
-```
-
-## Banco template
-
-O GitHub nao recebe arquivos `.db`. Antes de liberar cadastro de usuarios, envie um destes arquivos por FTP/File Manager:
-
-```text
-database/orcamento_obras_template.db
-```
-
-ou mantenha o banco legado:
-
-```text
-database/orcamento_obras.db
-```
-
-O servidor cria no diretorio do app ou em `ORCASMART_DATA_DIR`, quando configurado:
-
-```text
-saas_master.db
-tenant_dbs/tenant_000001.db
-tenant_dbs/tenant_000002.db
-...
-```
-
-## Stripe
-
-Configure o webhook para:
-
-```text
-https://calculoobra.com.br/api/stripe/webhook
-```
-
-Eventos:
-
-```text
-checkout.session.completed
-customer.subscription.updated
-customer.subscription.deleted
-```
+- Secrets FTP ficam apenas no GitHub.
+- Variáveis de banco/IA ficam apenas no Hostinger.
+- Não copiar `.env`, senhas, cookies, tokens ou chaves SSH para commits ou docs.
+- Backups e exclusões administrativas devem manter confirmação e auditoria.
