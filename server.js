@@ -1013,7 +1013,7 @@ app.use('/api/bdi', require('./routes/bdiRoutes')(tenantDbProxy, { readDb: share
 app.use('/api/riscos-contingencia', require('./routes/riscosRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api', require('./routes/compatRoutes')(tenantDbProxy));
 app.use('/api/admin', requireAdmin, require('./routes/adminRoutes')(
-  { all: allMaster, get: getMaster, run: runMaster },
+  { engine: masterDb.engine, all: allMaster, get: getMaster, run: runMaster },
   {
     sqlite3: getSqlite3(),
     catalogPath: SHARED_CATALOG_DB_PATH,

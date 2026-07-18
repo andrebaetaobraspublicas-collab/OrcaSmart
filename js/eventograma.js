@@ -109,6 +109,7 @@ Router.register('eventograma', async () => {
         <div style="font-size:.9rem;font-weight:600;color:var(--c-primary);min-width:110px;text-align:right">
           ${Utils.moeda(e.valor_total||0)}
         </div>
+        <button class="btn btn-ghost btn-sm" title="Excluir eventograma" aria-label="Excluir ${Utils.esc(e.nome)}" onclick="event.stopPropagation();window._evgExcluir(${e.id_eventograma})" style="color:#b42318">Excluir</button>
       </div>`).join('');
   }
 
@@ -374,6 +375,19 @@ Router.register('eventograma', async () => {
   }
 
   window._evgAbrir = (id) => abrirEditor(id);
+  window._evgExcluir = async (id) => {
+    const item = (await API.eventogramas.list()).find(e => Number(e.id_eventograma) === Number(id));
+    const ok = await Confirm.ask(
+      `Excluir o eventograma "${item?.nome || id}"? Todos os eventos e vinculos de itens associados serao removidos.`,
+      { title: 'Confirmar exclusao do eventograma', okText: 'Excluir', okClass: 'btn btn-danger' }
+    );
+    if (!ok) return;
+    try {
+      await API.eventogramas.delete(id);
+      Toast.success('Eventograma excluido.');
+      renderListContent(await API.eventogramas.list());
+    } catch (error) { Toast.error(error.message || 'Falha ao excluir eventograma.'); }
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EDITOR DE EVENTOGRAMA

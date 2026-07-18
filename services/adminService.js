@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const repo = require('../repositories/adminRepository');
 const { auditTenants, migrateTenants } = require('../utils/tenantPhase2Migration');
+const { createMysqlConnection, mysqlConfig } = require('../utils/mysqlRuntime');
 
 const SUBSCRIPTION_STATUSES = [
   'trial',
@@ -1083,6 +1084,97 @@ async function updateUser(master, actor, idUser, data = {}) {
   return { ok: true, user: after };
 }
 
+function removeSqliteTenantFiles(dbPath, options = {}) {
+  if (!dbPath || String(dbPath).startsWith('mysql:')) return [];
+  const resolved = path.resolve(String(dbPath));
+  const allowedRoot = path.resolve(options.dataDir || path.dirname(options.masterPath || resolved));
+  if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) {
+    const err = new Error('O banco privado do tenant esta fora do diretorio de dados permitido. Exclusao cancelada.');
+    err.status = 409;
+    throw err;
+  }
+  const removed = [];
+  [resolved, `${resolved}-wal`, `${resolved}-shm`].forEach(file => {
+    if (fs.existsSync(file)) { fs.unlinkSync(file); removed.push(file); }
+  });
+  return removed;
+}
+
+async function deleteMysqlTenant(user, actor) {
+  const connection = await createMysqlConnection(mysqlConfig());
+  try {
+    await connection.beginTransaction();
+    const [columns] = await connection.execute(`
+      SELECT DISTINCT TABLE_NAME AS table_name
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'tenant_id'`);
+    const tables = columns.map(row => String(row.table_name)).filter(name => /^[A-Za-z0-9_]+$/.test(name));
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+    try {
+      for (const table of tables) await connection.execute(`DELETE FROM \`${table}\` WHERE tenant_id = ?`, [user.id_tenant]);
+      await connection.execute('DELETE FROM subscriptions WHERE id_user = ?', [user.id_user]);
+      await connection.execute('DELETE FROM users WHERE id_user = ?', [user.id_user]);
+      await connection.execute('DELETE FROM tenants WHERE id_tenant = ?', [user.id_tenant]);
+      await connection.execute(`INSERT INTO admin_audit_log
+        (id_admin, admin_email, acao, entidade_tipo, entidade_id, antes, depois)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+        actor?.id_user || null, actor?.email || null, 'admin.user.delete', 'user', String(user.id_user),
+        JSON.stringify(user), JSON.stringify({ deleted: true, tenant_deleted: true, tenant_tables_cleared: tables.length }),
+      ]);
+    } finally {
+      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+    }
+    await connection.commit();
+    return { tenant_tables_cleared: tables.length };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    await connection.end().catch(() => {});
+  }
+}
+
+async function deleteUser(master, actor, idUser, options = {}) {
+  const id = Number(idUser);
+  if (!id) { const err = new Error('Usuario invalido.'); err.status = 400; throw err; }
+  if (actor && Number(actor.id_user) === id) {
+    const err = new Error('Por seguranca, o administrador nao pode excluir a propria conta.'); err.status = 400; throw err;
+  }
+  const user = await repo.getUser(master, id);
+  if (!user) { const err = new Error('Usuario nao encontrado.'); err.status = 404; throw err; }
+  const tenantUsers = await repo.listTenantUsers(master, user.id_tenant);
+  if (tenantUsers.length !== 1) {
+    const err = new Error('Este tenant possui outros usuarios. A exclusao completa foi bloqueada para nao apagar dados compartilhados.'); err.status = 409; throw err;
+  }
+  if (user.role === 'admin' && user.status === 'ativo' && await repo.countAdmins(master) <= 1) {
+    const err = new Error('Nao e permitido excluir o ultimo administrador ativo.'); err.status = 400; throw err;
+  }
+  const tenant = await repo.getTenant(master, user.id_tenant);
+  let details;
+  if (master.engine === 'mysql') {
+    details = await deleteMysqlTenant(user, actor);
+  } else {
+    const dbPath = tenant?.db_path;
+    if (dbPath && !String(dbPath).startsWith('mysql:')) {
+      const resolved = path.resolve(String(dbPath));
+      const allowedRoot = path.resolve(options.dataDir || path.dirname(options.masterPath || resolved));
+      if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) {
+        const err = new Error('O banco privado do tenant esta fora do diretorio de dados permitido. Exclusao cancelada.'); err.status = 409; throw err;
+      }
+    }
+    await master.run('DELETE FROM subscriptions WHERE id_user = ?', [id]);
+    await master.run('DELETE FROM users WHERE id_user = ?', [id]);
+    await master.run('DELETE FROM tenants WHERE id_tenant = ?', [user.id_tenant]);
+    removeSqliteTenantFiles(dbPath, options);
+    await repo.logAdminAction(master, actor, {
+      acao: 'admin.user.delete', entidade_tipo: 'user', entidade_id: id,
+      antes: { ...user, db_path: tenant?.db_path || null }, depois: { deleted: true, tenant_deleted: true },
+    });
+    details = { tenant_database_deleted: true };
+  }
+  return { ok: true, id_user: id, id_tenant: user.id_tenant, ...details };
+}
+
 async function updateUserPassword(master, actor, idUser, data = {}) {
   const id = Number(idUser);
   const password = String(data.senha || data.password || '');
@@ -1217,6 +1309,7 @@ module.exports = {
   listSubscriptions,
   listTenants,
   updateUser,
+  deleteUser,
   updateUserPassword,
   startUserPasswordReset,
   updateUserSubscription,

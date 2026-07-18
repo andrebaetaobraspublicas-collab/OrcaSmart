@@ -411,10 +411,21 @@ async function exportPdf(db, id) {
   return { filename: `eventograma_${safeName}.pdf`, buffer: buildProfessionalPdf(evg) };
 }
 
+async function deleteEventograma(db, id) {
+  const result = await repo.deleteEventograma(db, Number(id));
+  if (result.status === 'not_found') {
+    const err = new Error('Eventograma nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  return { status: 'ok', id_eventograma: Number(id) };
+}
+
 module.exports = {
   listEventogramas,
   createEventograma,
   getEventograma,
+  deleteEventograma,
   gerar,
   validar,
   createEvento,

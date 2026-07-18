@@ -193,6 +193,7 @@ const AdminPage = {
           <button class="btn btn-primary btn-sm" data-admin-user-save="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled' : ''}>Salvar</button>
           <button class="btn btn-ghost btn-sm" data-admin-user-password="${user.id_user}">Senha</button>
           <button class="btn btn-ghost btn-sm" data-admin-user-reset="${user.id_user}">Gerar temporaria</button>
+          <button class="btn btn-danger btn-sm" data-admin-user-delete="${user.id_user}" ${this.state.me && this.state.me.id_user === user.id_user ? 'disabled title="Voce nao pode excluir a propria conta"' : ''}>Excluir</button>
         </td>
       </tr>`).join('');
     return `
@@ -1185,6 +1186,26 @@ const AdminPage = {
     });
     document.querySelectorAll('[data-admin-user-reset]').forEach(btn => {
       btn.addEventListener('click', () => this.startPasswordReset(btn.dataset.adminUserReset));
+    });
+    document.querySelectorAll('[data-admin-user-delete]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.adminUserDelete;
+        const user = this.state.users.find(item => String(item.id_user) === String(id));
+        const ok = await Confirm.ask(
+          `Excluir definitivamente ${user?.email || '#' + id}? A conta, assinatura, tenant e todos os dados privados associados serao apagados. Esta operacao nao pode ser desfeita.`,
+          { title: 'Confirmar exclusao completa do usuario', okText: 'Excluir definitivamente', okClass: 'btn btn-danger' }
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await API.admin.deleteUser(id);
+          Toast.success('Usuario e dados associados excluidos.');
+          await this.render();
+        } catch (err) {
+          Toast.error(err.message || 'Falha ao excluir usuario.');
+          btn.disabled = false;
+        }
+      });
     });
     document.querySelectorAll('[data-admin-subscription-save]').forEach(btn => {
       btn.addEventListener('click', async () => {

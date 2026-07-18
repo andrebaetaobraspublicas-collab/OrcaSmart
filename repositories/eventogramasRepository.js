@@ -448,6 +448,15 @@ async function getEventogramaRaw(db, idEventograma) {
   return one(db, 'SELECT * FROM eventogramas WHERE id_eventograma=?', [idEventograma]);
 }
 
+async function deleteEventograma(db, idEventograma) {
+  const existing = await getEventogramaRaw(db, idEventograma);
+  if (!existing) return { status: 'not_found', changes: 0 };
+  await run(db, 'DELETE FROM ev_evento_itens WHERE id_evento IN (SELECT id_evento FROM ev_eventos WHERE id_eventograma=?)', [idEventograma]);
+  await run(db, 'DELETE FROM ev_eventos WHERE id_eventograma=?', [idEventograma]);
+  const result = await run(db, 'DELETE FROM eventogramas WHERE id_eventograma=?', [idEventograma]);
+  return { status: 'ok', changes: Number(result?.changes || 1) };
+}
+
 module.exports = {
   listEventogramas,
   createEventograma,
@@ -463,6 +472,7 @@ module.exports = {
   moveItensEvento,
   reordenarEventos,
   getEventogramaRaw,
+  deleteEventograma,
   insertEventoItens,
   recalcularValoresEventograma,
 };

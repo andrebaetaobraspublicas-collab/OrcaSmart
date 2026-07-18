@@ -25,6 +25,10 @@ module.exports = function eventogramasRoutes(db) {
     res.json(await service.getEventograma(db, req.params.id));
   }));
 
+  router.delete('/:id', asyncHandler(async (req, res) => {
+    res.json(await withWriteConnection(writeDb => service.deleteEventograma(writeDb, req.params.id)));
+  }));
+
   router.post('/:id/gerar', asyncHandler(async (req, res) => {
     res.json(await withWriteConnection(writeDb => service.gerar(writeDb, req.params.id, req.body || {})));
   }));

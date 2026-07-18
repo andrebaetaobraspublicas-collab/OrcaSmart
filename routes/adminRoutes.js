@@ -33,6 +33,10 @@ module.exports = function adminRoutes(master, options = {}) {
     res.json(await service.updateUser(master, req.user, req.params.id, req.body || {}));
   }));
 
+  router.delete('/users/:id', asyncHandler(async (req, res) => {
+    res.json(await service.deleteUser(master, req.user, req.params.id, options));
+  }));
+
   router.patch('/users/:id/password', asyncHandler(async (req, res) => {
     res.json(await service.updateUserPassword(master, req.user, req.params.id, req.body || {}));
   }));

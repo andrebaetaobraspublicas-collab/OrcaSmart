@@ -122,7 +122,7 @@ const RiscosContingencia = {
 
   renderSelection() {
     const analysis = this.state.atual?.analise;
-    const cards = this.state.analises.map(item => `<tr><td><strong>${this.esc(item.nome)}</strong><div class="text-xs text-3">${this.esc(item.nome_obra || '')}</div></td><td>${this.esc(item.nome_orcamento || '')}</td><td>${this.esc(item.regime_execucao)}</td><td>${this.esc(item.status)}</td><td class="center"><button class="risk-icon-btn" data-open-analysis="${item.id_analise}">Abrir</button></td></tr>`).join('');
+    const cards = this.state.analises.map(item => `<tr class="${Number(item.id_analise) === Number(this.state.idAnalise) ? 'risk-analysis-selected' : ''}"><td><strong>${this.esc(item.nome)}</strong><div class="text-xs text-3">${this.esc(item.nome_obra || '')}</div></td><td>${this.esc(item.nome_orcamento || '')}</td><td>${this.esc(item.regime_execucao)}</td><td>${this.esc(item.status)}</td><td><div class="risk-actions"><button class="risk-icon-btn" data-open-analysis="${item.id_analise}">Abrir</button><button class="risk-icon-btn danger" data-delete-analysis-row="${item.id_analise}">Excluir</button></div></td></tr>`).join('');
     this.panel('Seleção do Orçamento', 'Escolha um orçamento sintético existente. Linhas de grupo e subtotal são desconsideradas automaticamente.', `
       <div class="risk-alert info"><b>ℹ</b><span>Para importar PDF ou Excel, use primeiro o <a href="#orcamento-sintetico">Orçamento Sintético</a>. Esta análise registra uma fotografia auditável da curva ABC.</span></div>
       <div class="risk-grid" style="margin:16px 0">
@@ -135,6 +135,7 @@ const RiscosContingencia = {
       <h3 style="margin-top:26px">Análises existentes</h3><div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>Análise</th><th>Orçamento</th><th>Regime</th><th>Status</th><th></th></tr></thead><tbody>${cards || '<tr><td colspan="5" class="risk-empty">Nenhuma análise cadastrada.</td></tr>'}</tbody></table></div>`);
     document.getElementById('riskCreateAnalysis')?.addEventListener('click', () => this.createAnalysis());
     document.querySelectorAll('[data-open-analysis]').forEach(button => button.addEventListener('click', () => this.loadAnalysis(button.dataset.openAnalysis)));
+    document.querySelectorAll('[data-delete-analysis-row]').forEach(button => button.addEventListener('click', () => this.deleteAnalysis(button.dataset.deleteAnalysisRow)));
   },
 
   async createAnalysis() {
@@ -153,12 +154,16 @@ const RiscosContingencia = {
     } catch (error) { Toast.error(error.message); button.disabled = false; button.textContent = 'Criar analise e gerar curva ABC'; }
   },
 
-  async deleteAnalysis() {
-    if (!await Confirm.ask('A analise, seus riscos e simulacoes serao excluidos.', 'Excluir analise', { okText: 'Excluir', okClass: 'btn btn-danger' })) return;
+  async deleteAnalysis(id = this.state.idAnalise) {
+    const target = this.state.analises.find(item => Number(item.id_analise) === Number(id));
+    if (!await Confirm.ask(`Excluir a analise "${target?.nome || id}"? Seus riscos, simulacoes e aplicacoes serao removidos.`, { title: 'Excluir analise', okText: 'Excluir', okClass: 'btn btn-danger' })) return;
     try {
-      await API.riscosContingencia.delete(this.state.idAnalise);
+      await API.riscosContingencia.delete(id);
       this.state.analises = await API.riscosContingencia.analises();
-      this.state.idAnalise = null; this.state.atual = null; this.state.tab = 'selecao';
+      if (Number(id) === Number(this.state.idAnalise)) {
+        this.state.idAnalise = null; this.state.atual = null; this.state.tab = 'selecao';
+        sessionStorage.removeItem('riscos_analise_atual');
+      }
       Toast.success('Analise excluida.'); this.renderShell();
     } catch (error) { Toast.error(error.message); }
   },

@@ -52,6 +52,7 @@ const API = {
       return API.get(`/admin/users${q ? '?' + q : ''}`);
     },
     updateUser: (id, data) => API._req('PATCH', `/admin/users/${id}`, data),
+    deleteUser: (id) => API.delete(`/admin/users/${id}`),
     createUser: (data) => API.post('/admin/users', data),
     updateUserPassword: (id, data) => API._req('PATCH', `/admin/users/${id}/password`, data),
     startUserPasswordReset: (id) => API.post(`/admin/users/${id}/password-reset`, {}),

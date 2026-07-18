@@ -172,6 +172,12 @@ async function main() {
       fs.writeFileSync(output, pdf.buffer);
     }
 
+    const deleted = await service.deleteEventograma(db, evg.id_eventograma);
+    assert.strictEqual(deleted.status, 'ok');
+    assert.ok(!(await repo.getEventogramaRaw(db, evg.id_eventograma)));
+    assert.strictEqual((await new Promise((resolve, reject) => db.get('SELECT COUNT(*) AS total FROM ev_eventos', [], (error, row) => error ? reject(error) : resolve(row)))).total, 0);
+    assert.strictEqual((await new Promise((resolve, reject) => db.get('SELECT COUNT(*) AS total FROM ev_evento_itens', [], (error, row) => error ? reject(error) : resolve(row)))).total, 0);
+
     console.log('eventogramas.test.js: OK');
   } finally {
     await new Promise(resolve => db.close(resolve));
