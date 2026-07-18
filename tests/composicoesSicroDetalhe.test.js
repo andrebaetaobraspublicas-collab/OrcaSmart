@@ -55,13 +55,17 @@ async function run() {
   `);
 
   const list = await repo.listComposicoes(db, { fonte: 'SICRO', uf: 'DF', mes_ref: '04/2026', q: '0307731' });
-  assert.strictEqual(list.total, 1, 'a composicao detalhada deve ocultar a duplicata do catalogo');
+  assert.strictEqual(list.total, 2, 'a listagem geral nao deve executar deduplicacao correlacionada custosa');
   assert.strictEqual(list.items[0].id_composicao, 'tenant:1');
 
   const detail = await repo.getComposicao(db, list.items[0].id_composicao);
   assert.strictEqual(detail.secoes.length, 2);
   assert.strictEqual(detail.secoes[0].itens[0].codigo_item, 'P9821');
   assert.strictEqual(detail.secoes[1].itens[0].codigo_item, 'M0798');
+
+  const detailFromCatalog = await repo.getComposicao(db, 77);
+  assert.strictEqual(detailFromCatalog.id_composicao, 'tenant:1', 'a consulta pontual deve preferir a importacao detalhada');
+  assert.strictEqual(detailFromCatalog.secoes.length, 2);
   await close(db);
   console.log('composicoesSicroDetalhe.test.js: OK');
 }

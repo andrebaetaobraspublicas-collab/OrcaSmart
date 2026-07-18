@@ -90,22 +90,9 @@ async function hasTenantReferentialOverrides(db) {
 
 function visibleCatalogClause(alias = 'c', hasOverrides = true) {
   const nonUserCatalog = `UPPER(COALESCE(${alias}.fonte,'')) <> 'USUARIO'`;
-  const tenantIdentityShadow = `
-    (
-      UPPER(COALESCE(${alias}.fonte,'')) <> 'SICRO'
-      OR NOT EXISTS (
-        SELECT 1 FROM tenant_composicoes tc
-        WHERE COALESCE(tc.tenant_override_status,'active')='active'
-          AND UPPER(COALESCE(tc.fonte,''))='SICRO'
-          AND tc.codigo=${alias}.codigo
-          AND UPPER(COALESCE(tc.uf_referencia,''))=UPPER(COALESCE(${alias}.uf_referencia,''))
-          AND COALESCE(tc.mes_referencia,'')=COALESCE(${alias}.mes_referencia,'')
-      )
-    )`;
-  if (!hasOverrides) return `${nonUserCatalog} AND ${tenantIdentityShadow}`;
+  if (!hasOverrides) return nonUserCatalog;
   return `
     ${nonUserCatalog}
-    AND ${tenantIdentityShadow}
     AND
     NOT EXISTS (
       SELECT 1 FROM tenant_referential_overrides r
@@ -363,7 +350,7 @@ async function listComposicoes(db, query = {}) {
     const total = await one(db, `SELECT COUNT(*) AS total FROM (${baseSql}) AS total_composicoes`, params);
     const items = await all(db, `
       ${baseSql}
-      ORDER BY fonte, codigo
+      ORDER BY fonte, codigo, CASE WHEN _tenant_scope='tenant' THEN 0 ELSE 1 END
       LIMIT ? OFFSET ?`, [...params, limit, offset]);
     await aplicarPrecosResolvidosTenantLista(db, items);
     return { items, total: Number(total?.total || 0), limit, offset };
@@ -862,6 +849,30 @@ async function getComposicao(db, idComposicao) {
         AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY ${tenantComposicaoPk} DESC LIMIT 1`, [scoped.value]);
     if (override) return getTenantComposicao(db, override.tenant_rowid);
+
+    // Importacoes SICRO detalhadas pertencem ao tenant e podem coexistir com um
+    // registro resumido do catalogo. Resolva essa precedencia somente para a
+    // composicao aberta; fazer a mesma comparacao na listagem inteira causa uma
+    // subconsulta correlacionada sobre centenas de milhares de registros.
+    const catalogIdentity = await one(db, `
+      SELECT codigo, fonte, uf_referencia, mes_referencia
+      FROM catalog.composicoes
+      WHERE id_composicao = ?
+      LIMIT 1`, [scoped.value]);
+    if (String(catalogIdentity?.fonte || '').toUpperCase() === 'SICRO') {
+      const imported = await one(db, `
+        SELECT ${tenantComposicaoPk} AS tenant_rowid
+        FROM tenant_composicoes
+        WHERE COALESCE(tenant_override_status,'active')='active'
+          AND UPPER(COALESCE(fonte,''))='SICRO'
+          AND codigo=?
+          AND UPPER(COALESCE(uf_referencia,''))=UPPER(COALESCE(?,''))
+          AND COALESCE(mes_referencia,'')=COALESCE(?, '')
+        ORDER BY ${tenantComposicaoPk} DESC
+        LIMIT 1`, [catalogIdentity.codigo, catalogIdentity.uf_referencia, catalogIdentity.mes_referencia]);
+      if (imported) return getTenantComposicao(db, imported.tenant_rowid);
+    }
+
     const built = buildTenantCatalogListSelect({}, 'catalog', hasOverrides);
     const comp = await one(db, `${built.sql} AND c.id_composicao = ?`, [...built.params, scoped.value]);
     if (!comp) return null;
