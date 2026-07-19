@@ -162,8 +162,16 @@ async function main() {
     assert(pagina.some(item => item.codigo_insumo === 'M161910000.REV001'));
     assert(pagina.some(item => item.codigo_insumo === 'ADM-1'));
 
+    // A mesma conexao deve aceitar filtros consecutivos sem reaproveitar o
+    // resultado anterior nem repetir a preparacao do schema a cada chamada.
+    const apenasCdhu = await service.listInsumos(dbComConexao, { origem: 'CDHU', limit: 300 });
+    const apenasUsuario = await service.listInsumos(dbComConexao, { origem: 'USUARIO', limit: 300 });
+    assert.strictEqual(conexoesReutilizadas, 3);
+    assert.deepStrictEqual(apenasCdhu.map(item => item.codigo_insumo), ['M161910000', 'ADM-1']);
+    assert.deepStrictEqual(apenasUsuario.map(item => item.codigo_insumo), ['M161910000.REV001']);
+
     const totais = await service.stats(dbComConexao);
-    assert.strictEqual(conexoesReutilizadas, 2);
+    assert.strictEqual(conexoesReutilizadas, 4);
     assert.strictEqual(totais.total, 3);
     assert.strictEqual(totais.equipamento, 2);
 

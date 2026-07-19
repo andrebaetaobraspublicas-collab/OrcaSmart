@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS `tenant_composicoes` (
   `tenant_created_at` DATETIME NULL,
   `tenant_updated_at` DATETIME NULL,
   PRIMARY KEY (`id_tenant_composicoes`),
-  KEY `idx_tenant_composicoes_tenant_id` (`tenant_id`)
+  KEY `idx_tenant_composicoes_tenant_id` (`tenant_id`),
+  KEY `idx_tenant_composicoes_list` (`tenant_id`, `tenant_override_status`, `id_composicao`),
+  KEY `idx_tenant_composicoes_fonte` (`tenant_id`, `fonte`, `id_composicao`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tenant_composicoes_secao_itens` (
@@ -150,7 +152,8 @@ CREATE TABLE IF NOT EXISTS `tenant_insumos` (
   `tenant_updated_at` DATETIME NULL,
   PRIMARY KEY (`id_tenant_insumos`),
   KEY `idx_tenant_insumos_tenant_id` (`tenant_id`),
-  KEY `idx_tenant_insumos_listagem` (`tenant_id`, `tenant_override_status`, `tipo_insumo`, `id_insumo`)
+  KEY `idx_tenant_insumos_listagem` (`tenant_id`, `tenant_override_status`, `tipo_insumo`, `id_insumo`),
+  KEY `idx_tenant_insumos_origem` (`tenant_id`, `origem`, `id_insumo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tenant_itens_composicao` (
@@ -326,7 +329,8 @@ CREATE TABLE IF NOT EXISTS `tenant_precos_insumos` (
   `tenant_updated_at` DATETIME NULL,
   PRIMARY KEY (`id_tenant_precos_insumos`),
   KEY `idx_tenant_precos_insumos_tenant_id` (`tenant_id`),
-  KEY `idx_tenant_precos_insumos_latest` (`tenant_id`, `id_insumo`, `id_preco`)
+  KEY `idx_tenant_precos_insumos_latest` (`tenant_id`, `id_insumo`, `id_preco`),
+  KEY `idx_tenant_precos_insumos_ref` (`tenant_id`, `uf_referencia`, `id_data_base`, `id_insumo`, `id_preco`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tenant_datas_base` (

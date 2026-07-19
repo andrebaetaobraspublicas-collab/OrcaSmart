@@ -90,6 +90,17 @@ async function hasTenantReferentialOverrides(db) {
   return tableExists(db, 'tenant_referential_overrides');
 }
 
+async function hasActiveComposicaoOverrides(db) {
+  if (!await hasTenantReferentialOverrides(db)) return false;
+  const row = await one(db, `
+    SELECT 1 AS found
+    FROM tenant_referential_overrides
+    WHERE domain='composicoes' AND catalog_table='composicoes'
+      AND status='active' AND action IN ('update','delete')
+    LIMIT 1`).catch(() => null);
+  return !!row;
+}
+
 function visibleCatalogClause(alias = 'c', hasOverrides = true) {
   const nonUserCatalog = `UPPER(COALESCE(${alias}.fonte,'')) <> 'USUARIO'`;
   if (!hasOverrides) return nonUserCatalog;
@@ -223,8 +234,23 @@ const selectComp = `
   LEFT JOIN grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp`;
 
 async function listGrupos(db, query = {}) {
+  if (typeof db.withConnection === 'function') {
+    return db.withConnection(conn => listGrupos(conn, query));
+  }
   if (await useTenantCatalogRead(db)) {
-    const hasOverrides = await hasTenantReferentialOverrides(db);
+    if (String(query.quick || '') === '1') {
+      const params = [];
+      let where = '';
+      if (query.fonte) {
+        where = ' WHERE g.fonte = ?';
+        params.push(query.fonte);
+      }
+      return all(db, `
+        SELECT g.*, NULL AS qtd_composicoes
+        FROM catalog.grupos_composicoes g${where}
+        ORDER BY g.nome_grupo`, params);
+    }
+    const hasOverrides = await hasActiveComposicaoOverrides(db);
     const tenantComposicoesPk = tenantSyntheticPk('tenant_composicoes');
     const params = [];
     let fonteFilter = '';
@@ -263,22 +289,41 @@ async function listGrupos(db, query = {}) {
 }
 
 async function stats(db) {
+  if (typeof db.withConnection === 'function') {
+    return db.withConnection(conn => stats(conn));
+  }
   if (await useTenantCatalogRead(db)) {
-    const visible = visibleCatalogClause('c', await hasTenantReferentialOverrides(db));
-    const porFonte = await all(db, `
-      SELECT fonte, COUNT(*) AS total FROM (
-        SELECT c.fonte FROM catalog.composicoes c WHERE ${visible}
-        UNION ALL
-        SELECT fonte FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
-      ) AS fonte_unificada
-      GROUP BY fonte ORDER BY fonte`);
-    const porFormato = await all(db, `
-      SELECT formato, COUNT(*) AS total FROM (
-        SELECT c.formato FROM catalog.composicoes c WHERE ${visible}
-        UNION ALL
-        SELECT formato FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active'
-      ) AS formato_unificado
-      GROUP BY formato ORDER BY formato`);
+    const hasOverrides = await hasActiveComposicaoOverrides(db);
+    const combine = (catalogRows, tenantRows, hiddenRows, key) => {
+      const totals = new Map();
+      for (const row of catalogRows) totals.set(row[key], Number(row.total || 0));
+      for (const row of hiddenRows) totals.set(row[key], Number(totals.get(row[key]) || 0) - Number(row.total || 0));
+      for (const row of tenantRows) totals.set(row[key], Number(totals.get(row[key]) || 0) + Number(row.total || 0));
+      return [...totals.entries()]
+        .filter(([, total]) => total > 0)
+        .map(([value, total]) => ({ [key]: value, total }))
+        .sort((a, b) => String(a[key] || '').localeCompare(String(b[key] || '')));
+    };
+    const catalogFonte = await all(db, 'SELECT fonte, COUNT(*) AS total FROM catalog.composicoes GROUP BY fonte');
+    const tenantFonte = await all(db, "SELECT fonte, COUNT(*) AS total FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active' GROUP BY fonte");
+    const hiddenFonte = hasOverrides ? await all(db, `
+      SELECT c.fonte, COUNT(DISTINCT r.catalog_id) AS total
+      FROM tenant_referential_overrides r
+      JOIN catalog.composicoes c ON c.id_composicao=r.catalog_id
+      WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+        AND r.status='active' AND r.action IN ('update','delete')
+      GROUP BY c.fonte`) : [];
+    const catalogFormato = await all(db, 'SELECT formato, COUNT(*) AS total FROM catalog.composicoes GROUP BY formato');
+    const tenantFormato = await all(db, "SELECT formato, COUNT(*) AS total FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active' GROUP BY formato");
+    const hiddenFormato = hasOverrides ? await all(db, `
+      SELECT c.formato, COUNT(DISTINCT r.catalog_id) AS total
+      FROM tenant_referential_overrides r
+      JOIN catalog.composicoes c ON c.id_composicao=r.catalog_id
+      WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+        AND r.status='active' AND r.action IN ('update','delete')
+      GROUP BY c.formato`) : [];
+    const porFonte = combine(catalogFonte, tenantFonte, hiddenFonte, 'fonte');
+    const porFormato = combine(catalogFormato, tenantFormato, hiddenFormato, 'formato');
     return {
       total: porFonte.reduce((sum, row) => sum + Number(row.total || 0), 0),
       por_fonte: porFonte,
@@ -336,12 +381,56 @@ function appendListFilters(query = {}) {
 }
 
 async function listComposicoes(db, query = {}) {
+  if (typeof db.withConnection === 'function') {
+    return db.withConnection(conn => listComposicoes(conn, query));
+  }
   const limit = Math.max(1, Math.min(500, Number(query.limit || 50)));
   const offset = Math.max(0, Number(query.offset || 0));
   if (await useTenantCatalogRead(db)) {
-    const hasOverrides = await hasTenantReferentialOverrides(db);
+    const hasOverrides = await hasActiveComposicaoOverrides(db);
     const catalog = buildTenantCatalogListSelect(query, 'catalog', hasOverrides);
     const tenant = buildTenantCatalogListSelect(query, 'tenant');
+    if (String(query.quick || '') === '1') {
+      const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
+      const tenantTotalRow = await one(db, `SELECT COUNT(*) AS total FROM (${tenant.sql}) AS tenant_filtradas`, tenant.params);
+      const tenantTotal = Number(tenantTotalRow?.total || 0);
+      const items = [];
+      let hasMore = false;
+
+      if (offset < tenantTotal) {
+        const tenantRows = await all(db, `
+          ${tenant.sql}
+          ORDER BY c.${tenantComposicaoPk} DESC
+          LIMIT ? OFFSET ?`, [...tenant.params, limit + 1, offset]);
+        hasMore = tenantRows.length > limit || offset + tenantRows.length < tenantTotal;
+        items.push(...tenantRows.slice(0, limit));
+      }
+
+      if (items.length < limit && !hasMore) {
+        const catalogOffset = Math.max(0, offset - tenantTotal);
+        const remaining = limit - items.length;
+        let orderBy = 'c.id_composicao DESC';
+        if (query.fonte) orderBy = 'c.fonte, c.uf_referencia, c.mes_referencia';
+        else if (query.formato) orderBy = 'c.formato';
+        else if (query.id_grupo_comp) orderBy = 'c.id_grupo_comp';
+        const catalogRows = await all(db, `
+          ${catalog.sql}
+          ORDER BY ${orderBy}
+          LIMIT ? OFFSET ?`, [...catalog.params, remaining + 1, catalogOffset]);
+        hasMore = catalogRows.length > remaining;
+        items.push(...catalogRows.slice(0, remaining));
+      } else if (items.length === limit && !hasMore) {
+        const catalogRows = await all(db, `
+          ${catalog.sql}
+          ORDER BY c.id_composicao DESC
+          LIMIT 1`, catalog.params);
+        hasMore = catalogRows.length > 0;
+      }
+
+      // A listagem rapida usa o custo persistido. Reabrir e recalcular cada
+      // composicao aqui gerava um padrao N+1 (dezenas de consultas por pagina).
+      return { items, total: null, has_more: hasMore, limit, offset };
+    }
     const baseSql = `
       SELECT * FROM (
         ${catalog.sql}
@@ -360,6 +449,24 @@ async function listComposicoes(db, query = {}) {
 
   const { where, params } = appendListFilters(query);
   const clause = where.join(' AND ');
+  if (String(query.quick || '') === '1') {
+    let orderBy = 'c.id_composicao DESC';
+    if (query.fonte) orderBy = 'c.fonte, c.uf_referencia, c.mes_referencia';
+    else if (query.formato) orderBy = 'c.formato';
+    else if (query.id_grupo_comp) orderBy = 'c.id_grupo_comp';
+    const rows = await all(db, `
+      ${selectComp}
+      WHERE ${clause}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?`, [...params, limit + 1, offset]);
+    return {
+      items: rows.slice(0, limit),
+      total: null,
+      has_more: rows.length > limit,
+      limit,
+      offset,
+    };
+  }
   const total = await one(db, `SELECT COUNT(*) AS total FROM composicoes c WHERE ${clause}`, params);
   const items = await all(db, `
     ${selectComp}

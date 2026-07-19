@@ -54,12 +54,18 @@ Router.register('composicoes', async () => {
   let stats = {}, grupos = [], _undList = [];
   let _me = null;
   let _editReturnContext = null;
+  let metadataPromise = null;
+  let statsPromise = null;
+  let searchTimer = null;
+  let mesReferenciaTimer = null;
+  let loadSequence = 0;
   // Estado do formulário de composição do usuário
   let _formItens   = [];  // itens em edição no momento
   let _originalIds = [];  // ids dos itens pré-existentes ao abrir o form
   let _formSearchMode = 'insumo';
   const filtros = { q:'', fonte:'', formato:'', id_grupo_comp:'', uf:'', mes_ref:'', regime:'', limit:50, offset:0 };
-  let totalRegistros = 0;
+  let totalRegistros = null;
+  let temMaisRegistros = false;
 
   // Mapeamento tipo_insumo → tipo_item da composição
   const TIPO_ITEM_MAP = {
@@ -96,14 +102,32 @@ Router.register('composicoes', async () => {
 
   async function carregar() {
     try {
-      [stats, grupos, _undList, _me] = await Promise.all([
-        API.composicoes.stats(),
-        API.composicoes.grupos(),
-        API.unidades.list(),
-        API.auth.me().catch(() => null),
-      ]);
+      if (!metadataPromise) {
+        metadataPromise = Promise.all([
+          API.composicoes.grupos({ quick: 1 }),
+          API.unidades.list(),
+          API.auth.me().catch(() => null),
+        ]).catch(error => {
+          metadataPromise = null;
+          throw error;
+        });
+      }
+      [grupos, _undList, _me] = await metadataPromise;
       await buscar();
       abrirEdicaoPendenteDoOrcamento();
+
+      if (!statsPromise) {
+        statsPromise = API.composicoes.stats()
+          .then(result => {
+            stats = result || {};
+            atualizarEstatisticasComposicoes();
+            return stats;
+          })
+          .catch(error => {
+            console.warn('Estatisticas de composicoes indisponiveis:', error.message);
+            return null;
+          });
+      }
     } catch(e) { Toast.error(e.message); }
   }
 
@@ -128,8 +152,9 @@ Router.register('composicoes', async () => {
   }
 
   async function buscar() {
+    const requestSequence = ++loadSequence;
     try {
-      const params = { ...filtros };
+      const params = { ...filtros, quick: 1 };
       if (!params.fonte) delete params.fonte;
       if (!params.formato) delete params.formato;
       if (!params.id_grupo_comp) delete params.id_grupo_comp;
@@ -138,9 +163,24 @@ Router.register('composicoes', async () => {
       if (!params.regime) delete params.regime;
       if (!params.q) delete params.q;
       const res = await API.composicoes.list(params);
-      totalRegistros = res.total;
+      if (requestSequence !== loadSequence) return;
+      totalRegistros = Number.isFinite(Number(res.total)) && res.total !== null ? Number(res.total) : null;
+      temMaisRegistros = !!res.has_more;
       renderLista(res.items);
-    } catch(e) { Toast.error(e.message); }
+    } catch(e) {
+      if (requestSequence === loadSequence) Toast.error(e.message);
+    }
+  }
+
+  function atualizarEstatisticasComposicoes() {
+    const porFonte = stats.por_fonte || [];
+    const valores = Object.fromEntries(porFonte.map(row => [String(row.fonte || '').toUpperCase(), Number(row.total || 0)]));
+    valores.TOTAL = Number(stats.total || Object.values(valores).reduce((sum, value) => sum + value, 0));
+    document.querySelectorAll('[data-composicao-stat]').forEach(el => {
+      el.textContent = Number(valores[el.dataset.composicaoStat] || 0).toLocaleString('pt-BR');
+    });
+    const resumo = document.getElementById('composicoesResumo');
+    if (resumo) resumo.textContent = `${valores.TOTAL.toLocaleString('pt-BR')} composições carregadas`;
   }
 
   /* ═══════════════════════ LISTA ═════════════════════════════════════════════ */
@@ -159,7 +199,7 @@ Router.register('composicoes', async () => {
       <div class="page-header">
         <div class="page-header-left">
           <h1>Composições de Custo</h1>
-          <p>${nTOTAL.toLocaleString('pt-BR')} composições carregadas</p>
+          <p id="composicoesResumo">${nTOTAL.toLocaleString('pt-BR')} composições carregadas</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-sm" id="btnExcluirLote"
@@ -178,15 +218,15 @@ Router.register('composicoes', async () => {
 
       <!-- Cards -->
       <div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
-        ${mkCard('SINAPI (unitário)', nSINAPI, '🏛️', 'blue')}
-        ${mkCard('SICRO (produção)', nSICRO, '🚗', 'green')}
-        ${mkCard('Sicor/MG', nSICOR, 'MG', 'green')}
-        ${mkCard('SEINFRA/CE', nSEINFRA, 'CE', 'red')}
-        ${mkCard('SUDECAP/BH', nSUDECAP, 'BH', 'yellow')}
-        ${mkCard('GOINFRA/GO', nGOINFRA, 'GO', 'blue')}
-        ${mkCard('CDHU/SP', nCDHU, 'SP', 'blue')}
-        ${mkCard('Usuário', nUSUARIO, '👤', 'yellow')}
-        ${mkCard('Total', nTOTAL, '📦', 'gray')}
+        ${mkCard('SINAPI (unitário)', nSINAPI, '🏛️', 'blue', 'SINAPI')}
+        ${mkCard('SICRO (produção)', nSICRO, '🚗', 'green', 'SICRO')}
+        ${mkCard('Sicor/MG', nSICOR, 'MG', 'green', 'SICOR')}
+        ${mkCard('SEINFRA/CE', nSEINFRA, 'CE', 'red', 'SEINFRA')}
+        ${mkCard('SUDECAP/BH', nSUDECAP, 'BH', 'yellow', 'SUDECAP')}
+        ${mkCard('GOINFRA/GO', nGOINFRA, 'GO', 'blue', 'GOINFRA')}
+        ${mkCard('CDHU/SP', nCDHU, 'SP', 'blue', 'CDHU')}
+        ${mkCard('Usuário', nUSUARIO, '👤', 'yellow', 'USUARIO')}
+        ${mkCard('Total', nTOTAL, '📦', 'gray', 'TOTAL')}
       </div>
 
       <!-- Filtros -->
@@ -219,7 +259,7 @@ Router.register('composicoes', async () => {
           </select>
           <select class="filter-select" id="fgrp" style="min-width:200px">
             <option value="">Todos os grupos</option>
-            ${grupos.map(g=>`<option value="${g.id_grupo_comp}" ${filtros.id_grupo_comp==g.id_grupo_comp?'selected':''}>${Utils.trunc(g.nome_grupo,40)} (${g.qtd_composicoes})</option>`).join('')}
+            ${grupos.map(g=>`<option value="${g.id_grupo_comp}" ${filtros.id_grupo_comp==g.id_grupo_comp?'selected':''}>${Utils.trunc(g.nome_grupo,40)}${g.qtd_composicoes == null ? '' : ` (${g.qtd_composicoes})`}</option>`).join('')}
           </select>
           <select class="filter-select" id="fuf" style="min-width:80px">
             <option value="">Todas as UFs</option>
@@ -289,11 +329,11 @@ Router.register('composicoes', async () => {
           </div>
           <!-- Paginação -->
           <div class="d-flex align-c gap-2" style="padding:12px 20px;border-top:1px solid var(--c-border);flex-wrap:wrap">
-            <span class="text-sm text-2">${totalRegistros.toLocaleString('pt-BR')} resultado(s)</span>
+            <span class="text-sm text-2">${totalRegistros == null ? `${items.length} registro(s) nesta página` : `${totalRegistros.toLocaleString('pt-BR')} resultado(s)`}</span>
             <div style="flex:1"></div>
-            <span class="text-sm text-2">Página ${Math.floor(filtros.offset/filtros.limit)+1} de ${Math.ceil(totalRegistros/filtros.limit)}</span>
+            <span class="text-sm text-2">Página ${Math.floor(filtros.offset/filtros.limit)+1}${totalRegistros == null ? '' : ` de ${Math.ceil(totalRegistros/filtros.limit)}`}</span>
             <button class="btn btn-ghost btn-sm" id="btnPrev" ${filtros.offset===0?'disabled':''}>← Anterior</button>
-            <button class="btn btn-ghost btn-sm" id="btnNext" ${filtros.offset+filtros.limit>=totalRegistros?'disabled':''}>Próxima →</button>
+            <button class="btn btn-ghost btn-sm" id="btnNext" ${totalRegistros == null ? (!temMaisRegistros ? 'disabled' : '') : (filtros.offset+filtros.limit>=totalRegistros?'disabled':'')}>Próxima →</button>
           </div>
         `}
       </div>
@@ -304,25 +344,33 @@ Router.register('composicoes', async () => {
 
     document.getElementById('btnRecalcComp')?.addEventListener('click', () => abrirModalRecalcular());
     document.getElementById('btnExcluirLote')?.addEventListener('click', () => abrirModalExcluirLote());
-    document.getElementById('fbtnLimpar').addEventListener('click', ()=>{
+    const aplicarFiltro = atualizacao => {
+      clearTimeout(searchTimer);
+      clearTimeout(mesReferenciaTimer);
+      searchTimer = null;
+      mesReferenciaTimer = null;
+      atualizacao();
+      buscar();
+    };
+    document.getElementById('fbtnLimpar').addEventListener('click', ()=> aplicarFiltro(() => {
       filtros.q=''; filtros.fonte=''; filtros.formato=''; filtros.id_grupo_comp=''; filtros.regime='';
       filtros.uf=''; filtros.mes_ref=''; filtros.offset=0;
-      buscar().then(()=>{ carregar(); });
-    });
+    }));
 
-    let t;
     document.getElementById('fq').addEventListener('input', e=>{
-      clearTimeout(t); t=setTimeout(()=>{ filtros.q=e.target.value; filtros.offset=0; buscar(); }, 400);
+      const valor = e.target.value;
+      clearTimeout(searchTimer);
+      searchTimer=setTimeout(()=>{ searchTimer=null; filtros.q=valor; filtros.offset=0; buscar(); }, 400);
     });
-    document.getElementById('ffonte').addEventListener('change', e=>{ filtros.fonte=e.target.value; filtros.offset=0; buscar(); });
-    document.getElementById('ffmt').addEventListener('change', e=>{ filtros.formato=e.target.value; filtros.offset=0; buscar(); });
-    document.getElementById('fregime').addEventListener('change', e=>{ filtros.regime=e.target.value; filtros.offset=0; buscar(); });
-    document.getElementById('fgrp').addEventListener('change', e=>{ filtros.id_grupo_comp=e.target.value; filtros.offset=0; buscar(); });
-    document.getElementById('fuf').addEventListener('change', e=>{ filtros.uf=e.target.value; filtros.offset=0; buscar(); });
-    let tMesRef;
+    document.getElementById('ffonte').addEventListener('change', e=> aplicarFiltro(()=>{ filtros.fonte=e.target.value; filtros.offset=0; }));
+    document.getElementById('ffmt').addEventListener('change', e=> aplicarFiltro(()=>{ filtros.formato=e.target.value; filtros.offset=0; }));
+    document.getElementById('fregime').addEventListener('change', e=> aplicarFiltro(()=>{ filtros.regime=e.target.value; filtros.offset=0; }));
+    document.getElementById('fgrp').addEventListener('change', e=> aplicarFiltro(()=>{ filtros.id_grupo_comp=e.target.value; filtros.offset=0; }));
+    document.getElementById('fuf').addEventListener('change', e=> aplicarFiltro(()=>{ filtros.uf=e.target.value; filtros.offset=0; }));
     document.getElementById('fmesref').addEventListener('input', e=>{
-      clearTimeout(tMesRef);
-      tMesRef = setTimeout(()=>{ filtros.mes_ref=e.target.value.trim(); filtros.offset=0; buscar(); }, 600);
+      const valor = e.target.value.trim();
+      clearTimeout(mesReferenciaTimer);
+      mesReferenciaTimer = setTimeout(()=>{ mesReferenciaTimer=null; filtros.mes_ref=valor; filtros.offset=0; buscar(); }, 600);
     });
     document.getElementById('btnPrev')?.addEventListener('click', ()=>{ filtros.offset=Math.max(0,filtros.offset-filtros.limit); buscar(); });
     document.getElementById('btnNext')?.addEventListener('click', ()=>{ filtros.offset+=filtros.limit; buscar(); });
@@ -337,11 +385,11 @@ Router.register('composicoes', async () => {
     });
   }
 
-  function mkCard(label, n, icon, color) {
+  function mkCard(label, n, icon, color, statKey) {
     const c={blue:'var(--c-primary)',green:'var(--c-success)',yellow:'var(--c-warning)',gray:'var(--c-text-2)'};
     const bg={blue:'var(--c-primary-l)',green:'var(--c-success-l)',yellow:'var(--c-warning-l)',gray:'#f1f5f9'};
     return `<div class="card"><div class="card-stat">
-      <div><div class="card-stat-value">${n.toLocaleString('pt-BR')}</div><div class="card-stat-label">${label}</div></div>
+      <div><div class="card-stat-value" data-composicao-stat="${statKey}">${n.toLocaleString('pt-BR')}</div><div class="card-stat-label">${label}</div></div>
       <div class="card-stat-icon" style="background:${bg[color]};color:${c[color]};font-size:1.3rem">${icon}</div>
     </div></div>`;
   }
@@ -1698,7 +1746,7 @@ Router.register('composicoes', async () => {
             <label class="form-label">Grupo de composições</label>
             <select class="form-control" id="el_grp">
               <option value="">Todos os grupos</option>
-              ${grupos.map(g => `<option value="${g.id_grupo_comp}">${Utils.trunc(g.nome_grupo,50)} (${g.qtd_composicoes})</option>`).join('')}
+              ${grupos.map(g => `<option value="${g.id_grupo_comp}">${Utils.trunc(g.nome_grupo,50)}${g.qtd_composicoes == null ? '' : ` (${g.qtd_composicoes})`}</option>`).join('')}
             </select>
           </div>
         </div>

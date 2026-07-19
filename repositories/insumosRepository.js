@@ -138,7 +138,10 @@ const selectPreco = `
   LEFT JOIN insumos i ON p.id_insumo = i.id_insumo
   LEFT JOIN unidades_medida um ON i.id_unidade = um.id_unidade`;
 
-async function ensureSchema(db) {
+let mysqlSchemaReadyPromise = null;
+const sqliteSchemaReady = new WeakMap();
+
+async function ensureSchemaInternal(db) {
   const mysqlRuntime = String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
   const hasMainInsumos = await tableExists(db, 'insumos');
   if (hasMainInsumos) {
@@ -170,6 +173,26 @@ async function ensureSchema(db) {
     ];
     for (const sql of indexes) await run(db, sql);
   }
+}
+
+async function ensureSchema(db) {
+  if (isMysqlRuntime()) {
+    if (!mysqlSchemaReadyPromise) {
+      mysqlSchemaReadyPromise = ensureSchemaInternal(db).catch(error => {
+        mysqlSchemaReadyPromise = null;
+        throw error;
+      });
+    }
+    return mysqlSchemaReadyPromise;
+  }
+  if (!sqliteSchemaReady.has(db)) {
+    const ready = ensureSchemaInternal(db).catch(error => {
+      sqliteSchemaReady.delete(db);
+      throw error;
+    });
+    sqliteSchemaReady.set(db, ready);
+  }
+  return sqliteSchemaReady.get(db);
 }
 
 function priceSelect(query = {}) {
@@ -453,12 +476,11 @@ function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog') {
     sql += ')';
   }
 
-  sql += ` ORDER BY CASE
-    WHEN i.tipo_insumo='Material' THEN 0
-    WHEN i.tipo_insumo LIKE 'M%o de Obra' THEN 1
-    WHEN i.tipo_insumo='Equipamento' THEN 2
-    WHEN i.tipo_insumo LIKE 'Servi%o Auxiliar' THEN 3
-    ELSE 4 END, i.descricao LIMIT ?`;
+  // A ordenacao por CASE + descricao obrigava o MySQL a ordenar todo o
+  // catalogo antes do LIMIT. A chave primaria permite interromper a leitura
+  // assim que a pagina estiver completa; a pequena pagina final e ordenada
+  // em memoria por compareInsumos().
+  sql += ` ORDER BY i.${pk} DESC LIMIT ?`;
   params.push(Math.max(1, Math.min(500, Number(query.limit) || 100)));
   return { sql, params };
 }

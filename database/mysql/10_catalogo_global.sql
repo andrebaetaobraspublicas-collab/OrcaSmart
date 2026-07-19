@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS `composicoes` (
   PRIMARY KEY (`id_composicao`),
   KEY `idx_composicoes_id_grupo_comp` (`id_grupo_comp`),
   KEY `idx_composicoes_fonte_ref` (`fonte`, `uf_referencia`, `mes_referencia`),
+  KEY `idx_composicoes_fonte_id` (`fonte`, `id_composicao`),
+  KEY `idx_composicoes_grupo_id` (`id_grupo_comp`, `id_composicao`),
+  KEY `idx_composicoes_uf_mes_id` (`uf_referencia`, `mes_referencia`, `id_composicao`),
   KEY `idx_composicoes_codigo` (`codigo`),
   KEY `idx_composicoes_formato` (`formato`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -219,6 +222,8 @@ CREATE TABLE IF NOT EXISTS `insumos` (
   KEY `idx_insumos_id_grupo` (`id_grupo`),
   KEY `idx_insumos_id_unidade` (`id_unidade`),
   KEY `idx_insumos_origem_tipo` (`origem`, `tipo_insumo`),
+  KEY `idx_insumos_origem_id` (`origem`, `id_insumo`),
+  KEY `idx_insumos_tipo_id` (`tipo_insumo`, `id_insumo`),
   KEY `idx_insumos_codigo` (`codigo_insumo`),
   KEY `idx_insumos_situacao` (`situacao`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -428,6 +433,8 @@ CREATE TABLE IF NOT EXISTS `precos_insumos` (
   KEY `idx_precos_insumos_id_insumo` (`id_insumo`),
   KEY `idx_precos_insumos_latest` (`id_insumo`, `id_preco`),
   KEY `idx_precos_insumos_ref` (`id_insumo`, `id_data_base`, `uf_referencia`),
+  KEY `idx_precos_insumos_uf_item` (`uf_referencia`, `id_insumo`, `id_preco`),
+  KEY `idx_precos_insumos_data_item` (`id_data_base`, `id_insumo`, `id_preco`),
   KEY `idx_precos_insumos_fonte` (`id_fonte`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
