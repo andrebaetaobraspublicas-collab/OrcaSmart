@@ -426,6 +426,7 @@ CREATE TABLE IF NOT EXISTS `precos_insumos` (
   KEY `idx_precos_insumos_id_fonte` (`id_fonte`),
   KEY `idx_precos_insumos_id_data_base` (`id_data_base`),
   KEY `idx_precos_insumos_id_insumo` (`id_insumo`),
+  KEY `idx_precos_insumos_latest` (`id_insumo`, `id_preco`),
   KEY `idx_precos_insumos_ref` (`id_insumo`, `id_data_base`, `uf_referencia`),
   KEY `idx_precos_insumos_fonte` (`id_fonte`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

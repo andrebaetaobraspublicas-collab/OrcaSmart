@@ -72,6 +72,7 @@ const EXTRA_INDEXES = {
   precos_insumos: [
     'KEY `idx_precos_insumos_ref` (`id_insumo`, `id_data_base`, `uf_referencia`)',
     'KEY `idx_precos_insumos_fonte` (`id_fonte`)',
+    'KEY `idx_precos_insumos_latest` (`id_insumo`, `id_preco`)',
   ],
   precos_equipamentos: [
     'KEY `idx_precos_equipamentos_ref` (`id_equip`, `id_data_base`, `uf_referencia`, `id_fonte`)',
@@ -104,6 +105,12 @@ const EXTRA_INDEXES = {
   ],
   tenant_referential_overrides: [
     'KEY `idx_tenant_ref_overrides_lookup` (`tenant_id`, `domain`, `catalog_table`, `catalog_id`, `status`)',
+  ],
+  tenant_insumos: [
+    'KEY `idx_tenant_insumos_listagem` (`tenant_id`, `tenant_override_status`, `tipo_insumo`, `id_insumo`)',
+  ],
+  tenant_precos_insumos: [
+    'KEY `idx_tenant_precos_insumos_latest` (`tenant_id`, `id_insumo`, `id_preco`)',
   ],
 };
 

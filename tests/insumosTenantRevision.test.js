@@ -148,6 +148,16 @@ async function main() {
     }, { forceUserOwned: false });
     assert.strictEqual(admin.origem, 'CDHU');
 
+    const pagina = await service.listInsumos(db, { limit: 300 });
+    assert.strictEqual(pagina.length, 3);
+    assert(pagina.some(item => item.codigo_insumo === 'M161910000'));
+    assert(pagina.some(item => item.codigo_insumo === 'M161910000.REV001'));
+    assert(pagina.some(item => item.codigo_insumo === 'ADM-1'));
+
+    const totais = await service.stats(db);
+    assert.strictEqual(totais.total, 3);
+    assert.strictEqual(totais.equipamento, 2);
+
     console.log('insumosTenantRevision.test.js: OK');
   } finally {
     await new Promise(resolve => db.close(resolve));

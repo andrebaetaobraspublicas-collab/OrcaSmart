@@ -255,6 +255,24 @@ async function stats(db) {
           AND r.catalog_id=i.id_insumo AND r.status='active'
           AND r.action IN ('update','delete')
       )`;
+    {
+      const aggregate = tipoExpr => `
+        COUNT(*) AS total,
+        SUM(CASE WHEN ${tipoExpr}='Material' THEN 1 ELSE 0 END) AS material,
+        SUM(CASE WHEN ${tipoExpr} LIKE 'M%o de Obra' THEN 1 ELSE 0 END) AS mao_de_obra,
+        SUM(CASE WHEN ${tipoExpr}='Equipamento' THEN 1 ELSE 0 END) AS equipamento,
+        SUM(CASE WHEN ${tipoExpr} LIKE 'Servi%o Auxiliar' THEN 1 ELSE 0 END) AS servico_auxiliar`;
+      const catalogStats = await one(db, `SELECT ${aggregate('i.tipo_insumo')} FROM catalog.insumos i WHERE ${visibleCatalog}`);
+      const tenantStats = await one(db, `SELECT ${aggregate('tipo_insumo')} FROM tenant_insumos WHERE tenant_override_status='active'`);
+      const catalogPrices = await one(db, 'SELECT COUNT(DISTINCT id_insumo) AS total FROM catalog.precos_insumos');
+      const tenantPrices = await one(db, "SELECT COUNT(DISTINCT id_insumo) AS total FROM tenant_precos_insumos WHERE tenant_override_status='active'");
+      const totals = {};
+      for (const key of ['total', 'material', 'mao_de_obra', 'equipamento', 'servico_auxiliar']) {
+        totals[key] = Number(catalogStats?.[key] || 0) + Number(tenantStats?.[key] || 0);
+      }
+      totals.com_preco = Number(catalogPrices?.total || 0) + Number(tenantPrices?.total || 0);
+      return totals;
+    }
     const queries = {
       total: `
         SELECT COUNT(*) AS total FROM (
@@ -376,9 +394,103 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
   return { sql, params };
 }
 
+function tipoSortRank(tipo) {
+  const normalized = String(tipo || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (normalized === 'material') return 0;
+  if (normalized === 'mao de obra') return 1;
+  if (normalized === 'equipamento') return 2;
+  if (normalized === 'servico auxiliar') return 3;
+  return 4;
+}
+
+function compareInsumos(a, b) {
+  const rank = tipoSortRank(a.tipo_insumo) - tipoSortRank(b.tipo_insumo);
+  if (rank) return rank;
+  return String(a.descricao || '').localeCompare(String(b.descricao || ''), 'pt-BR', { sensitivity: 'base' });
+}
+
+function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog') {
+  const isTenant = source === 'tenant';
+  const table = isTenant ? 'tenant_insumos' : 'catalog.insumos';
+  const priceTable = isTenant ? 'tenant_precos_insumos' : 'catalog.precos_insumos';
+  const pk = isTenant ? tenantSyntheticPk('tenant_insumos') : 'id_insumo';
+  const idExpr = isTenant ? `'tenant:' || i.${pk}` : 'CAST(i.id_insumo AS TEXT)';
+  let sql = `SELECT ${idExpr} AS id_insumo, i.descricao, i.tipo_insumo FROM ${table} i WHERE 1=1`;
+  const params = [];
+
+  if (!isTenant) {
+    sql += ` AND NOT EXISTS (
+      SELECT 1 FROM tenant_referential_overrides r
+      WHERE r.domain='insumos' AND r.catalog_table='insumos'
+        AND r.catalog_id=i.id_insumo AND r.status='active'
+        AND r.action IN ('update','delete')
+    )`;
+  } else {
+    sql += " AND COALESCE(i.tenant_override_status,'active')='active'";
+  }
+  if (query.tipo) { sql += ' AND i.tipo_insumo = ?'; params.push(query.tipo); }
+  if (query.origem) { sql += ' AND i.origem = ?'; params.push(query.origem); }
+  if (query.situacao) { sql += ' AND i.situacao = ?'; params.push(query.situacao); }
+  if (query.q) {
+    sql += ' AND (i.descricao LIKE ? OR i.codigo_insumo LIKE ?)';
+    params.push(`%${query.q}%`, `%${query.q}%`);
+  }
+
+  if (query.uf || (query.mes && query.ano) || query.regime) {
+    sql += ` AND EXISTS (SELECT 1 FROM ${priceTable} px WHERE px.id_insumo = i.${pk}`;
+    if (isTenant) sql += " AND COALESCE(px.tenant_override_status,'active')='active'";
+    if (query.uf) { sql += ' AND px.uf_referencia = ?'; params.push(query.uf); }
+    if (query.mes && query.ano) {
+      sql += ' AND px.id_data_base IN (SELECT id_data_base FROM catalog.datas_base WHERE mes = ? AND ano = ?)';
+      params.push(Number(query.mes), Number(query.ano));
+    }
+    const regime = String(query.regime || '').toLowerCase();
+    if (regime === 'onerado') sql += ' AND COALESCE(px.preco_nao_desonerado, 0) > 0';
+    if (regime === 'desonerado') sql += ' AND COALESCE(px.preco_desonerado, 0) > 0';
+    sql += ')';
+  }
+
+  sql += ` ORDER BY CASE
+    WHEN i.tipo_insumo='Material' THEN 0
+    WHEN i.tipo_insumo LIKE 'M%o de Obra' THEN 1
+    WHEN i.tipo_insumo='Equipamento' THEN 2
+    WHEN i.tipo_insumo LIKE 'Servi%o Auxiliar' THEN 3
+    ELSE 4 END, i.descricao LIMIT ?`;
+  params.push(Math.max(1, Math.min(500, Number(query.limit) || 100)));
+  return { sql, params };
+}
+
+async function listTenantCatalogPage(db, query) {
+  const catalogQuery = buildTenantCatalogCandidateSelect(query, 'catalog');
+  const tenantQuery = buildTenantCatalogCandidateSelect(query, 'tenant');
+  const catalogCandidates = await all(db, catalogQuery.sql, catalogQuery.params);
+  const tenantCandidates = await all(db, tenantQuery.sql, tenantQuery.params);
+  const pageSize = Math.max(1, Math.min(500, Number(query.limit) || 100));
+  const selected = [...catalogCandidates, ...tenantCandidates].sort(compareInsumos).slice(0, pageSize);
+  if (!selected.length) return [];
+
+  const catalogIds = selected.filter(row => !String(row.id_insumo).startsWith('tenant:')).map(row => row.id_insumo);
+  const tenantIds = selected.filter(row => String(row.id_insumo).startsWith('tenant:')).map(row => Number(String(row.id_insumo).slice(7)));
+  const hydrated = [];
+  if (catalogIds.length) {
+    const built = buildTenantCatalogListSelect(query, 'catalog');
+    const marks = catalogIds.map(() => '?').join(',');
+    hydrated.push(...await all(db, `${built.sql} AND i.id_insumo IN (${marks})`, [...built.params, ...catalogIds]));
+  }
+  if (tenantIds.length) {
+    const built = buildTenantCatalogListSelect(query, 'tenant');
+    const pk = tenantSyntheticPk('tenant_insumos');
+    const marks = tenantIds.map(() => '?').join(',');
+    hydrated.push(...await all(db, `${built.sql} AND i.${pk} IN (${marks})`, [...built.params, ...tenantIds]));
+  }
+  const byId = new Map(hydrated.map(row => [String(row.id_insumo), row]));
+  return selected.map(row => byId.get(String(row.id_insumo))).filter(Boolean);
+}
+
 async function listInsumos(db, query = {}) {
   await ensureSchema(db);
   if (await useTenantCatalogRead(db)) {
+    if (query.limit) return listTenantCatalogPage(db, query);
     const catalog = buildTenantCatalogListSelect(query, 'catalog');
     const tenant = buildTenantCatalogListSelect(query, 'tenant');
     let sql = `
