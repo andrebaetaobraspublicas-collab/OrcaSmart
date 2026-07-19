@@ -57,6 +57,8 @@ Router.register('insumos', async () => {
 
   /* ── Estado ──────────────────────────────────────────────────────────────── */
   let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {}, _me = null;
+  let metadataPromise = null;
+  let statsPromise = null;
   const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:300 };
   let pesquisaMercadoResultados = [];
   let pesquisaMercadoSelecionado = null;
@@ -66,17 +68,57 @@ Router.register('insumos', async () => {
   /* ── Carregamento ────────────────────────────────────────────────────────── */
   async function carregar() {
     try {
-      [insumos, unidades, fontes, datasBase, grupos, stats, _me] = await Promise.all([
+      if (!metadataPromise) {
+        metadataPromise = Promise.all([
+          API.unidades.list(),
+          API.fontes.list(),
+          API.datasBase.list(),
+          API.grupos.list(),
+          API.auth.me().catch(() => null),
+        ]).catch(error => {
+          metadataPromise = null;
+          throw error;
+        });
+      }
+      const [lista, metadata] = await Promise.all([
         API.insumos.list(filtros),
-        API.unidades.list(),
-        API.fontes.list(),
-        API.datasBase.list(),
-        API.grupos.list(),
-        API.insumos.stats(),
-        API.auth.me().catch(() => null),
+        metadataPromise,
       ]);
+      insumos = lista;
+      [unidades, fontes, datasBase, grupos, _me] = metadata;
       render();
+
+      if (!statsPromise) {
+        statsPromise = API.insumos.stats()
+          .then(result => {
+            stats = result || {};
+            atualizarEstatisticas();
+            return stats;
+          })
+          .catch(error => {
+            console.warn('Estatisticas de insumos indisponiveis:', error.message);
+            return null;
+          });
+      }
     } catch(e) { Toast.error(e.message); }
+  }
+
+  function atualizarEstatisticas() {
+    const valores = {
+      total: stats.total,
+      material: stats.material,
+      mao_de_obra: stats.mao_de_obra,
+      equipamento: stats.equipamento,
+      servico_auxiliar: stats.servico_auxiliar,
+    };
+    Object.entries(valores).forEach(([key, value]) => {
+      const el = document.querySelector(`[data-insumo-stat="${key}"]`);
+      if (el) el.textContent = Number(value || 0).toLocaleString('pt-BR');
+    });
+    const resumo = document.getElementById('insumosResumo');
+    if (resumo) resumo.textContent = `${insumos.length.toLocaleString('pt-BR')} de ${Number(stats.total || insumos.length).toLocaleString('pt-BR')} insumo(s) exibido(s)`;
+    const info = document.getElementById('insumosTableInfo');
+    if (info) info.textContent = `${insumos.length.toLocaleString('pt-BR')} exibido(s) de ${Number(stats.total || insumos.length).toLocaleString('pt-BR')} | ${Number(stats.com_preco || 0).toLocaleString('pt-BR')} com preço cadastrado${filtros.regime ? ` | Regime: ${filtros.regime === 'onerado' ? 'Onerado' : 'Desonerado'}` : ''}`;
   }
 
   /* ── Render principal ────────────────────────────────────────────────────── */
@@ -98,7 +140,7 @@ Router.register('insumos', async () => {
       <div class="page-header">
         <div class="page-header-left">
           <h1>Insumos</h1>
-          <p>${insumos.length.toLocaleString('pt-BR')} de ${(stats.total||insumos.length).toLocaleString('pt-BR')} insumo(s) exibido(s)</p>
+          <p id="insumosResumo">${insumos.length.toLocaleString('pt-BR')} de ${(stats.total||insumos.length).toLocaleString('pt-BR')} insumo(s) exibido(s)</p>
         </div>
         <div class="d-flex gap-1" style="flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-sm" id="btnExcluirInsumosLote"
@@ -133,11 +175,11 @@ Router.register('insumos', async () => {
 
       <!-- Stats cards -->
       <div class="cards-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px">
-        ${renderCard('Total',       stats.total||0,              'blue',  '📦')}
-        ${renderCard('Materiais',   stats.material||0,           'info',  '🧱')}
-        ${renderCard('Mão de Obra', stats.mao_de_obra||0,        'green', '👷')}
-        ${renderCard('Equipamentos',stats.equipamento||0,        'yellow','🚜')}
-        ${renderCard('Serviços',    stats.servico_auxiliar||0,   'gray',  '🔧')}
+        ${renderCard('Total',       stats.total||0,              'blue',  '📦', 'total')}
+        ${renderCard('Materiais',   stats.material||0,           'info',  '🧱', 'material')}
+        ${renderCard('Mão de Obra', stats.mao_de_obra||0,        'green', '👷', 'mao_de_obra')}
+        ${renderCard('Equipamentos',stats.equipamento||0,        'yellow','🚜', 'equipamento')}
+        ${renderCard('Serviços',    stats.servico_auxiliar||0,   'gray',  '🔧', 'servico_auxiliar')}
       </div>
 
       <!-- Tabela -->
@@ -260,7 +302,7 @@ Router.register('insumos', async () => {
               </tbody>
             </table>
           </div>
-          <div class="table-info">${insumos.length.toLocaleString('pt-BR')} exibido(s) de ${(stats.total||insumos.length).toLocaleString('pt-BR')} | ${stats.com_preco||0} com preço cadastrado${filtros.regime ? ` | Regime: ${filtros.regime === 'onerado' ? 'Onerado' : 'Desonerado'}` : ''}</div>
+          <div class="table-info" id="insumosTableInfo">${insumos.length.toLocaleString('pt-BR')} exibido(s) de ${(stats.total||insumos.length).toLocaleString('pt-BR')} | ${stats.com_preco||0} com preço cadastrado${filtros.regime ? ` | Regime: ${filtros.regime === 'onerado' ? 'Onerado' : 'Desonerado'}` : ''}</div>
         `}
       </div>
     `;
@@ -268,12 +310,12 @@ Router.register('insumos', async () => {
     bindEventos();
   }
 
-  function renderCard(label, val, color, icon) {
+  function renderCard(label, val, color, icon, statKey) {
     return `
       <div class="card">
         <div class="card-stat">
           <div>
-            <div class="card-stat-value">${val}</div>
+            <div class="card-stat-value" data-insumo-stat="${statKey}">${Number(val || 0).toLocaleString('pt-BR')}</div>
             <div class="card-stat-label">${label}</div>
           </div>
           <div class="card-stat-icon ${color}" style="font-size:1.3rem">${icon}</div>
