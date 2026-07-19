@@ -1,6 +1,6 @@
 const express = require('express');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
-const { validOffice, importSeinfra, importSudecap, importGoinfra, importCdhu } = require('../services/referenceImportService');
+const { validOffice, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu } = require('../services/referenceImportService');
 
 function tenantId(req) {
   const value = Number(req.user?.id_tenant || req.user?.tenant_id);
@@ -13,10 +13,12 @@ function validateFiles(files, required, options = {}) {
   if (missing.length) throw Object.assign(new Error(`Arquivos ausentes: ${missing.join(', ')}.`), { status: 400 });
   for (const name of required) {
     const expectsPdf = options.pdf === true || options.pdf === name || (Array.isArray(options.pdf) && options.pdf.includes(name));
+    const allowsLegacy = options.legacyOffice === true || options.legacyOffice === name
+      || (Array.isArray(options.legacyOffice) && options.legacyOffice.includes(name));
     if (expectsPdf) {
       if (!/\.pdf$/i.test(files[name].originalname || '')) throw Object.assign(new Error(`O arquivo ${name} deve estar em PDF.`), { status: 400 });
-    } else if (!validOffice(files[name])) {
-      throw Object.assign(new Error(`O arquivo ${name} deve estar em .xlsx ou .xlsm.`), { status: 400 });
+    } else if (!validOffice(files[name], allowsLegacy)) {
+      throw Object.assign(new Error(`O arquivo ${name} deve estar em ${allowsLegacy ? '.xls, .xlsx ou .xlsm' : '.xlsx ou .xlsm'}.`), { status: 400 });
     }
   }
 }
@@ -43,6 +45,16 @@ module.exports = function referenceImportRoutes(db) {
     ['mao_obra_onerado','mao_obra_desonerado','material','composicoes_onerado','composicoes_desonerado'],
     importGoinfra,
     { pdf: true }));
+  router.post('/sicor-mg/importar', ...handler([
+    'insumos_rodoviarios_onerado',
+    'insumos_rodoviarios_desonerado',
+    'insumos_edificacoes_onerado',
+    'insumos_edificacoes_desonerado',
+    'composicoes_onerado',
+    'composicoes_desonerado',
+  ], importSicorMg, {
+    legacyOffice: ['insumos_edificacoes_onerado', 'insumos_edificacoes_desonerado'],
+  }));
   router.post('/cdhu/importar', ...handler(
     ['arquivo_pdf','arquivo_sintetico'], importCdhu, { pdf: 'arquivo_pdf' }));
   return router;

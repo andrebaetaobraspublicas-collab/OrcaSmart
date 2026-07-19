@@ -30,6 +30,7 @@ const COR_FONTE = {
   CDHU:    { badge:'badge-info',    cor:'var(--c-primary)',  bg:'var(--c-primary-l)',  icon:'SP' },
   SINAPI:  { badge:'badge-info',    cor:'var(--c-primary)',  bg:'var(--c-primary-l)',  icon:'🏛️' },
   SICRO:   { badge:'badge-success', cor:'var(--c-success)',  bg:'var(--c-success-l)',  icon:'🚗' },
+  SICOR:   { badge:'badge-success', cor:'#047857',            bg:'#ecfdf5',             icon:'MG' },
   USUARIO: { badge:'badge-warning', cor:'var(--c-warning)',  bg:'var(--c-warning-l)',  icon:'👤' },
 };
 const COR_SEC = {
@@ -80,6 +81,7 @@ Router.register('composicoes', async () => {
     const nome = (comp?.nome_grupo_comp || '').trim();
     const porFonte = {
       SICRO: 'SICRO',
+      SICOR: 'Sicor/MG',
       SEINFRA: 'SEINFRA/CE',
       SUDECAP: 'SUDECAP/BH',
       GOINFRA: 'GOINFRA/GO',
@@ -146,12 +148,13 @@ Router.register('composicoes', async () => {
     const sf = stats.por_fonte || [];
     const nSINAPI  = (sf.find(r=>r.fonte==='SINAPI')?.total  || 0);
     const nSICRO   = (sf.find(r=>r.fonte==='SICRO')?.total   || 0);
+    const nSICOR   = (sf.find(r=>r.fonte==='SICOR')?.total   || 0);
     const nSEINFRA = (sf.find(r=>r.fonte==='SEINFRA')?.total || 0);
     const nSUDECAP = (sf.find(r=>r.fonte==='SUDECAP')?.total || 0);
     const nGOINFRA = (sf.find(r=>r.fonte==='GOINFRA')?.total || 0);
     const nCDHU    = (sf.find(r=>r.fonte==='CDHU')?.total    || 0);
     const nUSUARIO = (sf.find(r=>r.fonte==='USUARIO')?.total || 0);
-    const nTOTAL = nSINAPI + nSICRO + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nUSUARIO;
+    const nTOTAL = nSINAPI + nSICRO + nSICOR + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nUSUARIO;
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
         <div class="page-header-left">
@@ -174,9 +177,10 @@ Router.register('composicoes', async () => {
       </div>
 
       <!-- Cards -->
-      <div class="cards-grid" style="grid-template-columns:repeat(8,1fr);margin-bottom:20px">
+      <div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:20px">
         ${mkCard('SINAPI (unitário)', nSINAPI, '🏛️', 'blue')}
         ${mkCard('SICRO (produção)', nSICRO, '🚗', 'green')}
+        ${mkCard('Sicor/MG', nSICOR, 'MG', 'green')}
         ${mkCard('SEINFRA/CE', nSEINFRA, 'CE', 'red')}
         ${mkCard('SUDECAP/BH', nSUDECAP, 'BH', 'yellow')}
         ${mkCard('GOINFRA/GO', nGOINFRA, 'GO', 'blue')}
@@ -196,6 +200,7 @@ Router.register('composicoes', async () => {
             <option value="">Todas as fontes</option>
             <option value="SINAPI"   ${filtros.fonte==='SINAPI'?'selected':''}>🏛️ SINAPI</option>
             <option value="SICRO"    ${filtros.fonte==='SICRO'?'selected':''}>🚗 SICRO</option>
+            <option value="SICOR"    ${filtros.fonte==='SICOR'?'selected':''}>MG Sicor/MG</option>
             <option value="SEINFRA"  ${filtros.fonte==='SEINFRA'?'selected':''}>CE SEINFRA/CE</option>
             <option value="SUDECAP"  ${filtros.fonte==='SUDECAP'?'selected':''}>BH SUDECAP/BH</option>
             <option value="GOINFRA"  ${filtros.fonte==='GOINFRA'?'selected':''}>GO GOINFRA/GO</option>
@@ -248,7 +253,7 @@ Router.register('composicoes', async () => {
                   const fi = COR_FONTE[c.fonte] || COR_FONTE.USUARIO;
                   const fmt = c.formato === 'PRODUCAO_HORARIA' ? 'Prod. Horária' : 'Unitário';
                   return `<tr>
-                    <td class="text-xs text-3 fw-600">${Utils.esc(c.codigo?.replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU)\./,'')||'—')}</td>
+                    <td class="text-xs text-3 fw-600">${Utils.esc(c.codigo?.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU)\./,'')||'—')}</td>
                     <td>
                       <div class="fw-500">${Utils.trunc(c.descricao,70)}</div>
                       ${c.situacao_ref?`<span class="badge badge-gray" style="font-size:.65rem">${c.situacao_ref}</span>`:''}
@@ -348,7 +353,7 @@ Router.register('composicoes', async () => {
     catch(e) { Toast.error(e.message); return; }
 
     const fi = COR_FONTE[comp.fonte] || COR_FONTE.USUARIO;
-    const cod_limpo = comp.codigo?.replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU)\./,'') || '—';
+    const cod_limpo = comp.codigo?.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU)\./,'') || '—';
 
     // Conteúdo específico por formato
     let corpo = '';
@@ -733,6 +738,7 @@ Router.register('composicoes', async () => {
                   <option value="">Todas as fontes</option>
                   <option value="SINAPI">SINAPI</option>
                   <option value="SICRO">SICRO</option>
+                  <option value="SICOR">Sicor/MG</option>
                   <option value="SEINFRA">SEINFRA/CE</option>
                   <option value="SUDECAP">SUDECAP/BH</option>
                   <option value="GOINFRA">GOINFRA/GO</option>
@@ -1661,6 +1667,7 @@ Router.register('composicoes', async () => {
               <option value="">Qualquer fonte</option>
               <option value="SINAPI">🏛️ SINAPI</option>
               <option value="SICRO">🚗 SICRO</option>
+              <option value="SICOR">MG Sicor/MG</option>
               <option value="SEINFRA">CE SEINFRA/CE</option>
               <option value="SUDECAP">BH SUDECAP/BH</option>
               <option value="GOINFRA">GO GOINFRA/GO</option>
@@ -1797,7 +1804,7 @@ Router.register('composicoes', async () => {
     } catch(e) { Toast.error(e.message); return; }
 
     const fonte = comp.fonte || 'USUARIO';
-    const ehOriginal = fonte === 'SINAPI' || fonte === 'SICRO' || fonte === 'SEINFRA' || fonte === 'SUDECAP' || fonte === 'GOINFRA' || fonte === 'CDHU';
+    const ehOriginal = fonte === 'SINAPI' || fonte === 'SICRO' || fonte === 'SICOR' || fonte === 'SEINFRA' || fonte === 'SUDECAP' || fonte === 'GOINFRA' || fonte === 'CDHU';
 
     const escolhaImpacto = await escolherImpactoEdicaoComposicao(impacto || {
       composicao: comp,

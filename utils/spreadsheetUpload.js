@@ -1,4 +1,6 @@
 const zlib = require('zlib');
+const { Readable } = require('stream');
+const { StringDecoder } = require('string_decoder');
 
 function decodeXml(value) {
   return String(value || '')
@@ -16,6 +18,12 @@ function columnIndex(cellRef) {
 
 function unzipXlsx(buffer) {
   const files = {};
+  for (const [name, entry] of zipEntries(buffer)) files[name] = readZipEntry(buffer, entry).toString('utf8');
+  return files;
+}
+
+function zipEntries(buffer) {
+  const entries = new Map();
   let eocd = -1;
   for (let i = buffer.length - 22; i >= 0; i -= 1) {
     if (buffer.readUInt32LE(i) === 0x06054b50) {
@@ -40,13 +48,19 @@ function unzipXlsx(buffer) {
     const localNameLen = buffer.readUInt16LE(localOffset + 26);
     const localExtraLen = buffer.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
-    const data = buffer.slice(dataStart, dataStart + compSize);
-    if (method === 0) files[name] = data.toString('utf8');
-    else if (method === 8) files[name] = zlib.inflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).toString('utf8');
-    else if (uncompSize === 0) files[name] = '';
+    entries.set(name, { name, method, compSize, uncompSize, dataStart });
     ptr += 46 + nameLen + extraLen + commentLen;
   }
-  return files;
+  return entries;
+}
+
+function readZipEntry(buffer, entry) {
+  if (!entry) return Buffer.alloc(0);
+  const data = buffer.subarray(entry.dataStart, entry.dataStart + entry.compSize);
+  if (entry.method === 0) return data;
+  if (entry.method === 8) return zlib.inflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+  if (entry.uncompSize === 0) return Buffer.alloc(0);
+  throw new Error(`Metodo de compactacao XLSX nao suportado: ${entry.method}.`);
 }
 
 function firstSheetPath(files) {
@@ -128,6 +142,79 @@ function parseSheetXml(sheet, sst) {
     if (row.some(v => String(v || '').trim())) rows.push(row);
   }
   return rows;
+}
+
+function parseSheetRowXml(rowXml, sst) {
+  const row = [];
+  const bodyMatch = String(rowXml || '').match(/<row[^>]*>([\s\S]*?)<\/row>/);
+  if (!bodyMatch) return row;
+  const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let cellMatch;
+  while ((cellMatch = cellRe.exec(bodyMatch[1]))) {
+    const attrs = cellMatch[1] || '';
+    const body = cellMatch[2] || '';
+    const ref = attrs.match(/\sr="([^"]+)"/)?.[1] || '';
+    const type = attrs.match(/\st="([^"]+)"/)?.[1] || '';
+    const idx = columnIndex(ref);
+    const v = body.match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1];
+    let value = '';
+    if (type === 's') value = sst[Number(v)] || '';
+    else if (type === 'inlineStr') value = decodeXml(body.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] || '');
+    else value = decodeXml(v || '');
+    row[idx] = value;
+  }
+  return row;
+}
+
+/**
+ * Processa uma planilha grande sem descompactar todo o XML em memoria.
+ * O visitante pode ser assincrono; retornar false encerra a leitura.
+ */
+async function forEachXlsxSheetRow(buffer, sheetName, visitor, options = {}) {
+  if (typeof visitor !== 'function') throw new Error('O leitor XLSX exige uma funcao para processar as linhas.');
+  const entries = zipEntries(buffer);
+  const workbookXml = readZipEntry(buffer, entries.get('xl/workbook.xml')).toString('utf8');
+  const relsXml = readZipEntry(buffer, entries.get('xl/_rels/workbook.xml.rels')).toString('utf8');
+  const files = { 'xl/workbook.xml': workbookXml, 'xl/_rels/workbook.xml.rels': relsXml };
+  const sheets = workbookSheets(files);
+  const normalizedName = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const wanted = sheets.find(sheet => normalizedName(sheet.name) === normalizedName(sheetName));
+  if (!wanted) throw new Error(`Planilha "${sheetName}" nao encontrada no arquivo.`);
+  const entry = entries.get(wanted.path);
+  if (!entry) throw new Error(`XML da planilha "${sheetName}" nao encontrado no arquivo.`);
+  const sst = sharedStrings({ 'xl/sharedStrings.xml': readZipEntry(buffer, entries.get('xl/sharedStrings.xml')).toString('utf8') });
+  const maxRows = Number.isFinite(Number(options.maxRows)) ? Math.max(0, Number(options.maxRows)) : Infinity;
+  const compressed = buffer.subarray(entry.dataStart, entry.dataStart + entry.compSize);
+  const chunks = function* chunksOf(data, size = 256 * 1024) {
+    for (let offset = 0; offset < data.length; offset += size) yield data.subarray(offset, Math.min(offset + size, data.length));
+  };
+  const source = Readable.from(chunks(compressed));
+  const stream = entry.method === 8 ? source.pipe(zlib.createInflateRaw()) : source;
+  const decoder = new StringDecoder('utf8');
+  let pending = '';
+  let visited = 0;
+  let stopped = false;
+  const consume = async () => {
+    while (!stopped && visited < maxRows) {
+      const start = pending.indexOf('<row');
+      if (start < 0) { if (pending.length > 2048) pending = pending.slice(-2048); return; }
+      const end = pending.indexOf('</row>', start);
+      if (end < 0) { if (start > 0) pending = pending.slice(start); return; }
+      const xml = pending.slice(start, end + 6);
+      pending = pending.slice(end + 6);
+      visited += 1;
+      if (await visitor(parseSheetRowXml(xml, sst), visited) === false) stopped = true;
+    }
+  };
+  for await (const chunk of stream) {
+    if (stopped) break;
+    pending += decoder.write(chunk);
+    await consume();
+  }
+  pending += decoder.end();
+  if (!stopped) await consume();
+  if (stopped) stream.destroy();
+  return visited;
 }
 
 function parseXlsxSheets(buffer) {
@@ -243,4 +330,6 @@ module.exports = {
   parseXlsxBuffer,
   parseXlsxSheets,
   forEachXlsxRow,
+  forEachXlsxSheetRow,
+  zipEntries,
 };

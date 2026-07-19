@@ -9,6 +9,9 @@ const {
   parseGoinfraLaborRows,
   parseGoinfraMaterialRows,
   parseGoinfraCompositionRows,
+  validOffice,
+  parseSicorMgInputRows,
+  createSicorMgCompositionParser,
 } = require('../services/referenceImportService');
 
 assert.deepStrictEqual(parseReference('Data Base: MAIO/26', 2, 2026), { mes: 5, ano: 2026 });
@@ -42,7 +45,10 @@ const imports = paths(referenceImportRoutes(db));
 assert(imports.includes('POST /seinfra/importar'));
 assert(imports.includes('POST /sudecap/importar'));
 assert(imports.includes('POST /goinfra/importar'));
+assert(imports.includes('POST /sicor-mg/importar'));
 assert(imports.includes('POST /cdhu/importar'));
+assert.strictEqual(validOffice({ originalname: 'legado.xls' }), false);
+assert.strictEqual(validOffice({ originalname: 'legado.xls' }, true), true);
 
 const boundary = 'orcasmart-import-test';
 const body = Buffer.from([
@@ -81,5 +87,33 @@ Custo direto total (A) + (B) + (C) + (D) + (E)\t0,65
 assert.strictEqual(goinfraCompositions.length, 1);
 assert.strictEqual(goinfraCompositions[0].itens.length, 1);
 assert.strictEqual(goinfraCompositions[0].custo, 0.65);
+
+const sicorLabor = parseSicorMgInputRows([
+  ['MORO-1640', 'Motorista de caminhão', 'h', 12.28, ...Array(29).fill(null), 32.3025],
+], false, 'labor');
+assert.strictEqual(sicorLabor.length, 1);
+assert.strictEqual(sicorLabor[0].precoNaoDesonerado, 32.3025);
+
+const sicorParser = createSicorMgCompositionParser('Onerado');
+const header = [];
+header[0] = 'Serviço: CO-13791 - PESQUISADOR DE TRÁFEGO';
+header[28] = 'Unidade: hora';
+sicorParser.push(header);
+sicorParser.push(['Mão-de-Obra']);
+const laborItem = [];
+laborItem[0] = 'MOCO-13790 PESQUISADOR TRÁFEGO';
+laborItem[19] = '20.5496';
+laborItem[30] = '1';
+laborItem[38] = '20.5496';
+sicorParser.push(laborItem);
+const total = [];
+total[14] = 'Custo Unitário do serviço:';
+total[33] = '20.55';
+sicorParser.push(total);
+sicorParser.finish();
+assert.strictEqual(sicorParser.compositions.length, 1);
+assert.strictEqual(sicorParser.compositions[0].codigo, 'SICOR.CO-13791.ON');
+assert.strictEqual(sicorParser.compositions[0].itens.length, 1);
+assert.strictEqual(sicorParser.compositions[0].custo, 20.55);
 
 console.log('referenceImportRoutes.test.js: OK');

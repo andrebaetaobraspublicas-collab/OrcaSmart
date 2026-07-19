@@ -1,5 +1,6 @@
 const pdfParse = require('pdf-parse');
-const { parseXlsxBuffer, parseXlsxSheets } = require('../utils/spreadsheetUpload');
+const XLSX = require('xlsx');
+const { parseXlsxBuffer, parseXlsxSheets, forEachXlsxSheetRow } = require('../utils/spreadsheetUpload');
 
 function text(value) { return String(value ?? '').trim(); }
 function ascii(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
@@ -12,7 +13,7 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 function code(value) { return text(value).replace(/\.0+$/, '').toUpperCase(); }
-function validOffice(file) { return /\.(xlsx|xlsm)$/i.test(file?.originalname || ''); }
+function validOffice(file, allowLegacy = false) { return new RegExp(allowLegacy ? '\\.(xlsx|xlsm|xls)$' : '\\.(xlsx|xlsm)$', 'i').test(file?.originalname || ''); }
 function dbAll(db, sql, params = []) { return new Promise((resolve, reject) => db.all(sql, params.map(v => v === undefined ? null : v), (err, rows) => err ? reject(err) : resolve(rows || []))); }
 function dbGet(db, sql, params = []) { return new Promise((resolve, reject) => db.get(sql, params.map(v => v === undefined ? null : v), (err, row) => err ? reject(err) : resolve(row || null))); }
 function dbRun(db, sql, params = []) { return new Promise((resolve, reject) => db.run(sql, params.map(v => v === undefined ? null : v), function done(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); })); }
@@ -192,6 +193,157 @@ function mergeInsumos(...lists) {
   return [...map.values()];
 }
 
+function officeSheets(file) {
+  const isLegacy = /\.xls$/i.test(file?.originalname || '')
+    || (file?.buffer?.length >= 8 && file.buffer.subarray(0, 8).equals(Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1])));
+  if (!isLegacy) return parseXlsxSheets(file.buffer);
+  const workbook = XLSX.read(file.buffer, { type: 'buffer', raw: true, cellDates: false });
+  return workbook.SheetNames.map(name => ({
+    name,
+    rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: null, raw: true }),
+  }));
+}
+
+function sicorMgType(codigo) {
+  if (codigo.startsWith('MO')) return 'Mão de Obra';
+  if (codigo.startsWith('EQ')) return 'Equipamento';
+  return 'Material';
+}
+
+function parseSicorMgInputRows(rows, desonerado, layout = 'material') {
+  const priceKey = desonerado ? 'precoDesonerado' : 'precoNaoDesonerado';
+  const out = [];
+  for (const row of rows || []) {
+    const codigo = code(row[0]);
+    if (!/^(?:MAT|MO|EQ)[A-Z]*-\d+$/i.test(codigo)) continue;
+    let descricao; let unidade; let preco;
+    if (layout === 'labor') {
+      descricao = text(row[1]); unidade = code(row[2]) || 'H'; preco = number(row[33]);
+    } else if (layout === 'equipment') {
+      descricao = text(row[3]); unidade = 'H'; preco = number(row[16]);
+    } else {
+      descricao = text(row[5]) || text(row[1]); unidade = code(row[8] ?? row[2]) || 'UN'; preco = number(row[14] ?? row[3]);
+    }
+    if (!descricao || preco == null) continue;
+    out.push({ codigo, descricao, unidade, tipo: sicorMgType(codigo), [priceKey]: preco, observacoes: 'Sicor/MG - Regiao Central' });
+  }
+  return out;
+}
+
+function parseSicorMgInputFile(file, desonerado, scope) {
+  const sheets = officeSheets(file);
+  if (scope === 'road') {
+    const regime = sheets.find(sheet => {
+      const name = ascii(sheet.name).toUpperCase();
+      return name.startsWith('MG - ') && (desonerado ? name.includes('COM DESONERACAO') : name.includes('SEM DESONERACAO'));
+    });
+    const material = sheets.find(sheet => ascii(sheet.name).toUpperCase() === 'MATERIAL');
+    const equipment = sheets.find(sheet => ascii(sheet.name).toUpperCase() === 'EQUIPAMENTO - PARCELAS');
+    return mergeInsumos(
+      parseSicorMgInputRows(regime?.rows, desonerado, 'labor'),
+      parseSicorMgInputRows(material?.rows, desonerado, 'material'),
+      parseSicorMgInputRows(equipment?.rows, desonerado, 'equipment'),
+    );
+  }
+  const report = sheets.find(sheet => ascii(sheet.name).toUpperCase() === 'RELATORIO') || sheets[0];
+  return parseSicorMgInputRows(report?.rows, desonerado, 'material');
+}
+
+function splitSicorMgItem(value) {
+  const match = text(value).match(/^([A-Z]{2,6}-\d+)\s+(.+)$/i);
+  return match ? { codigo: code(match[1]), descricao: text(match[2]) } : null;
+}
+
+function createSicorMgCompositionParser(regime) {
+  const compositions = [];
+  let current = null;
+  let section = '';
+  const suffix = regime === 'Desonerado' ? 'DES' : 'ON';
+  const finish = () => {
+    if (current?.codigo) {
+      if (current.custo == null) current.custo = current.itens.reduce((sum, item) => sum + (item.custoParcial || 0), 0);
+      compositions.push(current);
+    }
+    current = null;
+    section = '';
+  };
+  const push = row => {
+    const first = text(row[0]);
+    const header = first.match(/^Servi[cç]o:\s*([A-Z]{2}-\d+)\s*-\s*(.+)$/i);
+    if (header) {
+      finish();
+      const unitCell = row.find(value => /^Unidade:/i.test(text(value)));
+      current = {
+        codigo: `SICOR.${code(header[1])}.${suffix}`,
+        descricao: text(header[2]),
+        unidade: code(text(unitCell).replace(/^Unidade:\s*/i, '')) || 'UN',
+        regime,
+        custo: null,
+        observacoes: 'Sicor/MG - Regiao Central',
+        itens: [],
+      };
+      return;
+    }
+    if (!current) return;
+    const normalized = ascii(first).toUpperCase();
+    const sections = {
+      EQUIPAMENTO: 'Equipamento',
+      'MAO-DE-OBRA': 'Mão de Obra',
+      MATERIAIS: 'Materiais',
+      SERVICOS: 'Servicos',
+      'ITENS DE TRANSPORTE': 'Itens de Transporte',
+      'MOMENTO DE TRANSPORTE': 'Momento de Transporte',
+    };
+    if (sections[normalized]) { section = sections[normalized]; return; }
+    if (row.some(value => ascii(value).toUpperCase().includes('CUSTO UNITARIO DO SERVICO'))) {
+      const labelIndex = row.findIndex(value => ascii(value).toUpperCase().includes('CUSTO UNITARIO DO SERVICO'));
+      const value = row.slice(labelIndex + 1).map(number).find(item => item != null);
+      if (value != null) current.custo = value;
+      return;
+    }
+    const itemHead = splitSicorMgItem(first);
+    if (!itemHead || !section) return;
+    let unidade = 'UN'; let coeficiente = null; let preco = null; let custoParcial = null;
+    if (section === 'Equipamento') {
+      unidade = 'H'; coeficiente = number(row[31]);
+      const productive = number(row[17]) || 0; const unproductive = number(row[25]) || 0;
+      preco = (number(row[7]) || 0) * productive + (number(row[12]) || 0) * unproductive;
+      custoParcial = number(row[37]);
+    } else if (section === 'Mão de Obra') {
+      unidade = 'H'; coeficiente = number(row[30]); preco = number(row[19]); custoParcial = number(row[38]);
+    } else if (section === 'Materiais') {
+      unidade = code(row[24]) || 'UN'; coeficiente = number(row[13]); preco = number(row[29]); custoParcial = number(row[39]);
+    } else if (section === 'Servicos') {
+      unidade = code(row[19]) || 'UN'; coeficiente = number(row[10]); preco = number(row[27]); custoParcial = number(row[37]);
+    } else if (section === 'Itens de Transporte') {
+      unidade = code(row[7]) || 'UN'; coeficiente = number(row[4]); preco = number(row[34]); custoParcial = number(row[40]);
+    } else if (section === 'Momento de Transporte') {
+      unidade = code(row[8]) || 'UN'; coeficiente = number(row[5]); preco = number(row[35]); custoParcial = number(row[41]);
+    }
+    if (coeficiente == null) return;
+    if (preco == null && coeficiente && custoParcial != null) preco = custoParcial / coeficiente;
+    const isComposition = /^(CO|ED|RO)-/i.test(itemHead.codigo);
+    current.itens.push({
+      tipo: isComposition ? 'COMPOSICAO' : 'INSUMO',
+      ...itemHead,
+      codigo: isComposition ? `SICOR.${itemHead.codigo}.${suffix}` : itemHead.codigo,
+      unidade,
+      coeficiente,
+      preco,
+      custoParcial,
+      situacao: section,
+    });
+  };
+  return { push, finish, compositions };
+}
+
+async function parseSicorMgCompositions(file, regime) {
+  const parser = createSicorMgCompositionParser(regime);
+  await forEachXlsxSheetRow(file.buffer, 'Relatorio', parser.push);
+  parser.finish();
+  return parser.compositions;
+}
+
 async function renderPdfRows(pageData) {
   const content = await pageData.getTextContent({ normalizeWhitespace: true });
   const rows = [];
@@ -339,13 +491,19 @@ function parseGoinfraCompositionRows(raw) {
   return out;
 }
 
-async function ensureCatalogContext(conn, sourceName, mes, ano, description) {
+async function ensureCatalogContext(conn, sourceName, mes, ano, description, sourceMeta = null) {
   let dbRow = await dbGet(conn, 'SELECT id_data_base FROM catalog.datas_base WHERE mes=? AND ano=? ORDER BY id_data_base DESC LIMIT 1', [mes, ano]);
   if (!dbRow) {
     const created = await dbRun(conn, 'INSERT INTO catalog.datas_base (mes,ano,descricao) VALUES (?,?,?)', [mes, ano, description]);
     dbRow = { id_data_base: created.lastID };
   }
-  const source = await dbGet(conn, 'SELECT id_fonte FROM catalog.fontes_referencia WHERE UPPER(nome_fonte)=UPPER(?) LIMIT 1', [sourceName]);
+  let source = await dbGet(conn, 'SELECT id_fonte FROM catalog.fontes_referencia WHERE UPPER(nome_fonte)=UPPER(?) LIMIT 1', [sourceName]);
+  if (!source && sourceMeta) {
+    const created = await dbRun(conn, `INSERT INTO catalog.fontes_referencia
+      (nome_fonte,tipo_fonte,orgao_responsavel,abrangencia,observacoes)
+      VALUES (?,?,?,?,?)`, [sourceName, sourceMeta.tipo || 'Oficial', sourceMeta.orgao, sourceMeta.abrangencia || 'MG', sourceMeta.observacoes || null]);
+    source = { id_fonte: created.lastID };
+  }
   return { idDataBase: Number(dbRow.id_data_base), idFonte: source?.id_fonte || null };
 }
 
@@ -547,6 +705,59 @@ async function importGoinfra(db, files, fields, tenantId) {
   });
 }
 
+async function importSicorMg(db, files, fields, tenantId) {
+  const mes = Number(fields.mes);
+  const ano = Number(fields.ano);
+  if (!Number.isInteger(mes) || mes < 1 || mes > 12 || !Number.isInteger(ano) || ano < 2000 || ano > 2100) {
+    throw Object.assign(new Error('Informe uma data-base valida para o Sicor/MG.'), { status: 400 });
+  }
+  const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
+  const insumos = mergeInsumos(
+    parseSicorMgInputFile(files.insumos_rodoviarios_onerado, false, 'road'),
+    parseSicorMgInputFile(files.insumos_rodoviarios_desonerado, true, 'road'),
+    parseSicorMgInputFile(files.insumos_edificacoes_onerado, false, 'building'),
+    parseSicorMgInputFile(files.insumos_edificacoes_desonerado, true, 'building'),
+  );
+  const composicoesOneradas = await parseSicorMgCompositions(files.composicoes_onerado, 'Onerado');
+  const composicoesDesoneradas = await parseSicorMgCompositions(files.composicoes_desonerado, 'Desonerado');
+  const composicoes = [...composicoesOneradas, ...composicoesDesoneradas];
+  if (!insumos.length) throw Object.assign(new Error('Nenhum insumo Sicor/MG foi reconhecido nos quatro arquivos enviados.'), { status: 400 });
+  if (!composicoes.length) throw Object.assign(new Error('Nenhuma composicao Sicor/MG foi reconhecida nas planilhas Relatorio.'), { status: 400 });
+
+  return transaction(db, async conn => {
+    const context = await ensureCatalogContext(conn, 'Sicor/MG', mes, ano, `Sicor/MG ${mesRef}`, {
+      tipo: 'Oficial',
+      orgao: 'DER-MG - Departamento de Estradas de Rodagem do Estado de Minas Gerais',
+      abrangencia: 'MG',
+      observacoes: 'Sistema de Custos e Orcamentos Referenciais de Minas Gerais',
+    });
+    const ins = await persistInsumos(conn, insumos, {
+      tenantId,
+      origem: 'SICOR',
+      uf: 'MG',
+      idDataBase: context.idDataBase,
+      idFonte: context.idFonte,
+      sobrepor: fields.sobrepor !== 'false',
+    });
+    const comp = await persistCompositions(conn, composicoes, {
+      tenantId,
+      fonte: 'SICOR',
+      uf: 'MG',
+      mesRef,
+      sobrepor: fields.sobrepor !== 'false',
+    });
+    return {
+      ...ins,
+      ...comp,
+      uf: 'MG',
+      data_base: mesRef,
+      composicoes_oneradas: composicoesOneradas.length,
+      composicoes_desoneradas: composicoesDesoneradas.length,
+      mensagem: `Sicor/MG ${mesRef}: ${ins.insumos_inseridos} insumos novos e ${comp.composicoes_inseridas} composicoes novas.`,
+    };
+  });
+}
+
 function normalizeCdhu(value) { return ascii(value).toUpperCase().replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim(); }
 function cdhuCode(value) { const raw=text(value); const match=raw.match(/(\d{6})/); if(match)return match[1]; if(/^\d+(?:\.0+)?$/.test(raw))return String(Math.trunc(Number(raw))).padStart(6,'0'); return ''; }
 function parseCdhuSynthetic(buffer, divisor) { const rows=parseXlsxBuffer(buffer); const records=[]; const byCode=new Map(); const byText=new Map(); for(const row of rows){const codigo=cdhuCode(row[0]);const descricao=text(row[1]);const unidade=code(row[2]);const gross=number(row[3]);if(!codigo||!descricao||!unidade||gross==null)continue;const record={codigo,descricao,unidade,preco:gross/Number(divisor||1)};records.push(record);byCode.set(codigo,record);byText.set(`${normalizeCdhu(descricao)}|${unidade}`,record);}return{records,byCode,byText}; }
@@ -567,4 +778,4 @@ function parseCdhuReference(files, fields, pdfText, syntheticRows) {
 }
 async function importCdhu(db,files,fields,tenantId){const divisor=number(fields.bdi_divisor)||1.2081;const syntheticRows=parseXlsxBuffer(files.arquivo_sintetico.buffer);const synthetic=parseCdhuSynthetic(files.arquivo_sintetico.buffer,divisor);const pdf=await pdfParse(files.arquivo_pdf.buffer);const base=parseCdhuPdfText(pdf.text);const ref=parseCdhuReference(files,fields,pdf.text,syntheticRows);const mesRef=`${String(ref.mes).padStart(2,'0')}/${ref.ano}`;if(!base.length||!synthetic.records.length)throw Object.assign(new Error('Não foi possível identificar as composições analíticas e os preços sintéticos da CDHU.'),{status:400});const inferred=[];const comps=base.map(comp=>{const own=synthetic.byCode.get(comp.codigo)||synthetic.byText.get(`${normalizeCdhu(comp.descricao)}|${comp.unidade}`);return{codigo:`CDHU.${comp.codigo}`,descricao:comp.descricao,unidade:comp.unidade,regime:own?'COM PREÇO':'SEM PREÇO',custo:own?.preco||0,observacoes:`CDHU/SP; BDI expurgado pelo divisor ${divisor}.`,itens:comp.itens.map(item=>{const rec=synthetic.byCode.get(cdhuCode(item.codigo))||synthetic.byText.get(`${normalizeCdhu(item.descricao)}|${item.unidade}`);if(item.codigo&&rec)inferred.push({codigo:item.codigo,descricao:item.descricao,unidade:item.unidade,tipo:item.unidade==='H'?'Mão de Obra':'Material',precoNaoDesonerado:rec.preco,precoDesonerado:rec.preco,observacoes:'Preço inferido do sintético CDHU/SP sem BDI.'});return{tipo:/^\d{6}$/.test(item.codigo)?'COMPOSICAO':'INSUMO',...item,preco:rec?.preco??null,custoParcial:rec?rec.preco*item.coeficiente:null};})};});return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'CDHU/SP',ref.mes,ref.ano,`CDHU/SP ${mesRef}`);const ins=await persistInsumos(conn,mergeInsumos(inferred),{tenantId,origem:'CDHU',uf:'SP',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,comps,{tenantId,fonte:'CDHU',uf:'SP',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'SP',bdi_percentual:number(fields.bdi_percentual)||20.81,bdi_divisor:divisor,composicoes_sem_preco:comps.filter(c=>!c.custo).length,itens_com_preco_inferido:inferred.length,mensagem:`CDHU/SP ${mesRef}: ${comp.composicoes_inseridas} composições novas e ${comp.itens_inseridos} itens importados.`};});}
 
-module.exports={ validOffice, extractPdfRows, parseReference, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseCdhuSynthetic, parseCdhuPdfText, parseCdhuReference, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importCdhu };
+module.exports={ validOffice, extractPdfRows, parseReference, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseSicorMgInputRows, parseSicorMgInputFile, createSicorMgCompositionParser, parseSicorMgCompositions, parseCdhuSynthetic, parseCdhuPdfText, parseCdhuReference, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu };

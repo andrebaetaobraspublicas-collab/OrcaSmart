@@ -20,7 +20,7 @@ Atualizada em 18/07/2026. Esta pasta documenta o SaaS/OrcaSmart3 localizado em
 | `ORCASMART3_MYSQL_RUNTIME.md` | Runtime Node/MySQL, tenancy e banco de produção |
 | `DEPLOY_HOSTINGER.md` | Publicação, reinício e validação em produção |
 | `MODULOS_E_ARQUITETURA.md` | Mapa de módulos, camadas e arquivos principais |
-| `IMPORTADORES_REFERENCIAIS.md` | SINAPI, SICRO, SEINFRA, SUDECAP, GOINFRA e CDHU |
+| `IMPORTADORES_REFERENCIAIS.md` | SINAPI, SICRO, Sicor/MG, SEINFRA, SUDECAP, GOINFRA e CDHU |
 | `BDI_TRANSICAO_TRIBUTARIA_2026_2033.md` | Regras atuais do BDI e integração com outros módulos |
 | `EVENTOGRAMA_IA.md` | Eventograma manual, automático, IA e exportações |
 | `MODULO_RISCOS_CONTINGENCIA.md` | Riscos, VME, RMS, tornado, Monte Carlo e BDI |

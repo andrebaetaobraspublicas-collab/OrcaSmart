@@ -34,6 +34,12 @@ Router.register('fontes', async () => {
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>Importar GOINFRA/GO
           </button>
+          <button class="btn btn-secondary" id="btnImportarSICORMG"
+            style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);color:#047857;border:1px solid #6ee7b7;font-weight:600">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="margin-right:5px;vertical-align:-2px">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>Importar Sicor/MG
+          </button>
           <button class="btn btn-secondary" id="btnImportarCDHU"
             style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);color:#6d28d9;border:1px solid #c4b5fd;font-weight:600">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="margin-right:5px;vertical-align:-2px">
@@ -97,6 +103,7 @@ Router.register('fontes', async () => {
     document.getElementById('btnImportarSEINFRA').addEventListener('click', iniciarImportacaoSEINFRA);
     document.getElementById('btnImportarSUDECAP').addEventListener('click', iniciarImportacaoSUDECAP);
     document.getElementById('btnImportarGOINFRA').addEventListener('click', iniciarImportacaoGOINFRA);
+    document.getElementById('btnImportarSICORMG').addEventListener('click', iniciarImportacaoSicorMG);
     document.getElementById('btnImportarCDHU').addEventListener('click', iniciarImportacaoCDHU);
     document.getElementById('btnImportarSICRO').addEventListener('click', iniciarImportacaoSICRO);
     document.getElementById('btnImportarSINAPI').addEventListener('click', iniciarImportacaoSINAPI);
@@ -277,10 +284,7 @@ Router.register('fontes', async () => {
     try { data = JSON.parse(txt); }
     catch(e) {
       if ([502, 503, 504].includes(response.status) || /Gateway Time-?out/i.test(txt)) {
-        return {
-          processando_segundo_plano: true,
-          mensagem: 'O servidor recebeu a planilha e a importacao continua em segundo plano. Aguarde alguns minutos e atualize a consulta da fonte SINAPI.',
-        };
+        throw new Error('O servidor excedeu o tempo de resposta durante a importacao. Nenhuma conclusao sera presumida; aguarde alguns minutos e consulte a data-base antes de repetir a operacao.');
       }
       throw new Error('Resposta invalida do servidor: ' + txt.slice(0, 200));
     }
@@ -686,6 +690,106 @@ Router.register('fontes', async () => {
           ${Utils.esc(res.mensagem || '')}
         </div>`,
       footer: `<button class="btn btn-primary" onclick="Modal.close()" style="background:#0e7490;border-color:#0e7490">Fechar</button>`
+    });
+    carregar();
+  }
+
+  function iniciarImportacaoSicorMG() {
+    const agora = new Date();
+    const referenciaPadrao = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+    const arquivo = (id, titulo, detalhe, legado = false) => `
+      <div class="form-group" style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:12px">
+        <label class="form-label">${titulo} *</label>
+        <input class="form-control" id="${id}" type="file" accept="${legado ? '.xls,.xlsx,.xlsm' : '.xlsx,.xlsm'}">
+        <div class="text-xs text-3" style="margin-top:5px">${detalhe}</div>
+      </div>`;
+    Modal.open({
+      title: 'Importar Sicor/MG',
+      size: 'modal-lg',
+      body: `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="form-group">
+            <label class="form-label">UF de referencia</label>
+            <input class="form-control" value="MG" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Data-base *</label>
+            <input class="form-control" id="sicorMgReferencia" type="month" value="${referenciaPadrao}" required>
+          </div>
+        </div>
+        <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#047857;margin:4px 0 8px">Insumos</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          ${arquivo('sicorMgRoOn', 'Rodoviarias - sem desoneracao', 'Relatorio de insumos rodoviarios no regime onerado.')}
+          ${arquivo('sicorMgRoDes', 'Rodoviarias - com desoneracao', 'Relatorio de insumos rodoviarios no regime desonerado.')}
+          ${arquivo('sicorMgEdOn', 'Edificacoes - sem desoneracao', 'Relatorio de insumos de edificacoes no regime onerado.', true)}
+          ${arquivo('sicorMgEdDes', 'Edificacoes - com desoneracao', 'Relatorio de insumos de edificacoes no regime desonerado.', true)}
+        </div>
+        <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#047857;margin:10px 0 8px">Composicoes - planilha Relatorio</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          ${arquivo('sicorMgCompOn', 'Composicoes - sem desoneracao', 'Arquivo CENTRAL_SEM_DESONERACAO_XLS_COMPOSICAO.')}
+          ${arquivo('sicorMgCompDes', 'Composicoes - com desoneracao', 'Arquivo CENTRAL_COM_DESONERACAO_XLS_COMPOSICAO.')}
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin:4px 0 12px;font-size:.85rem">
+          <input type="checkbox" id="sicorMgSobrepor" checked>
+          Sobrepor registros Sicor/MG existentes para esta data-base
+        </label>
+        <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:var(--radius);padding:12px;font-size:.82rem;color:#064e3b;line-height:1.5">
+          Os insumos rodoviarios e de edificacoes serao consolidados em uma unica origem, <strong>Sicor/MG</strong>.
+          As composicoes permanecerao separadas pelos regimes onerado e desonerado.
+        </div>
+        <div id="sicorMgStatus" style="display:none"></div>`,
+      footer: `<button class="btn btn-secondary" onclick="Modal.close()">Cancelar</button>
+               <button class="btn btn-primary" id="btnSicorMgImportar" style="background:#047857;border-color:#047857">Importar os 6 arquivos</button>`,
+    });
+
+    document.getElementById('btnSicorMgImportar').addEventListener('click', async () => {
+      const ids = ['sicorMgRoOn','sicorMgRoDes','sicorMgEdOn','sicorMgEdDes','sicorMgCompOn','sicorMgCompDes'];
+      const selected = ids.map(id => document.getElementById(id).files[0]);
+      const reference = document.getElementById('sicorMgReferencia').value;
+      if (selected.some(file => !file)) { Toast.warning('Selecione os seis arquivos do Sicor/MG.'); return; }
+      if (!/^\d{4}-\d{2}$/.test(reference)) { Toast.warning('Informe a data-base da importacao.'); return; }
+      const [ano, mes] = reference.split('-');
+      const btn = document.getElementById('btnSicorMgImportar');
+      const status = document.getElementById('sicorMgStatus');
+      btn.disabled = true;
+      btn.textContent = 'Importando...';
+      status.style.display = 'block';
+      status.innerHTML = _mkProgressBar('sicorMgProg', '#047857');
+      try {
+        const fd = new FormData();
+        const names = ['insumos_rodoviarios_onerado','insumos_rodoviarios_desonerado','insumos_edificacoes_onerado','insumos_edificacoes_desonerado','composicoes_onerado','composicoes_desonerado'];
+        selected.forEach((file, index) => fd.append(names[index], file));
+        fd.append('mes', mes);
+        fd.append('ano', ano);
+        fd.append('sobrepor', document.getElementById('sicorMgSobrepor').checked ? 'true' : 'false');
+        const res = await _importFetch('/api/sicor-mg/importar', fd, 'sicorMgProg', 'Lendo planilhas Sicor/MG...');
+        Modal.close();
+        mostrarResultadoSicorMG(res);
+      } catch (e) {
+        status.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:var(--radius);padding:12px;color:#991b1b;font-size:.82rem;white-space:pre-wrap">${Utils.esc(e.message.slice(0, 800))}</div>`;
+        btn.disabled = false;
+        btn.textContent = 'Importar os 6 arquivos';
+      }
+    });
+  }
+
+  function mostrarResultadoSicorMG(res) {
+    const kpi = (label, value, color) => `<div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:11px 14px"><div style="font-size:.67rem;text-transform:uppercase;color:var(--c-text-2)">${label}</div><div style="font-size:1.25rem;font-weight:800;color:${color};margin-top:3px">${Number(value || 0).toLocaleString('pt-BR')}</div></div>`;
+    Modal.open({
+      title: 'Importacao Sicor/MG concluida',
+      size: 'modal-lg',
+      body: `
+        <div style="text-align:center;margin-bottom:16px"><div style="font-size:1.05rem;font-weight:800;color:#047857">Dados importados com sucesso</div><div class="text-sm text-2" style="margin-top:4px">MG | ${Utils.esc(res.data_base || '')}</div></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          ${kpi('Insumos novos', res.insumos_inseridos, '#047857')}
+          ${kpi('Precos novos', res.precos_inseridos, '#059669')}
+          ${kpi('Composicoes novas', res.composicoes_inseridas, '#2563eb')}
+          ${kpi('Composicoes oneradas', res.composicoes_oneradas, '#b45309')}
+          ${kpi('Composicoes desoneradas', res.composicoes_desoneradas, '#7c3aed')}
+          ${kpi('Itens importados', res.itens_inseridos, '#0891b2')}
+        </div>
+        <div style="margin-top:14px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:var(--radius);padding:12px;color:#064e3b;font-size:.84rem">${Utils.esc(res.mensagem || '')}</div>`,
+      footer: `<button class="btn btn-primary" onclick="Modal.close()" style="background:#047857;border-color:#047857">Fechar</button>`,
     });
     carregar();
   }

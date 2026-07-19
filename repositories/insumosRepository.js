@@ -486,7 +486,7 @@ function codigoVariantes(codigo) {
   if (!raw) return [];
   const bare = raw.includes('.') ? raw.split('.', 2)[1] : raw;
   const vals = new Set([raw, bare]);
-  ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'].forEach(prefix => vals.add(`${prefix}.${bare}`));
+  ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'].forEach(prefix => vals.add(`${prefix}.${bare}`));
   return Array.from(vals).filter(Boolean);
 }
 

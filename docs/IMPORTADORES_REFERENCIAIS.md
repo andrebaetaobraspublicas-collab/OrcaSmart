@@ -67,6 +67,30 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - O layout atual de composições é PDF, conforme validação da rota.
 - Backend Node implementado; não encaminhar ao Python legado.
 
+## Sicor/MG
+
+- Endpoint: `POST /api/sicor-mg/importar`.
+- Origem interna de insumos e composições: `SICOR`; nome apresentado ao usuário:
+  `Sicor/MG`. Não confundir com o `SICRO` nacional do DNIT.
+- UF fixa: `MG`; mês e ano da data-base são obrigatoriamente informados pelo
+  usuário.
+- O formulário recebe seis arquivos: insumos rodoviários e de edificações, com
+  e sem desoneração, e duas planilhas de composições, também por regime.
+- Arquivos de edificações no formato legado `.xls` são aceitos. Os demais usam
+  `.xlsx/.xlsm`.
+- A distinção rodoviário/edificações não cria origens diferentes: os códigos são
+  consolidados em uma única origem `Sicor/MG`, preservando preços onerados e
+  desonerados.
+- As composições são lidas exclusivamente na planilha `Relatório` e gravadas
+  separadamente como `Onerado` e `Desonerado`, com códigos internos terminados
+  em `.ON` e `.DES`.
+- O leitor da planilha de composições é incremental para suportar relatórios com
+  mais de 160 mil linhas sem expandir todo o XML do XLSX na memória.
+- Seções reconhecidas: equipamentos, mão de obra, materiais, serviços, itens de
+  transporte e momento de transporte.
+- Implementação Node: `services/referenceImportService.js`, com leitura XLSX
+  incremental em `utils/spreadsheetUpload.js`.
+
 ## CDHU/SP
 
 - Endpoint: `POST /api/cdhu/importar`.

@@ -102,8 +102,8 @@ function codigoVariantes(...codigos) {
   const out = new Set();
   codigos.filter(Boolean).forEach((codigo) => {
     const raw = String(codigo).trim();
-    const bare = raw.replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)\./i, '').trim();
-    [raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`, `USUARIO.${bare}`].filter(Boolean).forEach(v => out.add(v));
+    const bare = raw.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)\./i, '').trim();
+    [raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`, `SICOR.${bare}`, `USUARIO.${bare}`].filter(Boolean).forEach(v => out.add(v));
   });
   return Array.from(out);
 }

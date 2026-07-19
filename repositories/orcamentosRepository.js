@@ -60,6 +60,7 @@ function normalizarFonte(value) {
   if (!raw) return '';
   if (raw.includes('SINAPI')) return 'SINAPI';
   if (raw.includes('SICRO')) return 'SICRO';
+  if (raw.includes('SICOR')) return 'SICOR';
   if (raw.includes('SEINFRA')) return 'SEINFRA';
   if (raw.includes('SUDECAP')) return 'SUDECAP';
   if (raw.includes('GOINFRA')) return 'GOINFRA';
@@ -73,6 +74,7 @@ function fonteAliases(value) {
   const aliases = {
     SINAPI: ['SINAPI', 'SINAPI (Ajustada)'],
     SICRO: ['SICRO', 'SICRO (Ajustado)'],
+    SICOR: ['SICOR', 'SICOR/MG', 'Sicor/MG'],
     SEINFRA: ['SEINFRA', 'SEINFRA/CE'],
     SUDECAP: ['SUDECAP', 'SUDECAP/MG', 'SUDECAP/BH'],
     GOINFRA: ['GOINFRA', 'GOINFRA/GO'],
@@ -86,7 +88,7 @@ function codigoVariantesComposicao(codigo, fonte = '') {
   const original = String(codigo || '').trim();
   if (!original || original === '-') return [];
   const fonteNorm = normalizarFonte(fonte);
-  const fontes = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
+  const fontes = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
   const bases = new Set([original]);
   if (original.includes('.')) {
     bases.add(original.split('.').pop());
@@ -1168,7 +1170,7 @@ async function curvaAbcServicos(db, idOrcamento) {
 function codigoVariantesInsumo(codigo) {
   const original = String(codigo || '').trim();
   if (!original || original === '-') return [];
-  const fontes = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
+  const fontes = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'USUARIO'];
   const bases = new Set([original]);
   if (original.includes('.')) {
     bases.add(original.split('.').pop());

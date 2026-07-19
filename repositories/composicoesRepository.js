@@ -120,7 +120,7 @@ function codigoVariantes(codigo) {
   const cod = String(codigo || '').trim();
   if (!cod) return [];
   const variantes = new Set([cod]);
-  const prefixes = ['SINAPI.', 'SICRO.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.'];
+  const prefixes = ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.'];
   if (cod.includes('.')) variantes.add(cod.split('.').pop());
   for (const prefix of prefixes) {
     if (cod.startsWith(prefix)) variantes.add(cod.slice(prefix.length));
@@ -402,7 +402,7 @@ function codigoBusca(codigo) {
   const raw = String(codigo || '').trim();
   if (!raw) return [];
   const bare = raw.includes('.') ? raw.split('.').pop() : raw;
-  return [...new Set([raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`])];
+  return [...new Set([raw, bare, `SINAPI.${bare}`, `SICRO.${bare}`, `SICOR.${bare}`])];
 }
 
 function chunkArray(items, size) {
@@ -1421,7 +1421,7 @@ async function atualizarOrcamentosPorComposicoes(db, compIds = []) {
 
 function novoCodigoUsuario(baseCodigo) {
   let base = String(baseCodigo || 'COMP').trim();
-  for (const prefix of ['SINAPI.', 'SICRO.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.']) {
+  for (const prefix of ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.']) {
     base = base.replace(prefix, '');
   }
   return `USUARIO.${base || 'COMP'}`;
@@ -1523,7 +1523,7 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
     if (!compOrig) return null;
     const impacto = options.impacto || await impactoComposicao(readDb, idComposicao).catch(() => null);
     const temImpacto = (impacto?.composicoes_auxiliares || []).length > 0 || (impacto?.orcamentos || []).length > 0;
-    const referenciais = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+    const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
     const scoped = scopedComposicaoId(idComposicao);
     const criarNova = scoped.scope === 'catalog' || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
     let idResultado = scoped.scope === 'tenant' ? scoped.value : null;
@@ -1584,7 +1584,7 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
   const impacto = await impactoComposicao(db, idComposicao);
   const parentIds = (impacto?.composicoes_auxiliares || []).map(row => row.id_composicao);
   const temImpacto = parentIds.length > 0 || (impacto?.orcamentos || []).length > 0;
-  const referenciais = ['SINAPI', 'SICRO', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+  const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
   const criarNova = referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
   let idResultado = Number(idComposicao);
   let codNovo = null;

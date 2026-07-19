@@ -1930,7 +1930,7 @@ Router.register('orcamento-sintetico', async () => {
   function abrirCriarComposicaoUsuarioDaLinha(idItem = buscaCallback || selectedId) {
     const item = itens.find(i => i.id_item === idItem);
     if (!item) return;
-    const codigoBase = String(item.codigo || '').trim().replace(/^(SINAPI|SICRO|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)[./-]/i, '');
+    const codigoBase = String(item.codigo || '').trim().replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU|USUARIO)[./-]/i, '');
     const codigoSugerido = codigoBase ? `USUARIO.${codigoBase}` : `USUARIO.${Date.now().toString().slice(-6)}`;
     const ref = orcMesReferencia();
     const uf = orc?.uf_referencia || orc?.obra_uf || '';

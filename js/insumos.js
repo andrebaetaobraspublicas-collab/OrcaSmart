@@ -37,7 +37,8 @@ Object.assign(API, {
 
 /* ─── Constantes ───────────────────────────────────────────────────────────── */
 const TIPOS_INSUMO  = ['Material','Mão de Obra','Equipamento','Serviço Auxiliar'];
-const ORIGENS_INS   = ['SINAPI','SICRO','SEINFRA','SUDECAP','GOINFRA','CDHU','USUARIO','Cotação','Própria','Outra'];
+const ORIGENS_INS   = ['SINAPI','SICRO','SICOR','SEINFRA','SUDECAP','GOINFRA','CDHU','USUARIO','Cotação','Própria','Outra'];
+const ORIGEM_LABEL  = { SICOR: 'Sicor/MG' };
 const TIPO_ICONS    = {
   'Material':          '🧱',
   'Mão de Obra':       '👷',
@@ -153,7 +154,7 @@ Router.register('insumos', async () => {
           </select>
           <select class="filter-select" id="filtroOrigem">
             <option value="">Todas as origens</option>
-            ${ORIGENS_INS.map(o=>`<option value="${o}" ${filtros.origem===o?'selected':''}>${o}</option>`).join('')}
+            ${ORIGENS_INS.map(o=>`<option value="${o}" ${filtros.origem===o?'selected':''}>${ORIGEM_LABEL[o] || o}</option>`).join('')}
           </select>
           <select class="filter-select" id="filtroSit">
             <option value="">Todos</option>
@@ -223,7 +224,7 @@ Router.register('insumos', async () => {
                     <td class="text-sm">
                       ${ins.sigla_unidade ? `<span class="badge badge-gray">${Utils.esc(ins.sigla_unidade)}</span>` : '—'}
                     </td>
-                    <td class="text-sm text-2">${Utils.esc(ins.origem)||'—'}</td>
+                    <td class="text-sm text-2">${Utils.esc(ORIGEM_LABEL[ins.origem] || ins.origem)||'—'}</td>
                     <td class="fw-600 text-sm">
                       ${ins.preco_referencia != null && ins.preco_referencia > 0
                         ? Utils.moeda(ins.preco_regime || ins.preco_referencia)
@@ -827,7 +828,7 @@ Router.register('insumos', async () => {
             <label class="form-label">Origem</label>
             <select class="form-control" id="fi_origem">
               <option value="">Selecione...</option>
-              ${ORIGENS_INS.map(o=>`<option value="${o}" ${ins.origem===o?'selected':''}>${o}</option>`).join('')}
+              ${ORIGENS_INS.map(o=>`<option value="${o}" ${ins.origem===o?'selected':''}>${ORIGEM_LABEL[o] || o}</option>`).join('')}
             </select>
           </div>
           <div class="form-group span-2">
@@ -1147,7 +1148,7 @@ Router.register('insumos', async () => {
             <label class="form-label">Origem</label>
             <select class="form-control" id="eil_origem">
               <option value="">Qualquer origem</option>
-              ${ORIGENS_INS.map(o => `<option value="${o}" ${filtros.origem===o?'selected':''}>${o}</option>`).join('')}
+              ${ORIGENS_INS.map(o => `<option value="${o}" ${filtros.origem===o?'selected':''}>${ORIGEM_LABEL[o] || o}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">

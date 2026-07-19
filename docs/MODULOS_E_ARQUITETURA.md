@@ -35,7 +35,7 @@ devem respeitar essa direção e evitar SQL no frontend ou regras extensas na ro
 | Produção horária/PEM | JavaScript PEM | `routes/pemRoutes.js`, `services/pemService.js`, `repositories/pemRepository.js` |
 | BDI | `js/bdi.js` | `routes/bdiRoutes.js`, `services/bdiService.js`, `services/bdiRules.js`, `repositories/bdiRepository.js` |
 | Equipamentos | JavaScript de equipamentos | `routes/equipamentosRoutes.js`, `services/equipamentosService.js` |
-| Fontes e importadores | JavaScript de fontes | `routes/sinapiRoutes.js`, `routes/sicroRoutes.js`, `routes/referenceImportRoutes.js` |
+| Fontes e importadores | JavaScript de fontes | `routes/sinapiRoutes.js`, `routes/sicroRoutes.js`, `routes/referenceImportRoutes.js`; inclui Sicor/MG com seis arquivos e leitura incremental |
 | Municípios/tributos | JavaScript de municípios | `routes/municipiosRoutes.js`, `services/municipiosService.js` |
 | Reforma Tributária | frontend/embedded da calculadora | integração BDI e APIs existentes |
 | Eventograma | `js/eventogramas.js` | `routes/eventogramasRoutes.js`, `services/eventogramasService.js`, `services/eventogramasAiService.js` |
