@@ -1998,11 +1998,42 @@ async function excluirEmLote(db, data = {}) {
     if (readMode) {
       const fonte = String(data.fonte || '').trim().toUpperCase();
       if (allowReferentialDelete && fonte && fonte !== 'USUARIO') {
-        const result = await deleteCatalogComposicoesBatch(db, data);
-        if (data.dry_run) return result;
+        const tenantFilter = batchWhere(data, 'c');
+        const tenantRows = await all(db, `
+          SELECT 'tenant:' || c.rowid AS id_composicao
+          FROM tenant_composicoes c
+          WHERE ${tenantFilter.clause}
+            AND COALESCE(c.tenant_override_status,'active')='active'`, tenantFilter.params);
+        const catalogResult = await deleteCatalogComposicoesBatch(db, { ...data, dry_run: true });
+        const total = tenantRows.length + Number(catalogResult.total || 0);
+        if (data.dry_run) return { total, dry_run: true };
+
+        let tenantExcluidas = 0;
+        if (tenantRows.length) {
+          await run(db, 'BEGIN');
+          try {
+            for (const row of tenantRows) {
+              const result = await deleteComposicaoDirect(db, row.id_composicao);
+              tenantExcluidas += Number(result.changes || 0);
+            }
+            await run(db, 'COMMIT');
+          } catch (err) {
+            await run(db, 'ROLLBACK').catch(() => {});
+            throw err;
+          }
+        }
+
+        const catalogDeleted = Number(catalogResult.total || 0)
+          ? await deleteCatalogComposicoesBatch(db, data)
+          : { excluidos: 0 };
+        const excluidos = tenantExcluidas + Number(catalogDeleted.excluidos || 0);
         return {
-          ...result,
-          mensagem: `${result.excluidos} composicao(oes) referencial(is) excluida(s) do catalogo.`,
+          total,
+          excluidos,
+          tenant_excluidas: tenantExcluidas,
+          catalogo_excluidas: Number(catalogDeleted.excluidos || 0),
+          dry_run: false,
+          mensagem: `${excluidos} composicao(oes) referencial(is) excluida(s).`,
         };
       }
 

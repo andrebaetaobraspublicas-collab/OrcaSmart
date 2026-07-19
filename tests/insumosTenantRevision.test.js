@@ -72,14 +72,14 @@ async function main() {
       CREATE TABLE catalog.fontes_referencia (id_fonte INTEGER PRIMARY KEY, nome_fonte TEXT);
 
       CREATE TABLE tenant_insumos (
-        id_insumo INTEGER, codigo_insumo TEXT, descricao TEXT, tipo_insumo TEXT,
+        id_insumo INTEGER PRIMARY KEY, codigo_insumo TEXT, descricao TEXT, tipo_insumo TEXT,
         id_unidade INTEGER, id_grupo INTEGER, origem TEXT, encargos_aplicaveis TEXT,
         situacao TEXT, observacoes TEXT, encargos_sociais_percentual REAL,
         tenant_catalog_id INTEGER, tenant_override_action TEXT, tenant_override_status TEXT,
         tenant_created_at TEXT, tenant_updated_at TEXT
       );
       CREATE TABLE tenant_precos_insumos (
-        id_preco INTEGER, id_insumo INTEGER, id_data_base INTEGER, id_fonte INTEGER,
+        id_preco INTEGER PRIMARY KEY, id_insumo INTEGER, id_data_base INTEGER, id_fonte INTEGER,
         uf_referencia TEXT, preco_referencia REAL, preco_desonerado REAL, preco_nao_desonerado REAL,
         iva_equivalente REAL, cbs_percentual REAL, ibs_percentual REAL, is_percentual REAL,
         preco_sem_tributos REAL, encargos_sociais_percentual REAL,
@@ -199,17 +199,28 @@ async function main() {
         (201,20,1,'SP',10,10,10),
         (202,21,1,'SP',20,20,20),
         (203,21,2,'SP',30,30,30);
+      INSERT INTO tenant_insumos
+        (id_insumo,codigo_insumo,descricao,tipo_insumo,origem,encargos_aplicaveis,situacao,tenant_override_action,tenant_override_status)
+      VALUES
+        (30,'CDHU-TENANT-ERR-1','Tenant somente na data incorreta','Material','CDHU','Sim','Ativo','create','active'),
+        (31,'CDHU-TENANT-ERR-2','Tenant tambem existe em outra data','Material','CDHU','Sim','Ativo','create','active');
+      INSERT INTO tenant_precos_insumos
+        (id_preco,id_insumo,id_data_base,uf_referencia,preco_referencia,preco_desonerado,preco_nao_desonerado,tenant_override_action,tenant_override_status)
+      VALUES
+        (301,30,1,'SP',10,10,10,'create','active'),
+        (302,31,1,'SP',20,20,20,'create','active'),
+        (303,31,2,'SP',30,30,30,'create','active');
     `);
     const preview = await service.deleteBatch(db, {
       origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005, dry_run: true,
     });
-    assert.strictEqual(preview.total, 2);
+    assert.strictEqual(preview.total, 4);
     const removidos = await service.deleteBatch(db, {
       origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005,
     });
-    assert.strictEqual(removidos.precos_excluidos, 2);
-    assert.strictEqual(removidos.excluidos, 1);
-    assert.strictEqual(removidos.preservados, 1);
+    assert.strictEqual(removidos.precos_excluidos, 4);
+    assert.strictEqual(removidos.excluidos, 2);
+    assert.strictEqual(removidos.preservados, 2);
     const dataIncorreta = await service.listInsumos(db, {
       origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005, limit: 300,
     });
@@ -217,7 +228,7 @@ async function main() {
     const preservado = await service.listInsumos(db, {
       origem: 'CDHU', uf: 'SP', mes: 5, ano: 2026, limit: 300,
     });
-    assert.deepStrictEqual(preservado.map(item => item.codigo_insumo), ['CDHU-ERR-2']);
+    assert.deepStrictEqual(new Set(preservado.map(item => item.codigo_insumo)), new Set(['CDHU-ERR-2', 'CDHU-TENANT-ERR-2']));
 
     console.log('insumosTenantRevision.test.js: OK');
   } finally {

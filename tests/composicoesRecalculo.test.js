@@ -60,7 +60,15 @@ async function validarPreviewExclusaoCdhu() {
   try {
     await exec(db, `
       ATTACH DATABASE ':memory:' AS catalog;
-      CREATE TABLE tenant_composicoes (id_composicao INTEGER PRIMARY KEY);
+      CREATE TABLE tenant_composicoes (
+        id_composicao INTEGER PRIMARY KEY,
+        fonte TEXT,
+        formato TEXT,
+        uf_referencia TEXT,
+        mes_referencia TEXT,
+        id_grupo_comp INTEGER,
+        tenant_override_status TEXT
+      );
       CREATE TABLE catalog.composicoes (
         id_composicao INTEGER PRIMARY KEY,
         fonte TEXT,
@@ -73,6 +81,9 @@ async function validarPreviewExclusaoCdhu() {
         (1, 'CDHU/SP', 'Unitario', 'SP', '6/2005', NULL),
         (2, 'CDHU', 'Unitario', 'SP', '2005-06', NULL),
         (3, 'CDHU', 'Unitario', 'SP', '05/2026', NULL);
+      INSERT INTO tenant_composicoes VALUES
+        (10, 'CDHU', 'UNITARIO', 'SP', '06/2005', NULL, 'active'),
+        (11, 'CDHU', 'UNITARIO', 'SP', '05/2026', NULL, 'active');
     `);
     const result = await repo.excluirEmLote(db, {
       fonte: 'CDHU',
@@ -81,7 +92,7 @@ async function validarPreviewExclusaoCdhu() {
       dry_run: true,
       __allowReferentialDelete: true,
     });
-    assert.strictEqual(result.total, 2);
+    assert.strictEqual(result.total, 3);
   } finally {
     await new Promise(resolve => db.close(resolve));
   }
