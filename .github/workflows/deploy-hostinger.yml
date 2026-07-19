@@ -14,10 +14,10 @@ jobs:
 
       - name: Bundle Node runtime dependencies
         run: |
-          npm install --prefix .deploy-mysql2 --omit=dev --ignore-scripts mysql2@3.11.5 pdf-parse@1.1.1
+          npm install --prefix .deploy-runtime --omit=dev --ignore-scripts mysql2@3.11.5 pdf-parse@1.1.1 xlsx@0.18.5
           mkdir -p node_modules
-          cp -R .deploy-mysql2/node_modules/. node_modules/
-          rm -rf .deploy-mysql2
+          cp -R .deploy-runtime/node_modules/. node_modules/
+          rm -rf .deploy-runtime
 
       - name: Signal Node restart
         run: |
