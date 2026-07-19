@@ -67,6 +67,17 @@ async function useTenantCatalogRead(db) {
   return (await hasTenantInsumoOverrides(db)) && (await hasCatalogInsumos(db));
 }
 
+async function hasActiveInsumoOverrides(db) {
+  if (!await tableExists(db, 'tenant_referential_overrides')) return false;
+  const row = await one(db, `
+    SELECT 1 AS found
+    FROM tenant_referential_overrides
+    WHERE domain='insumos' AND catalog_table='insumos'
+      AND status='active' AND action IN ('update','delete')
+    LIMIT 1`).catch(() => null);
+  return !!row;
+}
+
 function insumoColumns(idExpr, scopeExpr, catalogIdExpr = 'NULL') {
   return `
     ${idExpr} AS id_insumo,
@@ -274,13 +285,14 @@ async function stats(db) {
   }
   await ensureSchema(db);
   if (await useTenantCatalogRead(db)) {
-    const visibleCatalog = `
+    const hasOverrides = await hasActiveInsumoOverrides(db);
+    const visibleCatalog = hasOverrides ? `
       NOT EXISTS (
         SELECT 1 FROM tenant_referential_overrides r
         WHERE r.domain='insumos' AND r.catalog_table='insumos'
           AND r.catalog_id=i.id_insumo AND r.status='active'
           AND r.action IN ('update','delete')
-      )`;
+      )` : '1=1';
     {
       const aggregate = tipoExpr => `
         COUNT(*) AS total,
@@ -343,7 +355,7 @@ async function stats(db) {
   return result;
 }
 
-function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
+function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_insumos' : 'catalog.insumos';
   const priceTable = isTenant ? 'tenant_precos_insumos' : 'catalog.precos_insumos';
@@ -390,13 +402,15 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog') {
   const params = [...subParams];
 
   if (!isTenant) {
-    sql += `
-      AND NOT EXISTS (
-        SELECT 1 FROM tenant_referential_overrides r
-        WHERE r.domain='insumos' AND r.catalog_table='insumos'
-          AND r.catalog_id=i.id_insumo AND r.status='active'
-          AND r.action IN ('update','delete')
-      )`;
+    if (hasOverrides) {
+      sql += `
+        AND NOT EXISTS (
+          SELECT 1 FROM tenant_referential_overrides r
+          WHERE r.domain='insumos' AND r.catalog_table='insumos'
+            AND r.catalog_id=i.id_insumo AND r.status='active'
+            AND r.action IN ('update','delete')
+        )`;
+    }
   } else {
     sql += " AND COALESCE(i.tenant_override_status,'active')='active'";
   }
@@ -435,7 +449,7 @@ function compareInsumos(a, b) {
   return String(a.descricao || '').localeCompare(String(b.descricao || ''), 'pt-BR', { sensitivity: 'base' });
 }
 
-function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog') {
+function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog', hasOverrides = true) {
   const isTenant = source === 'tenant';
   const table = isTenant ? 'tenant_insumos' : 'catalog.insumos';
   const priceTable = isTenant ? 'tenant_precos_insumos' : 'catalog.precos_insumos';
@@ -445,12 +459,14 @@ function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog') {
   const params = [];
 
   if (!isTenant) {
-    sql += ` AND NOT EXISTS (
-      SELECT 1 FROM tenant_referential_overrides r
-      WHERE r.domain='insumos' AND r.catalog_table='insumos'
-        AND r.catalog_id=i.id_insumo AND r.status='active'
-        AND r.action IN ('update','delete')
-    )`;
+    if (hasOverrides) {
+      sql += ` AND NOT EXISTS (
+        SELECT 1 FROM tenant_referential_overrides r
+        WHERE r.domain='insumos' AND r.catalog_table='insumos'
+          AND r.catalog_id=i.id_insumo AND r.status='active'
+          AND r.action IN ('update','delete')
+      )`;
+    }
   } else {
     sql += " AND COALESCE(i.tenant_override_status,'active')='active'";
   }
@@ -486,7 +502,8 @@ function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog') {
 }
 
 async function listTenantCatalogPage(db, query) {
-  const catalogQuery = buildTenantCatalogCandidateSelect(query, 'catalog');
+  const hasOverrides = await hasActiveInsumoOverrides(db);
+  const catalogQuery = buildTenantCatalogCandidateSelect(query, 'catalog', hasOverrides);
   const tenantQuery = buildTenantCatalogCandidateSelect(query, 'tenant');
   const catalogCandidates = await all(db, catalogQuery.sql, catalogQuery.params);
   const tenantCandidates = await all(db, tenantQuery.sql, tenantQuery.params);
@@ -498,7 +515,7 @@ async function listTenantCatalogPage(db, query) {
   const tenantIds = selected.filter(row => String(row.id_insumo).startsWith('tenant:')).map(row => Number(String(row.id_insumo).slice(7)));
   const hydrated = [];
   if (catalogIds.length) {
-    const built = buildTenantCatalogListSelect(query, 'catalog');
+    const built = buildTenantCatalogListSelect(query, 'catalog', hasOverrides);
     const marks = catalogIds.map(() => '?').join(',');
     hydrated.push(...await all(db, `${built.sql} AND i.id_insumo IN (${marks})`, [...built.params, ...catalogIds]));
   }

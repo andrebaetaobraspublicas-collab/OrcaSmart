@@ -58,44 +58,94 @@ Router.register('insumos', async () => {
   /* ── Estado ──────────────────────────────────────────────────────────────── */
   let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {}, _me = null;
   let metadataPromise = null;
+  let metadataReady = false;
   let statsPromise = null;
   let loadSequence = 0;
   let searchTimer = null;
-  const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:300 };
+  let initialRenderCompleted = false;
+  const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:100 };
   let pesquisaMercadoResultados = [];
   let pesquisaMercadoSelecionado = null;
   let comprasGovResultados = [];
   let comprasGovSelecionado = null;
 
   /* ── Carregamento ────────────────────────────────────────────────────────── */
+  function carregarMetadados() {
+    if (!metadataPromise) {
+      metadataPromise = Promise.all([
+        API.unidades.list(),
+        API.fontes.list(),
+        API.datasBase.list(),
+        API.grupos.list(),
+        API.auth.me().catch(() => null),
+      ]).then(metadata => {
+        [unidades, fontes, datasBase, grupos, _me] = metadata;
+        metadataReady = true;
+        return metadata;
+      }).catch(error => {
+        metadataPromise = null;
+        throw error;
+      });
+    }
+    return metadataPromise;
+  }
+
+  function renderCarregandoInicial() {
+    document.getElementById('pageContent').innerHTML = `
+      <div class="page-header">
+        <div class="page-header-left">
+          <h1>Insumos</h1>
+          <p>Carregando a primeira página&hellip;</p>
+        </div>
+      </div>
+      <div class="card" style="min-height:180px;display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center;color:var(--c-text-2)">
+          <div class="spinner" style="margin:0 auto 12px"></div>
+          Consultando os insumos mais recentes
+        </div>
+      </div>`;
+  }
+
+  function renderErroInicial(error) {
+    document.getElementById('pageContent').innerHTML = `
+      <div class="page-header"><div class="page-header-left"><h1>Insumos</h1></div></div>
+      <div class="card" style="padding:28px;text-align:center">
+        <h3 style="margin-bottom:8px">Não foi possível carregar os insumos</h3>
+        <p class="text-2" style="margin-bottom:16px">${Utils.esc(error.message || 'Falha temporária na consulta.')}</p>
+        <button class="btn btn-primary" id="btnRetryInsumos">Tentar novamente</button>
+      </div>`;
+    document.getElementById('btnRetryInsumos')?.addEventListener('click', () => {
+      renderCarregandoInicial();
+      carregar();
+    });
+  }
+
   async function carregar() {
     const requestSequence = ++loadSequence;
     const filtrosDaRequisicao = { ...filtros };
+    const metadataWasReady = metadataReady;
+    const metadataTask = carregarMetadados().catch(error => {
+      console.warn('Metadados de insumos indisponiveis:', error.message);
+      return null;
+    });
     try {
-      if (!metadataPromise) {
-        metadataPromise = Promise.all([
-          API.unidades.list(),
-          API.fontes.list(),
-          API.datasBase.list(),
-          API.grupos.list(),
-          API.auth.me().catch(() => null),
-        ]).catch(error => {
-          metadataPromise = null;
-          throw error;
-        });
-      }
-      const [lista, metadata] = await Promise.all([
-        API.insumos.list(filtrosDaRequisicao),
-        metadataPromise,
-      ]);
+      // A grade principal nao deve aguardar unidades, fontes, datas-base e
+      // grupos. Esses metadados enriquecem filtros e formularios depois.
+      const lista = await API.insumos.list(filtrosDaRequisicao);
 
       // Uma consulta anterior pode terminar depois da filtragem mais recente.
       // Nesse caso, descarte a resposta antiga para não restaurar dados obsoletos.
       if (requestSequence !== loadSequence) return;
 
       insumos = lista;
-      [unidades, fontes, datasBase, grupos, _me] = metadata;
+      initialRenderCompleted = true;
       render();
+
+      if (!metadataWasReady) {
+        metadataTask.then(metadata => {
+          if (metadata && requestSequence === loadSequence) render();
+        });
+      }
 
       if (!statsPromise) {
         statsPromise = API.insumos.stats()
@@ -110,7 +160,10 @@ Router.register('insumos', async () => {
           });
       }
     } catch(e) {
-      if (requestSequence === loadSequence) Toast.error(e.message);
+      if (requestSequence === loadSequence) {
+        Toast.error(e.message);
+        if (!initialRenderCompleted) renderErroInicial(e);
+      }
     }
   }
 
@@ -1595,6 +1648,7 @@ Router.register('insumos', async () => {
     });
   }
 
+  renderCarregandoInicial();
   carregar();
 });
 

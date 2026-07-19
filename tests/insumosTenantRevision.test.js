@@ -175,6 +175,15 @@ async function main() {
     assert.strictEqual(totais.total, 3);
     assert.strictEqual(totais.equipamento, 2);
 
+    await exec(db, `
+      INSERT INTO tenant_referential_overrides
+        (domain, catalog_table, catalog_id, action, status)
+      VALUES ('insumos', 'insumos', 10, 'delete', 'active')
+    `);
+    const cdhuAposOverride = await service.listInsumos(dbComConexao, { origem: 'CDHU', limit: 300 });
+    assert.strictEqual(conexoesReutilizadas, 5);
+    assert.deepStrictEqual(cdhuAposOverride.map(item => item.codigo_insumo), ['ADM-1']);
+
     console.log('insumosTenantRevision.test.js: OK');
   } finally {
     await new Promise(resolve => db.close(resolve));
