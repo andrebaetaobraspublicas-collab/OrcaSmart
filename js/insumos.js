@@ -59,6 +59,8 @@ Router.register('insumos', async () => {
   let insumos = [], unidades = [], fontes = [], datasBase = [], grupos = [], stats = {}, _me = null;
   let metadataPromise = null;
   let statsPromise = null;
+  let loadSequence = 0;
+  let searchTimer = null;
   const filtros = { q:'', tipo:'', origem:'', situacao:'', uf:'', mes:'', ano:'', regime:'', limit:300 };
   let pesquisaMercadoResultados = [];
   let pesquisaMercadoSelecionado = null;
@@ -67,6 +69,8 @@ Router.register('insumos', async () => {
 
   /* ── Carregamento ────────────────────────────────────────────────────────── */
   async function carregar() {
+    const requestSequence = ++loadSequence;
+    const filtrosDaRequisicao = { ...filtros };
     try {
       if (!metadataPromise) {
         metadataPromise = Promise.all([
@@ -81,9 +85,14 @@ Router.register('insumos', async () => {
         });
       }
       const [lista, metadata] = await Promise.all([
-        API.insumos.list(filtros),
+        API.insumos.list(filtrosDaRequisicao),
         metadataPromise,
       ]);
+
+      // Uma consulta anterior pode terminar depois da filtragem mais recente.
+      // Nesse caso, descarte a resposta antiga para não restaurar dados obsoletos.
+      if (requestSequence !== loadSequence) return;
+
       insumos = lista;
       [unidades, fontes, datasBase, grupos, _me] = metadata;
       render();
@@ -100,7 +109,9 @@ Router.register('insumos', async () => {
             return null;
           });
       }
-    } catch(e) { Toast.error(e.message); }
+    } catch(e) {
+      if (requestSequence === loadSequence) Toast.error(e.message);
+    }
   }
 
   function atualizarEstatisticas() {
@@ -339,6 +350,13 @@ Router.register('insumos', async () => {
 
   /* ── Bind de eventos ─────────────────────────────────────────────────────── */
   function bindEventos() {
+    const aplicarFiltro = atualizacao => {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+      atualizacao();
+      carregar();
+    };
+
     document.getElementById('btnNovoIns')?.addEventListener('click', () => abrirFormInsumo());
     document.getElementById('btnNovoInsEmpty')?.addEventListener('click', () => abrirFormInsumo());
     document.getElementById('btnPesquisaMercado')?.addEventListener('click', abrirPesquisaMercado);
@@ -347,30 +365,36 @@ Router.register('insumos', async () => {
     document.getElementById('btnRefIns')?.addEventListener('click', carregar);
     document.getElementById('btnGrupos')?.addEventListener('click', abrirGerenciarGrupos);
     document.getElementById('btnLimparFiltroPreco')?.addEventListener('click', () => {
-      filtros.uf = ''; filtros.mes = ''; filtros.ano = ''; filtros.regime = '';
-      carregar();
+      aplicarFiltro(() => {
+        filtros.uf = ''; filtros.mes = ''; filtros.ano = ''; filtros.regime = '';
+      });
     });
 
-    let t;
     document.getElementById('searchIns')?.addEventListener('input', e => {
-      clearTimeout(t); t = setTimeout(() => { filtros.q = e.target.value; carregar(); }, 400);
+      const valor = e.target.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        searchTimer = null;
+        filtros.q = valor;
+        carregar();
+      }, 400);
     });
-    document.getElementById('filtroTipo')?.addEventListener('change', e => { filtros.tipo = e.target.value; carregar(); });
-    document.getElementById('filtroOrigem')?.addEventListener('change', e => { filtros.origem = e.target.value; carregar(); });
-    document.getElementById('filtroSit')?.addEventListener('change', e => { filtros.situacao = e.target.value; carregar(); });
+    document.getElementById('filtroTipo')?.addEventListener('change', e => aplicarFiltro(() => { filtros.tipo = e.target.value; }));
+    document.getElementById('filtroOrigem')?.addEventListener('change', e => aplicarFiltro(() => { filtros.origem = e.target.value; }));
+    document.getElementById('filtroSit')?.addEventListener('change', e => aplicarFiltro(() => { filtros.situacao = e.target.value; }));
 
     document.getElementById('filtroUF')?.addEventListener('change', e => {
-      filtros.uf = e.target.value; carregar();
+      aplicarFiltro(() => { filtros.uf = e.target.value; });
     });
     document.getElementById('filtroDataBase')?.addEventListener('change', e => {
       const v = e.target.value;
-      if (v) { const [m, a] = v.split('|'); filtros.mes = m; filtros.ano = a; }
-      else   { filtros.mes = ''; filtros.ano = ''; }
-      carregar();
+      aplicarFiltro(() => {
+        if (v) { const [m, a] = v.split('|'); filtros.mes = m; filtros.ano = a; }
+        else   { filtros.mes = ''; filtros.ano = ''; }
+      });
     });
     document.getElementById('filtroRegime')?.addEventListener('change', e => {
-      filtros.regime = e.target.value;
-      carregar();
+      aplicarFiltro(() => { filtros.regime = e.target.value; });
     });
 
     document.querySelectorAll('[data-action]').forEach(btn => {
