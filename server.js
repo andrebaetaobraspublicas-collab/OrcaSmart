@@ -569,6 +569,7 @@ const sharedCatalogReadProxy = {
   get(sql, params, cb) { return runSharedCatalogReadMethod('get', sql, params, cb); },
   all(sql, params, cb) { return runSharedCatalogReadMethod('all', sql, params, cb); },
   run(sql, params, cb) { return runSharedCatalogReadMethod('run', sql, params, cb); },
+  withConnection(task) { return tenantDbProxy.withConnection(task); },
 };
 
 function businessMysqlRuntimeActive() {

@@ -148,13 +148,22 @@ async function main() {
     }, { forceUserOwned: false });
     assert.strictEqual(admin.origem, 'CDHU');
 
-    const pagina = await service.listInsumos(db, { limit: 300 });
+    let conexoesReutilizadas = 0;
+    const dbComConexao = {
+      withConnection(task) {
+        conexoesReutilizadas += 1;
+        return task(db);
+      },
+    };
+    const pagina = await service.listInsumos(dbComConexao, { limit: 300 });
+    assert.strictEqual(conexoesReutilizadas, 1);
     assert.strictEqual(pagina.length, 3);
     assert(pagina.some(item => item.codigo_insumo === 'M161910000'));
     assert(pagina.some(item => item.codigo_insumo === 'M161910000.REV001'));
     assert(pagina.some(item => item.codigo_insumo === 'ADM-1'));
 
-    const totais = await service.stats(db);
+    const totais = await service.stats(dbComConexao);
+    assert.strictEqual(conexoesReutilizadas, 2);
     assert.strictEqual(totais.total, 3);
     assert.strictEqual(totais.equipamento, 2);
 

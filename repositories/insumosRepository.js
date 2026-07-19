@@ -246,6 +246,9 @@ async function deleteGrupo(db, id) {
 }
 
 async function stats(db) {
+  if (typeof db.withConnection === 'function') {
+    return db.withConnection(conn => stats(conn));
+  }
   await ensureSchema(db);
   if (await useTenantCatalogRead(db)) {
     const visibleCatalog = `
@@ -488,6 +491,9 @@ async function listTenantCatalogPage(db, query) {
 }
 
 async function listInsumos(db, query = {}) {
+  if (typeof db.withConnection === 'function') {
+    return db.withConnection(conn => listInsumos(conn, query));
+  }
   await ensureSchema(db);
   if (await useTenantCatalogRead(db)) {
     if (query.limit) return listTenantCatalogPage(db, query);
