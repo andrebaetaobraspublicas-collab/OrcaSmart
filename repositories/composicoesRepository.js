@@ -1862,8 +1862,14 @@ function batchWhere(data = {}, alias = '') {
   const where = ['1=1'];
   const params = [];
   if (data.fonte) {
-    where.push(`${col('fonte')} = ?`);
-    params.push(data.fonte);
+    const fonte = String(data.fonte).trim();
+    if (fonte.toUpperCase() === 'CDHU') {
+      where.push(`${col('fonte')} IN (?, ?)`);
+      params.push('CDHU', 'CDHU/SP');
+    } else {
+      where.push(`${col('fonte')} = ?`);
+      params.push(fonte);
+    }
   }
   if (data.formato) {
     where.push(`${col('formato')} = ?`);
@@ -1874,8 +1880,24 @@ function batchWhere(data = {}, alias = '') {
     params.push(data.uf);
   }
   if (data.mes_ref) {
-    where.push(`${col('mes_referencia')} = ?`);
-    params.push(data.mes_ref);
+    const raw = String(data.mes_ref).trim();
+    const match = /^(\d{1,2})[\/-](\d{4})$/.exec(raw) || /^(\d{4})[\/-](\d{1,2})$/.exec(raw);
+    if (match) {
+      const yearFirst = match[1].length === 4;
+      const mes = Number(yearFirst ? match[2] : match[1]);
+      const ano = Number(yearFirst ? match[1] : match[2]);
+      const variants = [...new Set([
+        `${String(mes).padStart(2, '0')}/${ano}`,
+        `${mes}/${ano}`,
+        `${ano}-${String(mes).padStart(2, '0')}`,
+        `${String(mes).padStart(2, '0')}-${ano}`,
+      ])];
+      where.push(`${col('mes_referencia')} IN (${variants.map(() => '?').join(',')})`);
+      params.push(...variants);
+    } else {
+      where.push(`${col('mes_referencia')} = ?`);
+      params.push(raw);
+    }
   }
   if (data.id_grupo_comp) {
     where.push(`${col('id_grupo_comp')} = ?`);

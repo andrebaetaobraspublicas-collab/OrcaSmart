@@ -5,6 +5,7 @@ const { ensureAdmin, ensureAdminOrTenantScoped } = require('../utils/accessPolic
 module.exports = function insumosRoutes(db, options = {}) {
   const router = express.Router();
   const readDb = options.readDb || db;
+  const withWriteConnection = task => (db && typeof db.withConnection === 'function' ? db.withConnection(task) : task(db));
 
   const asyncHandler = fn => (req, res) => fn(req, res).catch((err) => {
     res.status(err.status || 500).json({ erro: err.message || 'Erro interno do servidor.' });
@@ -38,7 +39,7 @@ module.exports = function insumosRoutes(db, options = {}) {
     if (req.user?.role !== 'admin') {
       payload.tenant_only = true;
     }
-    res.json(await service.deleteBatch(db, payload));
+    res.json(await withWriteConnection(writeDb => service.deleteBatch(writeDb, payload)));
   }));
 
   router.get('/', asyncHandler(async (req, res) => {

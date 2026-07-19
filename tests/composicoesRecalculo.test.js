@@ -55,8 +55,41 @@ async function validarListagemRapida() {
   }
 }
 
+async function validarPreviewExclusaoCdhu() {
+  const db = new sqlite3.Database(':memory:');
+  try {
+    await exec(db, `
+      ATTACH DATABASE ':memory:' AS catalog;
+      CREATE TABLE tenant_composicoes (id_composicao INTEGER PRIMARY KEY);
+      CREATE TABLE catalog.composicoes (
+        id_composicao INTEGER PRIMARY KEY,
+        fonte TEXT,
+        formato TEXT,
+        uf_referencia TEXT,
+        mes_referencia TEXT,
+        id_grupo_comp INTEGER
+      );
+      INSERT INTO catalog.composicoes VALUES
+        (1, 'CDHU/SP', 'Unitario', 'SP', '6/2005', NULL),
+        (2, 'CDHU', 'Unitario', 'SP', '2005-06', NULL),
+        (3, 'CDHU', 'Unitario', 'SP', '05/2026', NULL);
+    `);
+    const result = await repo.excluirEmLote(db, {
+      fonte: 'CDHU',
+      uf: 'SP',
+      mes_ref: '06/2005',
+      dry_run: true,
+      __allowReferentialDelete: true,
+    });
+    assert.strictEqual(result.total, 2);
+  } finally {
+    await new Promise(resolve => db.close(resolve));
+  }
+}
+
 async function run() {
   await validarListagemRapida();
+  await validarPreviewExclusaoCdhu();
   const queries = [];
   const fakeDb = {
     get(sql, _params, callback) {

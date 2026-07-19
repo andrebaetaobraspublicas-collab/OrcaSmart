@@ -254,6 +254,15 @@ function priceSelect(query = {}) {
   };
 }
 
+function originFilter(value, column = 'i.origem') {
+  const origem = String(value || '').trim();
+  if (!origem) return null;
+  if (origem.toUpperCase() === 'CDHU') {
+    return { clause: `${column} IN (?, ?)`, params: ['CDHU', 'CDHU/SP'] };
+  }
+  return { clause: `${column} = ?`, params: [origem] };
+}
+
 async function listGrupos(db) {
   return all(db, 'SELECT * FROM grupos_insumos ORDER BY nome_grupo');
 }
@@ -419,8 +428,9 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
     params.push(query.tipo);
   }
   if (query.origem) {
-    sql += ' AND i.origem = ?';
-    params.push(query.origem);
+    const filter = originFilter(query.origem);
+    sql += ` AND ${filter.clause}`;
+    params.push(...filter.params);
   }
   if (query.situacao) {
     sql += ' AND i.situacao = ?';
@@ -471,7 +481,11 @@ function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog', hasOv
     sql += " AND COALESCE(i.tenant_override_status,'active')='active'";
   }
   if (query.tipo) { sql += ' AND i.tipo_insumo = ?'; params.push(query.tipo); }
-  if (query.origem) { sql += ' AND i.origem = ?'; params.push(query.origem); }
+  if (query.origem) {
+    const filter = originFilter(query.origem);
+    sql += ` AND ${filter.clause}`;
+    params.push(...filter.params);
+  }
   if (query.situacao) { sql += ' AND i.situacao = ?'; params.push(query.situacao); }
   if (query.q) {
     sql += ' AND (i.descricao LIKE ? OR i.codigo_insumo LIKE ?)';
@@ -568,8 +582,9 @@ async function listInsumos(db, query = {}) {
     params.push(query.tipo);
   }
   if (query.origem) {
-    sql += ' AND i.origem = ?';
-    params.push(query.origem);
+    const filter = originFilter(query.origem);
+    sql += ` AND ${filter.clause}`;
+    params.push(...filter.params);
   }
   if (query.situacao) {
     sql += ' AND i.situacao = ?';
@@ -1141,38 +1156,139 @@ async function deletePreco(db, idPreco) {
   return run(db, 'DELETE FROM precos_insumos WHERE id_preco = ?', [idPreco]);
 }
 
-async function deleteBatch(db, data = {}) {
+function batchInsumoWhere(data = {}, alias = 'i') {
+  const col = name => (alias ? `${alias}.${name}` : name);
   const filters = [];
   const params = [];
-  if (data.tipo) {
-    filters.push('tipo_insumo = ?');
-    params.push(data.tipo);
-  }
+  if (data.tipo) { filters.push(`${col('tipo_insumo')} = ?`); params.push(data.tipo); }
   if (data.origem) {
-    filters.push('origem = ?');
-    params.push(data.origem);
+    const origem = String(data.origem).trim();
+    if (origem.toUpperCase() === 'CDHU') {
+      filters.push(`${col('origem')} IN (?, ?)`);
+      params.push('CDHU', 'CDHU/SP');
+    } else {
+      filters.push(`${col('origem')} = ?`);
+      params.push(origem);
+    }
   }
-  if (data.situacao) {
-    filters.push('situacao = ?');
-    params.push(data.situacao);
-  }
-  if (data.id_grupo) {
-    filters.push('id_grupo = ?');
-    params.push(data.id_grupo);
-  }
+  if (data.situacao) { filters.push(`${col('situacao')} = ?`); params.push(data.situacao); }
+  if (data.id_grupo) { filters.push(`${col('id_grupo')} = ?`); params.push(data.id_grupo); }
   if (data.q) {
-    filters.push('(descricao LIKE ? OR codigo_insumo LIKE ?)');
+    filters.push(`(${col('descricao')} LIKE ? OR ${col('codigo_insumo')} LIKE ?)`);
     params.push(`%${data.q}%`, `%${data.q}%`);
   }
+  return { filters, params };
+}
+
+function batchPriceWhere(data = {}, alias = 'px') {
+  const col = name => (alias ? `${alias}.${name}` : name);
+  const filters = [];
+  const params = [];
+  if (data.uf) { filters.push(`${col('uf_referencia')} = ?`); params.push(data.uf); }
+  if (data.mes && data.ano) {
+    filters.push(`${col('id_data_base')} IN (
+      SELECT id_data_base FROM catalog.datas_base WHERE mes = ? AND ano = ?
+    )`);
+    params.push(Number(data.mes), Number(data.ano));
+  }
+  const regime = String(data.regime || '').trim().toLowerCase();
+  if (regime === 'onerado') filters.push(`COALESCE(${col('preco_nao_desonerado')}, 0) > 0`);
+  if (regime === 'desonerado') filters.push(`COALESCE(${col('preco_desonerado')}, 0) > 0`);
+  return { filters, params };
+}
+
+function chunks(values, size = 400) {
+  const result = [];
+  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
+  return result;
+}
+
+async function deleteCatalogInsumosBatch(db, data = {}) {
+  const insumo = batchInsumoWhere(data, 'i');
+  const price = batchPriceWhere(data, 'px');
+  const where = [...insumo.filters];
+  const params = [...insumo.params];
+  if (price.filters.length) {
+    where.push(`EXISTS (
+      SELECT 1 FROM catalog.precos_insumos px
+      WHERE px.id_insumo = i.id_insumo AND ${price.filters.join(' AND ')}
+    )`);
+    params.push(...price.params);
+  }
+  const clause = where.length ? where.join(' AND ') : '1=1';
+  const rows = await all(db, `SELECT i.id_insumo FROM catalog.insumos i WHERE ${clause}`, params);
+  const ids = rows.map(row => row.id_insumo);
+  if (data.dry_run) return { total: ids.length, dry_run: true };
+  if (!ids.length) return { total: 0, excluidos: 0, precos_excluidos: 0, preservados: 0, dry_run: false };
+
+  let precosExcluidos = 0;
+  let insumosExcluidos = 0;
+  await run(db, 'BEGIN');
+  try {
+    for (const group of chunks(ids)) {
+      const marks = group.map(() => '?').join(',');
+      const priceDelete = batchPriceWhere(data, '');
+      const priceClause = priceDelete.filters.length ? ` AND ${priceDelete.filters.join(' AND ')}` : '';
+      const deletedPrices = await run(db, `
+        DELETE FROM catalog.precos_insumos
+        WHERE id_insumo IN (${marks})${priceClause}`, [...group, ...priceDelete.params]);
+      precosExcluidos += Number(deletedPrices.changes || 0);
+    }
+
+    // Se o mesmo insumo possui precos em outras datas-base, somente os
+    // precos selecionados sao removidos e o cadastro-base e preservado.
+    const orphanIds = [];
+    for (const group of chunks(ids)) {
+      const marks = group.map(() => '?').join(',');
+      const orphanRows = await all(db, `
+        SELECT i.id_insumo
+        FROM catalog.insumos i
+        WHERE i.id_insumo IN (${marks})
+          AND NOT EXISTS (
+            SELECT 1 FROM catalog.precos_insumos p WHERE p.id_insumo = i.id_insumo
+          )`, group);
+      orphanIds.push(...orphanRows.map(row => row.id_insumo));
+    }
+
+    for (const group of chunks(orphanIds)) {
+      const marks = group.map(() => '?').join(',');
+      await run(db, `DELETE FROM tenant_referential_overrides
+        WHERE domain='insumos' AND catalog_table='insumos' AND catalog_id IN (${marks})`, group).catch(() => {});
+      const deleted = await run(db, `DELETE FROM catalog.insumos WHERE id_insumo IN (${marks})`, group);
+      insumosExcluidos += Number(deleted.changes || 0);
+    }
+    await run(db, 'COMMIT');
+  } catch (error) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw error;
+  }
+  return {
+    total: ids.length,
+    excluidos: insumosExcluidos,
+    precos_excluidos: precosExcluidos,
+    preservados: ids.length - insumosExcluidos,
+    dry_run: false,
+    mensagem: `${precosExcluidos} preco(s) e ${insumosExcluidos} insumo(s) excluido(s).`,
+  };
+}
+
+async function deleteBatch(db, data = {}) {
+  const built = batchInsumoWhere(data, 'i');
+  const filters = built.filters;
+  const params = built.params;
   if (data.tenant_only && await hasTenantInsumoOverrides(db)) {
-    const tenantFilters = filters.map(filter => filter
-      .replace(/\borigem\b/g, 'i.origem')
-      .replace(/\btipo_insumo\b/g, 'i.tipo_insumo')
-      .replace(/\bsituacao\b/g, 'i.situacao')
-      .replace(/\bid_grupo\b/g, 'i.id_grupo')
-      .replace(/\bdescricao\b/g, 'i.descricao')
-      .replace(/\bcodigo_insumo\b/g, 'i.codigo_insumo'));
+    const tenantFilters = [...filters];
     tenantFilters.push("COALESCE(i.tenant_override_status,'active')='active'");
+    const price = batchPriceWhere(data, 'p');
+    if (price.filters.length) {
+      tenantFilters.push(`EXISTS (
+        SELECT 1 FROM tenant_precos_insumos p
+        WHERE p.id_insumo = i.${tenantSyntheticPk('tenant_insumos')}
+          AND COALESCE(p.tenant_override_status,'active')='active'
+          AND ${price.filters.join(' AND ')}
+      )`);
+      params.push(...price.params);
+    }
     const tenantWhere = `WHERE ${tenantFilters.join(' AND ')}`;
     if (data.dry_run) {
       const row = await one(db, `SELECT COUNT(*) AS total FROM tenant_insumos i ${tenantWhere}`, params);
@@ -1184,13 +1300,7 @@ async function deleteBatch(db, data = {}) {
       ${tenantWhere}`, [new Date().toISOString(), ...params]);
     return { excluidos: result.changes, mensagem: `${result.changes} insumo(s) excluido(s) com sucesso.` };
   }
-  const where = `WHERE ${filters.join(' AND ')}`;
-  if (data.dry_run) {
-    const row = await one(db, `SELECT COUNT(*) AS total FROM insumos ${where}`, params);
-    return { total: row?.total || 0 };
-  }
-  const result = await run(db, `DELETE FROM insumos ${where}`, params);
-  return { excluidos: result.changes, mensagem: `${result.changes} insumo(s) excluido(s) com sucesso.` };
+  return deleteCatalogInsumosBatch(db, data);
 }
 
 module.exports = {

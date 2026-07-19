@@ -1376,6 +1376,8 @@ Router.register('insumos', async () => {
         const res = await API.insumos.excluirEmLote(p);
         Modal.close();
         Toast.success(res.mensagem || `${res.excluidos} insumo(s) excluido(s).`);
+        statsPromise = null;
+        stats = {};
         await carregar();
       } catch(e) { Toast.error(e.message); }
     });

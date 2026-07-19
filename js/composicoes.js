@@ -1824,6 +1824,8 @@ Router.register('composicoes', async () => {
         const res = await API.composicoes.excluirEmLote({ ...p, confirmacao: 'EXCLUIR_COMPOSICOES_EM_LOTE' });
         Modal.close();
         Toast.success(res.mensagem || `${res.excluidos} composição(ões) excluída(s).`);
+        statsPromise = null;
+        stats = {};
         await carregar();
       } catch(e) {
         if (btn) {

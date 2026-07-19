@@ -129,13 +129,15 @@ async function deletePreco(db, idPreco) {
 }
 
 async function deleteBatch(db, data = {}) {
-  if (!data.tenant_only && !data.tipo && !data.origem && !data.situacao && !data.id_grupo && !data.q) {
+  if (!data.tenant_only && !data.tipo && !data.origem && !data.situacao && !data.id_grupo && !data.q
+      && !data.uf && !(data.mes && data.ano) && !data.regime) {
     throw httpError(400, 'Informe pelo menos um criterio de selecao para excluir.');
   }
   try {
     return await repo.deleteBatch(db, data);
-  } catch (_err) {
-    throw httpError(409, 'Nao foi possivel excluir todos os insumos selecionados porque ha vinculos em composicoes ou orcamentos.');
+  } catch (err) {
+    if (err.status) throw err;
+    throw httpError(409, `Nao foi possivel excluir os insumos selecionados: ${err.message || 'erro de integridade do banco de dados'}.`);
   }
 }
 

@@ -184,6 +184,41 @@ async function main() {
     assert.strictEqual(conexoesReutilizadas, 5);
     assert.deepStrictEqual(cdhuAposOverride.map(item => item.codigo_insumo), ['ADM-1']);
 
+    await exec(db, `
+      INSERT INTO catalog.datas_base (id_data_base, mes, ano, descricao) VALUES
+        (1, 6, 2005, 'Importacao incorreta'),
+        (2, 5, 2026, 'Importacao correta');
+      INSERT INTO catalog.insumos
+        (id_insumo,codigo_insumo,descricao,tipo_insumo,origem,encargos_aplicaveis,situacao)
+      VALUES
+        (20,'CDHU-ERR-1','Somente na data incorreta','Material','CDHU','Sim','Ativo'),
+        (21,'CDHU-ERR-2','Tambem existe em outra data','Material','CDHU/SP','Sim','Ativo');
+      INSERT INTO catalog.precos_insumos
+        (id_preco,id_insumo,id_data_base,uf_referencia,preco_referencia,preco_desonerado,preco_nao_desonerado)
+      VALUES
+        (201,20,1,'SP',10,10,10),
+        (202,21,1,'SP',20,20,20),
+        (203,21,2,'SP',30,30,30);
+    `);
+    const preview = await service.deleteBatch(db, {
+      origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005, dry_run: true,
+    });
+    assert.strictEqual(preview.total, 2);
+    const removidos = await service.deleteBatch(db, {
+      origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005,
+    });
+    assert.strictEqual(removidos.precos_excluidos, 2);
+    assert.strictEqual(removidos.excluidos, 1);
+    assert.strictEqual(removidos.preservados, 1);
+    const dataIncorreta = await service.listInsumos(db, {
+      origem: 'CDHU', uf: 'SP', mes: 6, ano: 2005, limit: 300,
+    });
+    assert.deepStrictEqual(dataIncorreta, []);
+    const preservado = await service.listInsumos(db, {
+      origem: 'CDHU', uf: 'SP', mes: 5, ano: 2026, limit: 300,
+    });
+    assert.deepStrictEqual(preservado.map(item => item.codigo_insumo), ['CDHU-ERR-2']);
+
     console.log('insumosTenantRevision.test.js: OK');
   } finally {
     await new Promise(resolve => db.close(resolve));
