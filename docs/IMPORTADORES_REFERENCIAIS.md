@@ -72,6 +72,12 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - Endpoint: `POST /api/cdhu/importar`.
 - Recebe PDF e arquivo sintético.
 - Backend Node em `services/referenceImportService.js`.
+- A data-base é detectada primeiro em cabeçalhos explícitos, inclusive no formato
+  por extenso usado pela CDHU (`MAIO/26`), e também aceita `MM/AAAA` e
+  `AAAA-MM`. Datas de emissão e trechos internos de códigos de projeto não devem
+  ser interpretados como referência.
+- Mês e ano informados manualmente no formulário têm precedência sobre a
+  detecção automática quando forem válidos.
 
 ## Teste mínimo após alteração
 

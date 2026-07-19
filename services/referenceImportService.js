@@ -24,12 +24,58 @@ async function insertMany(db, table, columns, rows, size = 200) {
     await dbRun(db, `INSERT INTO ${table} (${columns.join(',')}) VALUES ${batch.map(() => tuple).join(',')}`, batch.flat());
   }
 }
+const REFERENCE_MONTHS = {
+  JAN: 1, JANEIRO: 1,
+  FEV: 2, FEVEREIRO: 2,
+  MAR: 3, MARCO: 3,
+  ABR: 4, ABRIL: 4,
+  MAI: 5, MAIO: 5,
+  JUN: 6, JUNHO: 6,
+  JUL: 7, JULHO: 7,
+  AGO: 8, AGOSTO: 8,
+  SET: 9, SETEMBRO: 9,
+  OUT: 10, OUTUBRO: 10,
+  NOV: 11, NOVEMBRO: 11,
+  DEZ: 12, DEZEMBRO: 12,
+};
+
+function referenceParts(monthValue, yearValue) {
+  const normalizedMonth = ascii(monthValue).toUpperCase();
+  const mes = REFERENCE_MONTHS[normalizedMonth] || Number(normalizedMonth);
+  const rawYear = Number(yearValue);
+  const ano = rawYear < 100 ? 2000 + rawYear : rawYear;
+  return { mes, ano };
+}
+
 function parseReference(value, fallbackMes, fallbackAno) {
   const raw = ascii(value).toUpperCase();
-  const numeric = raw.match(/(?:REFERENCIA\s*:?\s*)?(0?[1-9]|1[0-2])[\/-](20\d{2}|\d{2})/);
-  if (numeric) return { mes: Number(numeric[1]), ano: Number(numeric[2]) < 100 ? 2000 + Number(numeric[2]) : Number(numeric[2]) };
-  const yearFirst = raw.match(/(20\d{2})[._\/-](0?[1-9]|1[0-2])/);
+  const monthName = Object.keys(REFERENCE_MONTHS).join('|');
+  const monthToken = `(${monthName}|0?[1-9]|1[0-2])`;
+  const yearToken = '(20\\d{2}|\\d{2})';
+
+  // Cabeçalhos explícitos têm precedência sobre datas de emissão ou códigos do projeto.
+  const labeled = raw.match(new RegExp(
+    `(?:DATA\\s*BASE|MES\\s*DE\\s*REFERENCIA|REFERENCIA)\\s*:?\\s*${monthToken}\\s*[\\/-]\\s*${yearToken}(?!\\d)`,
+  ));
+  if (labeled) return referenceParts(labeled[1], labeled[2]);
+
+  // A CDHU publica a data-base como "MAIO/26" no PDF e na planilha sintética.
+  const named = raw.match(new RegExp(`\\b(${monthName})\\s*[\\/-]\\s*${yearToken}\\b`));
+  if (named) return referenceParts(named[1], named[2]);
+
+  // O formato AAAA-MM aparece em identificadores de projeto, como 2026-05-Z1.
+  const yearFirst = raw.match(/(?:^|[^0-9])(20\d{2})[._\/-](0?[1-9]|1[0-2])(?!\d)/);
   if (yearFirst) return { mes: Number(yearFirst[2]), ano: Number(yearFirst[1]) };
+
+  // Evita recortar "6-05" de "2026-05" ou "06/2026" de uma data 26/06/2026.
+  const numericPattern = /(?:^|[^0-9])(0?[1-9]|1[0-2])[\/-](20\d{2}|\d{2})(?!\d)/g;
+  for (const numeric of raw.matchAll(numericPattern)) {
+    const prefix = numeric[0][0];
+    const beforePrefix = numeric.index > 0 ? raw[numeric.index - 1] : '';
+    if ((prefix === '/' || prefix === '-') && /\d/.test(beforePrefix)) continue;
+    return referenceParts(numeric[1], numeric[2]);
+  }
+
   return { mes: Number(fallbackMes), ano: Number(fallbackAno) };
 }
 
@@ -505,6 +551,20 @@ function normalizeCdhu(value) { return ascii(value).toUpperCase().replace(/[^A-Z
 function cdhuCode(value) { const raw=text(value); const match=raw.match(/(\d{6})/); if(match)return match[1]; if(/^\d+(?:\.0+)?$/.test(raw))return String(Math.trunc(Number(raw))).padStart(6,'0'); return ''; }
 function parseCdhuSynthetic(buffer, divisor) { const rows=parseXlsxBuffer(buffer); const records=[]; const byCode=new Map(); const byText=new Map(); for(const row of rows){const codigo=cdhuCode(row[0]);const descricao=text(row[1]);const unidade=code(row[2]);const gross=number(row[3]);if(!codigo||!descricao||!unidade||gross==null)continue;const record={codigo,descricao,unidade,preco:gross/Number(divisor||1)};records.push(record);byCode.set(codigo,record);byText.set(`${normalizeCdhu(descricao)}|${unidade}`,record);}return{records,byCode,byText}; }
 function parseCdhuPdfText(raw) { const lines=String(raw||'').split(/\r?\n/).map(text).filter(Boolean); const comps=[]; let comp=null; let pending=null; const finishItem=()=>{if(pending&&comp&&pending.descricao)comp.itens.push(pending);pending=null;};const finish=()=>{finishItem();if(comp?.codigo)comps.push(comp);comp=null;}; const units='(M3|M2|M²|M³|UN|KG|H|L|M|HA|KM|VB|CJ|GL|PC|PÇ|PAR|JG|MES|MÊS)'; for(const line of lines){if(/^(Projeto:|Data Base:|Listagem de Compos|Código|Descricao|Unidade|Coeficiente|Pagina)/i.test(ascii(line)))continue;const item=line.match(new RegExp(`^([\\d.,]+)\\s*${units}\\s*(.+)$`,'i'));if(item){finishItem();const rest=item[3].trim();const cm=rest.match(/([A-Z]\.\d{2}\.\d{3}\.\d{6}|[A-Z]\d{8,})\s*$/i);pending={coeficiente:number(item[1])||0,unidade:code(item[2]).replace('²','2').replace('³','3'),descricao:cm?rest.slice(0,cm.index).trim():rest,codigo:cm?cm[1].toUpperCase():''};if(pending.codigo)finishItem();continue;}if(pending){pending.descricao=`${pending.descricao} ${line}`.trim();continue;}const header=line.match(new RegExp(`^${units}\\s*(.+?)(\\d{6})$`,'i'));if(header){finish();comp={codigo:header[3],descricao:header[2].trim(),unidade:code(header[1]),itens:[]};}}finish();return comps; }
-async function importCdhu(db,files,fields,tenantId){const divisor=number(fields.bdi_divisor)||1.2081;const synthetic=parseCdhuSynthetic(files.arquivo_sintetico.buffer,divisor);const pdf=await pdfParse(files.arquivo_pdf.buffer);const base=parseCdhuPdfText(pdf.text);const ref=parseReference(`${pdf.text.slice(0,3000)} ${parseXlsxBuffer(files.arquivo_sintetico.buffer).slice(0,8).flat().join(' ')}`,fields.mes||2,fields.ano||2026);const mesRef=`${String(ref.mes).padStart(2,'0')}/${ref.ano}`;if(!base.length||!synthetic.records.length)throw Object.assign(new Error('Não foi possível identificar as composições analíticas e os preços sintéticos da CDHU.'),{status:400});const inferred=[];const comps=base.map(comp=>{const own=synthetic.byCode.get(comp.codigo)||synthetic.byText.get(`${normalizeCdhu(comp.descricao)}|${comp.unidade}`);return{codigo:`CDHU.${comp.codigo}`,descricao:comp.descricao,unidade:comp.unidade,regime:own?'COM PREÇO':'SEM PREÇO',custo:own?.preco||0,observacoes:`CDHU/SP; BDI expurgado pelo divisor ${divisor}.`,itens:comp.itens.map(item=>{const rec=synthetic.byCode.get(cdhuCode(item.codigo))||synthetic.byText.get(`${normalizeCdhu(item.descricao)}|${item.unidade}`);if(item.codigo&&rec)inferred.push({codigo:item.codigo,descricao:item.descricao,unidade:item.unidade,tipo:item.unidade==='H'?'Mão de Obra':'Material',precoNaoDesonerado:rec.preco,precoDesonerado:rec.preco,observacoes:'Preço inferido do sintético CDHU/SP sem BDI.'});return{tipo:/^\d{6}$/.test(item.codigo)?'COMPOSICAO':'INSUMO',...item,preco:rec?.preco??null,custoParcial:rec?rec.preco*item.coeficiente:null};})};});return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'CDHU/SP',ref.mes,ref.ano,`CDHU/SP ${mesRef}`);const ins=await persistInsumos(conn,mergeInsumos(inferred),{tenantId,origem:'CDHU',uf:'SP',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,comps,{tenantId,fonte:'CDHU',uf:'SP',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'SP',bdi_percentual:number(fields.bdi_percentual)||20.81,bdi_divisor:divisor,composicoes_sem_preco:comps.filter(c=>!c.custo).length,itens_com_preco_inferido:inferred.length,mensagem:`CDHU/SP ${mesRef}: ${comp.composicoes_inseridas} composições novas e ${comp.itens_inseridos} itens importados.`};});}
+function parseCdhuReference(files, fields, pdfText, syntheticRows) {
+  const detected = parseReference([
+    String(pdfText || '').slice(0, 3000),
+    (syntheticRows || []).slice(0, 8).flat().join(' '),
+    files?.arquivo_pdf?.originalname,
+    files?.arquivo_sintetico?.originalname,
+  ].join(' '), 2, 2026);
+  const manualMes = number(fields?.mes);
+  const manualAno = number(fields?.ano);
+  return {
+    mes: Number.isInteger(manualMes) && manualMes >= 1 && manualMes <= 12 ? manualMes : detected.mes,
+    ano: Number.isInteger(manualAno) && manualAno >= 2000 && manualAno <= 2100 ? manualAno : detected.ano,
+  };
+}
+async function importCdhu(db,files,fields,tenantId){const divisor=number(fields.bdi_divisor)||1.2081;const syntheticRows=parseXlsxBuffer(files.arquivo_sintetico.buffer);const synthetic=parseCdhuSynthetic(files.arquivo_sintetico.buffer,divisor);const pdf=await pdfParse(files.arquivo_pdf.buffer);const base=parseCdhuPdfText(pdf.text);const ref=parseCdhuReference(files,fields,pdf.text,syntheticRows);const mesRef=`${String(ref.mes).padStart(2,'0')}/${ref.ano}`;if(!base.length||!synthetic.records.length)throw Object.assign(new Error('Não foi possível identificar as composições analíticas e os preços sintéticos da CDHU.'),{status:400});const inferred=[];const comps=base.map(comp=>{const own=synthetic.byCode.get(comp.codigo)||synthetic.byText.get(`${normalizeCdhu(comp.descricao)}|${comp.unidade}`);return{codigo:`CDHU.${comp.codigo}`,descricao:comp.descricao,unidade:comp.unidade,regime:own?'COM PREÇO':'SEM PREÇO',custo:own?.preco||0,observacoes:`CDHU/SP; BDI expurgado pelo divisor ${divisor}.`,itens:comp.itens.map(item=>{const rec=synthetic.byCode.get(cdhuCode(item.codigo))||synthetic.byText.get(`${normalizeCdhu(item.descricao)}|${item.unidade}`);if(item.codigo&&rec)inferred.push({codigo:item.codigo,descricao:item.descricao,unidade:item.unidade,tipo:item.unidade==='H'?'Mão de Obra':'Material',precoNaoDesonerado:rec.preco,precoDesonerado:rec.preco,observacoes:'Preço inferido do sintético CDHU/SP sem BDI.'});return{tipo:/^\d{6}$/.test(item.codigo)?'COMPOSICAO':'INSUMO',...item,preco:rec?.preco??null,custoParcial:rec?rec.preco*item.coeficiente:null};})};});return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'CDHU/SP',ref.mes,ref.ano,`CDHU/SP ${mesRef}`);const ins=await persistInsumos(conn,mergeInsumos(inferred),{tenantId,origem:'CDHU',uf:'SP',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,comps,{tenantId,fonte:'CDHU',uf:'SP',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'SP',bdi_percentual:number(fields.bdi_percentual)||20.81,bdi_divisor:divisor,composicoes_sem_preco:comps.filter(c=>!c.custo).length,itens_com_preco_inferido:inferred.length,mensagem:`CDHU/SP ${mesRef}: ${comp.composicoes_inseridas} composições novas e ${comp.itens_inseridos} itens importados.`};});}
 
-module.exports={ validOffice, extractPdfRows, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseCdhuSynthetic, parseCdhuPdfText, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importCdhu };
+module.exports={ validOffice, extractPdfRows, parseReference, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseCdhuSynthetic, parseCdhuPdfText, parseCdhuReference, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importCdhu };

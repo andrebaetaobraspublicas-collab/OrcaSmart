@@ -3,11 +3,32 @@ const sicroRoutes = require('../routes/sicroRoutes');
 const referenceImportRoutes = require('../routes/referenceImportRoutes');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
 const {
+  parseReference,
   parseCdhuPdfText,
+  parseCdhuReference,
   parseGoinfraLaborRows,
   parseGoinfraMaterialRows,
   parseGoinfraCompositionRows,
 } = require('../services/referenceImportService');
+
+assert.deepStrictEqual(parseReference('Data Base: MAIO/26', 2, 2026), { mes: 5, ano: 2026 });
+assert.deepStrictEqual(parseReference('Data Base: 05/2026', 2, 2026), { mes: 5, ano: 2026 });
+assert.deepStrictEqual(parseReference('Projeto 2026-05-Z1', 2, 2026), { mes: 5, ano: 2026 });
+assert.deepStrictEqual(parseReference('26/06/2026 09:54', 4, 2025), { mes: 4, ano: 2025 });
+assert.deepStrictEqual(parseReference(`
+MAIO/26
+PADRÃO_MAI/26
+2026-05-Z1
+26/06/2026 09:54
+Listagem de Composições
+Projeto:
+Data Base:
+`, 2, 2026), { mes: 5, ano: 2026 });
+assert.deepStrictEqual(parseCdhuReference({}, { mes: '7', ano: '2027' }, 'MAIO/26', []), { mes: 7, ano: 2027 });
+assert.deepStrictEqual(parseCdhuReference({
+  arquivo_pdf: { originalname: 'tabela-composicao-analitica-05-26.pdf' },
+  arquivo_sintetico: { originalname: 'tabela-composicao-sintetica-05-26.xlsx' },
+}, {}, '', []), { mes: 5, ano: 2026 });
 
 function paths(router) {
   return router.stack
