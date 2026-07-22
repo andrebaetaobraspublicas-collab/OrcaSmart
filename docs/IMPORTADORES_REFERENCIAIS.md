@@ -59,6 +59,8 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - Quando a secao F legada herdada do catalogo tem os codigos de transporte e o valor informado no antigo campo de preco, esse valor e apresentado como DMT. A conversao preserva o custo total e a listagem rapida usa o mesmo custo recuperado mostrado no detalhe.
 - A mesma normalizacao da DMT e aplicada a composicoes `USUARIO` que ja possuem secoes materializadas, mas ainda trazem a distancia no antigo campo de preco. O detalhe passa a mostrar a distancia sem recalcular ou multiplicar novamente o total da linha F.
 - A abertura do editor reutiliza a memoria ja carregada e os itens das secoes sao buscados em lote. No salvamento web, a resposta completa da composicao e opcional, evitando uma releitura que a interface nao utiliza.
+- O custo do FIC da copia usa a relacao entre `custo_fic` e `custo_unitario_execucao` registrada na composicao SICRO de origem. Alterar a producao e depois restaura-la deve recuperar o FIC e o custo unitario oficiais, sem substituir essa memoria por uma formula generica.
+- A edicao de uma referencia oficial abre diretamente a copia `USUARIO`, com politica de preservacao. A consulta recursiva de impacto fica reservada a composicoes do usuario que possam ser atualizadas no proprio tenant; nessas consultas nao se pesquisa o catalogo, pois o catalogo nunca referencia uma composicao criada pelo usuario.
 - O teste de regressao e `tests/composicoesSicroEdicao.test.js`.
 
 ## SEINFRA/CE

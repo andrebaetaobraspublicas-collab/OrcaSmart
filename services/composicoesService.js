@@ -58,13 +58,24 @@ async function createComposicao(db, data) {
 async function editarComVinculo(db, id, payload = {}, options = {}) {
   await assertDescricao(payload.dados || {});
   const readDb = options.readDb || db;
-  const impacto = await repo.impactoComposicao(readDb, id).catch(() => null);
-  const current = impacto?.composicao || null;
+  let current = await repo.getComposicao(readDb, id).catch(() => null);
   if (!current) {
     const err = new Error('Composicao nao encontrada.');
     err.status = 404;
     throw err;
   }
+  const fontesReferencia = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+  const preservaReferencia = payload.acao_orcamentos === 'manter'
+    && (current._tenant_scope === 'catalog' || fontesReferencia.includes(String(current.fonte || '').toUpperCase()));
+  const impacto = preservaReferencia ? {
+    composicao: current,
+    composicoes_auxiliares: [],
+    orcamentos_diretos: [],
+    orcamentos_indiretos: [],
+    orcamentos: [],
+    tem_impacto: false,
+  } : await repo.impactoComposicao(readDb, id, { composicao: current }).catch(() => null);
+  current = impacto?.composicao || current;
   const result = await repo.editarComVinculo(db, id, payload, { readDb, current, impacto });
   if (!result) {
     const err = new Error('Composicao nao encontrada.');

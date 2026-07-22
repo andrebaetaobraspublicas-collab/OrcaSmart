@@ -315,7 +315,7 @@ Router.register('composicoes', async () => {
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
                         </button>
                         <button class="btn-icon edit" title="Editar composição"
-                          data-cid="${c.id_composicao}" data-cact="edit"
+                          data-cid="${c.id_composicao}" data-cact="edit" data-cfonte="${Utils.esc(c.fonte || '')}"
                           style="color:var(--c-warning)">${Utils.icons.edit}</button>
                         <button class="btn-icon delete" title="Excluir composição"
                           data-cid="${c.id_composicao}" data-cact="del"
@@ -379,7 +379,7 @@ Router.register('composicoes', async () => {
       const cid=btn.dataset.cid, act=btn.dataset.cact;
       btn.addEventListener('click', ()=>{
         if      (act==='ver')  abrirDetalhe(cid);
-        else if (act==='edit') iniciarEdicao(cid);
+        else if (act==='edit') iniciarEdicao(cid, { fonte: btn.dataset.cfonte || null });
         else                   excluir(cid);
       });
     });
@@ -1884,27 +1884,35 @@ Router.register('composicoes', async () => {
   // ══════════════════════════════════════════════════════════════════════════
   async function iniciarEdicao(id, context = {}) {
     _editReturnContext = context || null;
-    // O impacto ja inclui a composicao completa. Reaproveite tambem o detalhe
-    // aberto para nao carregar a mesma memoria de calculo ate tres vezes.
+    const fontesReferencia = new Set(['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU']);
     let comp = context?.comp || null, impacto = null, usos = [], auxiliares = [];
     try {
-      impacto = await API.composicoes.impacto(id);
-      comp = comp || impacto?.composicao;
-      if (!comp) comp = await API.composicoes.get(id);
+      const fonteConhecida = String(comp?.fonte || context?.fonte || '').toUpperCase();
+      if (fontesReferencia.has(fonteConhecida)) {
+        // Referencias oficiais sao imutaveis: a edicao sempre gera uma copia
+        // USUARIO e preserva os vinculos. Nao ha motivo para aguardar a busca
+        // recursiva de impacto antes de abrir o formulario.
+        if (!comp) comp = await API.composicoes.get(id);
+        impacto = { composicao: comp, tem_impacto: false, composicoes_auxiliares: [], orcamentos: [] };
+      } else {
+        impacto = await API.composicoes.impacto(id);
+        comp = comp || impacto?.composicao;
+        if (!comp) comp = await API.composicoes.get(id);
+      }
       usos = impacto?.orcamentos || [];
       auxiliares = impacto?.composicoes_auxiliares || [];
     } catch(e) { Toast.error(e.message); return; }
 
     const fonte = comp.fonte || 'USUARIO';
-    const ehOriginal = fonte === 'SINAPI' || fonte === 'SICRO' || fonte === 'SICOR' || fonte === 'SEINFRA' || fonte === 'SUDECAP' || fonte === 'GOINFRA' || fonte === 'CDHU';
+    const ehOriginal = fontesReferencia.has(String(fonte).toUpperCase());
 
-    const escolhaImpacto = await escolherImpactoEdicaoComposicao(impacto || {
+    const escolhaImpacto = impacto?.tem_impacto ? await escolherImpactoEdicaoComposicao(impacto || {
       composicao: comp,
       composicoes_auxiliares: auxiliares,
       orcamentos_diretos: usos.filter(u => u.impacto_tipo !== 'indireto'),
       orcamentos_indiretos: usos.filter(u => u.impacto_tipo === 'indireto'),
       orcamentos: usos,
-    });
+    }) : 'manter';
     if (!escolhaImpacto) return;
     window._editAcaoOrcamentos = escolhaImpacto;
     window._editComposicaoId   = id;

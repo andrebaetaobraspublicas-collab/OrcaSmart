@@ -1174,6 +1174,7 @@ async function getTenantComposicao(db, rowid) {
     recuperarEdicaoSicroLegada(comp);
   }
   normalizarDmtSicroUsuario(comp);
+  await normalizarResumoSicroUsuario(db, comp);
   return aplicarPrecosResolvidosTenant(db, comp);
 }
 
@@ -1404,10 +1405,10 @@ async function recordReferentialOverride(db, data = {}) {
   return result.lastID;
 }
 
-async function impactoComposicao(db, idComposicao) {
-  if (await useTenantCatalogRead(db)) return impactoComposicaoTenantCatalog(db, idComposicao);
+async function impactoComposicao(db, idComposicao, options = {}) {
+  if (await useTenantCatalogRead(db)) return impactoComposicaoTenantCatalog(db, idComposicao, options);
 
-  const comp = await one(db, 'SELECT * FROM composicoes WHERE id_composicao = ?', [idComposicao]);
+  const comp = options.composicao || await one(db, 'SELECT * FROM composicoes WHERE id_composicao = ?', [idComposicao]);
   if (!comp) return null;
   const parents = new Map();
   const queue = [comp];
@@ -1488,8 +1489,8 @@ async function impactoComposicao(db, idComposicao) {
   };
 }
 
-async function impactoComposicaoTenantCatalog(db, idComposicao) {
-  const comp = await getComposicao(db, idComposicao);
+async function impactoComposicaoTenantCatalog(db, idComposicao, options = {}) {
+  const comp = options.composicao || await getComposicao(db, idComposicao);
   if (!comp) return null;
   const variantesOrigem = codigoVariantes(comp.codigo);
   const parents = new Map();
@@ -1497,7 +1498,10 @@ async function impactoComposicaoTenantCatalog(db, idComposicao) {
   const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
   if (variantesOrigem.length) {
     const qs = variantesOrigem.map(() => '?').join(',');
-    const catalogParents = await all(db, `
+    // O catalogo oficial nunca referencia uma composicao criada no tenant.
+    // Evitar essa busca para fonte USUARIO elimina uma varredura desnecessaria
+    // na maior tabela de itens durante cada abertura/salvamento do editor.
+    const catalogParents = String(comp.fonte || '').toUpperCase() === 'USUARIO' ? [] : await all(db, `
       SELECT ${compSelectColumns('CAST(c.id_composicao AS TEXT)', "'catalog'", 'c.id_composicao')}
       FROM catalog.itens_composicao ic
       JOIN catalog.composicoes c ON c.id_composicao = ic.id_composicao
@@ -1717,6 +1721,59 @@ function custoItemSecaoSicro(item = {}) {
   return Number((quantidade * toNum(item.preco_unitario, 0) * distancia).toFixed(4));
 }
 
+function fatorCustoFicSicro(base = {}, ficAtual = null) {
+  const custoExecucaoBase = toNum(base.custo_unitario_execucao, null);
+  const custoFicBase = toNum(base.custo_fic, null);
+  if (!(custoExecucaoBase > 0) || custoFicBase === null || custoFicBase < 0) return null;
+  let fator = custoFicBase / custoExecucaoBase;
+  const ficBase = toNum(base.fic, null);
+  const novoFic = toNum(ficAtual, null);
+  if (ficBase > 0 && novoFic !== null && novoFic >= 0) fator *= novoFic / ficBase;
+  return fator;
+}
+
+function aplicarResumoSicro(comp, totaisSecoes = {}, baseFic = {}) {
+  const producao = toNum(comp.producao_equipe, 0);
+  const custoHorario = toNum(totaisSecoes.A, 0) + toNum(totaisSecoes.B, 0);
+  const custoUnitarioExecucao = producao > 0 ? custoHorario / producao : 0;
+  const fatorFic = fatorCustoFicSicro(baseFic, comp.fic);
+  const custoFic = custoUnitarioExecucao * (fatorFic === null ? toNum(comp.fic, 0) : fatorFic);
+  const subtotal = custoUnitarioExecucao + custoFic
+    + toNum(totaisSecoes.C, 0) + toNum(totaisSecoes.D, 0);
+  const custoUnitario = subtotal + toNum(totaisSecoes.E, 0) + toNum(totaisSecoes.F, 0);
+  comp.custo_horario_execucao = Number(custoHorario.toFixed(4));
+  comp.custo_unitario_execucao = Number(custoUnitarioExecucao.toFixed(4));
+  comp.custo_fic = Number(custoFic.toFixed(4));
+  comp.subtotal_sicro = Number(subtotal.toFixed(4));
+  comp.custo_unitario = Number(custoUnitario.toFixed(4));
+  return comp;
+}
+
+async function baseFicSicro(db, comp = {}) {
+  if (comp._catalog_id !== null && comp._catalog_id !== undefined && comp._catalog_id !== '') {
+    const catalogo = await one(db, `
+      SELECT fic, custo_unitario_execucao, custo_fic
+      FROM catalog.composicoes
+      WHERE id_composicao=?
+      LIMIT 1`, [comp._catalog_id]).catch(() => null);
+    if (fatorCustoFicSicro(catalogo || {}, comp.fic) !== null) return catalogo;
+  }
+  return comp;
+}
+
+async function normalizarResumoSicroUsuario(db, comp) {
+  if (!comp
+      || String(comp.fonte || '').toUpperCase() !== 'USUARIO'
+      || String(comp.formato || '').toUpperCase() !== 'PRODUCAO_HORARIA'
+      || !Array.isArray(comp.secoes)
+      || !comp.secoes.length) return comp;
+  const totais = Object.fromEntries(comp.secoes.map(secao => [
+    String(secao.letra_secao || '').toUpperCase(),
+    toNum(secao.custo_total_secao, 0),
+  ]));
+  return aplicarResumoSicro(comp, totais, await baseFicSicro(db, comp));
+}
+
 function normalizarDmtSicroUsuario(comp) {
   if (!comp
       || String(comp.fonte || '').toUpperCase() !== 'USUARIO'
@@ -1902,13 +1959,7 @@ async function recalcularTenantComposicaoSicro(db, idComposicao, calculo = {}) {
       GROUP BY letra_secao`, [rowid]);
     secoes = Object.fromEntries(linhas.map(linha => [String(linha.letra_secao || '').toUpperCase(), toNum(linha.total, 0)]));
   }
-  const producao = toNum(comp.producao_equipe, 0);
-  const fic = toNum(comp.fic, 0);
-  const custoHorario = toNum(secoes.A, 0) + toNum(secoes.B, 0);
-  const custoUnitarioExecucao = producao > 0 ? custoHorario / producao : 0;
-  const custoFic = custoUnitarioExecucao * fic;
-  const subtotal = custoUnitarioExecucao + custoFic + toNum(secoes.C, 0) + toNum(secoes.D, 0);
-  const custoUnitario = subtotal + toNum(secoes.E, 0) + toNum(secoes.F, 0);
+  aplicarResumoSicro(comp, secoes, calculo.base_fic || comp);
   const agora = new Date().toISOString();
 
   if (!calculo.secoes) {
@@ -1926,15 +1977,15 @@ async function recalcularTenantComposicaoSicro(db, idComposicao, calculo = {}) {
     SET custo_horario_execucao=?, custo_unitario_execucao=?, custo_fic=?,
         subtotal_sicro=?, custo_unitario=?, tenant_updated_at=?
     WHERE rowid=?`, [
-    Number(custoHorario.toFixed(4)),
-    Number(custoUnitarioExecucao.toFixed(4)),
-    Number(custoFic.toFixed(4)),
-    Number(subtotal.toFixed(4)),
-    Number(custoUnitario.toFixed(4)),
+    comp.custo_horario_execucao,
+    comp.custo_unitario_execucao,
+    comp.custo_fic,
+    comp.subtotal_sicro,
+    comp.custo_unitario,
     agora,
     rowid,
   ]);
-  return Number(custoUnitario.toFixed(4));
+  return comp.custo_unitario;
 }
 
 async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
@@ -1971,6 +2022,9 @@ async function editarComVinculo(db, idComposicao, {
     const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
     const scoped = scopedComposicaoId(idComposicao);
     const criarNova = scoped.scope === 'catalog' || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
+    const edicaoSicro = String(dados.formato || compOrig.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
+      && ((compOrig.secoes || []).length > 0 || itens.some(item => item && (item._secao || item.letra_secao)));
+    const baseFic = edicaoSicro ? await baseFicSicro(readDb, compOrig) : null;
     let idResultado = scoped.scope === 'tenant' ? scoped.value : null;
     let codNovo = null;
 
@@ -1998,12 +2052,11 @@ async function editarComVinculo(db, idComposicao, {
         await updateTenantComposicao(db, idResultado, { ...compOrig, ...dados, fonte: compOrig.fonte || 'USUARIO' });
       }
       await replaceTenantItens(db, idResultado, itens);
-      const isSicro = String(dados.formato || compOrig.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
-        && ((compOrig.secoes || []).length > 0 || itens.some(item => item && (item._secao || item.letra_secao)));
-      const totaisSecoes = isSicro ? await replaceTenantSecoesSicro(db, idResultado, itens) : null;
-      const custo = isSicro
+      const totaisSecoes = edicaoSicro ? await replaceTenantSecoesSicro(db, idResultado, itens) : null;
+      const custo = edicaoSicro
         ? await recalcularTenantComposicaoSicro(db, idResultado, {
           secoes: totaisSecoes,
+          base_fic: baseFic,
           composicao: {
             producao_equipe: dados.producao_equipe === undefined ? compOrig.producao_equipe : dados.producao_equipe,
             fic: dados.fic === undefined ? compOrig.fic : dados.fic,
