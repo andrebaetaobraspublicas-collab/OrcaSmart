@@ -76,28 +76,46 @@ const Router = {
 const Modal = {
   overlay: null, modal: null,
   _resolve: null,
+  _closeOnBackdrop: true,
+  _backdropPointerStarted: false,
+  _focusTimer: null,
 
   init() {
     this.overlay = document.getElementById('modalOverlay');
     this.modal   = document.getElementById('modal');
     document.getElementById('modalClose').addEventListener('click', () => this.close());
-    this.overlay.addEventListener('click', e => { if (e.target === this.overlay) this.close(); });
+    this.modal.addEventListener('click', e => e.stopPropagation());
+    this.overlay.addEventListener('pointerdown', e => {
+      this._backdropPointerStarted = e.target === this.overlay;
+    });
+    this.overlay.addEventListener('click', e => {
+      const backdropClick = e.target === this.overlay && this._backdropPointerStarted;
+      this._backdropPointerStarted = false;
+      if (backdropClick && this._closeOnBackdrop) this.close();
+    });
   },
 
-  open({ title, body, footer, size = '' }) {
+  open({ title, body, footer, size = '', closeOnBackdrop = true }) {
+    if (this._focusTimer) clearTimeout(this._focusTimer);
+    this._closeOnBackdrop = closeOnBackdrop;
+    this._backdropPointerStarted = false;
     document.getElementById('modalTitle').textContent  = title || '';
     document.getElementById('modalBody').innerHTML     = body  || '';
     document.getElementById('modalFooter').innerHTML   = footer || '';
     this.modal.className = `modal ${size}`;
     this.overlay.classList.add('open');
     // Auto-focus primeiro input
-    setTimeout(() => {
+    this._focusTimer = setTimeout(() => {
+      this._focusTimer = null;
       const first = this.modal.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
       if (first) first.focus();
     }, 50);
   },
 
   close() {
+    if (this._focusTimer) clearTimeout(this._focusTimer);
+    this._focusTimer = null;
+    this._backdropPointerStarted = false;
     this.overlay.classList.remove('open');
   },
 };

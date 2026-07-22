@@ -707,6 +707,9 @@ Router.register('composicoes', async () => {
             : '✏️ Editar Composição')
         : 'Nova Composição',
       size:  'modal-xl',
+      // O editor possui muitos campos e rolagem. Evita perda acidental do
+      // formulario por um clique/gesto que termine fora da caixa do modal.
+      closeOnBackdrop: false,
       body: `
         <div class="form-grid form-grid-2">
           <div class="form-group">
