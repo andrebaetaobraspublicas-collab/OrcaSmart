@@ -198,6 +198,12 @@ async function precoResolvidoItemComposicao(db, item = {}) {
 
 async function aplicarPrecosResolvidosTenant(db, comp) {
   if (!comp || !Array.isArray(comp.itens) || !comp.itens.length) return comp;
+  // Composicoes SICRO de producao horaria possuem uma memoria de calculo
+  // propria nas secoes A-F. Somar os itens achatados faria A+B entrarem como
+  // custo unitario sem a divisao pela producao da equipe.
+  if (String(comp.formato || '').toUpperCase() === 'PRODUCAO_HORARIA' && comp.secoes?.length) {
+    return comp;
+  }
   let total = 0;
   for (const item of comp.itens) {
     const coef = toNum(item.coeficiente, 0);
@@ -1083,6 +1089,7 @@ async function getTenantComposicao(db, rowid) {
         WHERE id_secao = ?
         ORDER BY ordem, id_item_secao`, [secao.id_secao]).catch(() => []);
     }
+    recuperarEdicaoSicroLegada(comp);
   }
   return aplicarPrecosResolvidosTenant(db, comp);
 }
@@ -1601,6 +1608,199 @@ async function replaceTenantItens(db, idComposicao, itens = []) {
   }
 }
 
+const NOMES_SECOES_SICRO = {
+  A: 'Equipamentos',
+  B: 'Mao de Obra',
+  C: 'Material',
+  D: 'Atividades Auxiliares',
+  E: 'Tempo Fixo',
+  F: 'Momento de Transporte',
+};
+
+function custoItemSecaoSicro(item = {}) {
+  const quantidade = toNum(item.quantidade ?? item.coeficiente, 0);
+  const letra = String(item._secao || item.letra_secao || '').toUpperCase();
+  if (letra === 'A') {
+    const utilOperativa = toNum(item.util_operativa, 0);
+    const utilImprodutiva = toNum(item.util_improdutiva, 0);
+    const custoHp = toNum(item.preco_unitario ?? item.custo_hp, 0);
+    const custoHi = toNum(item.custo_hi, 0);
+    return Number((quantidade * ((utilOperativa * custoHp) + (utilImprodutiva * custoHi))).toFixed(4));
+  }
+  const temDmt = item.dmt !== null && item.dmt !== undefined && item.dmt !== '';
+  const distancia = letra === 'F' && temDmt ? toNum(item.dmt, 0) : 1;
+  return Number((quantidade * toNum(item.preco_unitario, 0) * distancia).toFixed(4));
+}
+
+function recuperarEdicaoSicroLegada(comp) {
+  if (!comp || String(comp.formato || '').toUpperCase() !== 'PRODUCAO_HORARIA') return comp;
+  const itensPlanos = Array.isArray(comp.itens) ? comp.itens : [];
+  if (!itensPlanos.length || !Array.isArray(comp.secoes)) return comp;
+  const usados = new Set();
+  const secoes = {};
+  for (const secao of comp.secoes) {
+    let totalSecao = 0;
+    for (const item of secao.itens || []) {
+      const idx = itensPlanos.findIndex((plano, posicao) => !usados.has(posicao)
+        && String(plano.codigo_item || '') === String(item.codigo_item || ''));
+      if (idx >= 0) {
+        usados.add(idx);
+        const plano = itensPlanos[idx];
+        if (plano.coeficiente !== null && plano.coeficiente !== undefined) item.quantidade = toNum(plano.coeficiente, 0);
+        if (plano.preco_unitario !== null && plano.preco_unitario !== undefined) {
+          item.preco_unitario = toNum(plano.preco_unitario, 0);
+          if (String(secao.letra_secao || '').toUpperCase() === 'A') item.custo_hp = item.preco_unitario;
+        }
+      }
+      item.custo_total = custoItemSecaoSicro({ ...item, _secao: secao.letra_secao });
+      totalSecao += item.custo_total;
+    }
+    secao.custo_total_secao = Number(totalSecao.toFixed(4));
+    secoes[String(secao.letra_secao || '').toUpperCase()] = secao.custo_total_secao;
+  }
+  const producao = toNum(comp.producao_equipe, 0);
+  const custoHorario = toNum(secoes.A, 0) + toNum(secoes.B, 0);
+  const custoUnitarioExecucao = producao > 0 ? custoHorario / producao : 0;
+  const custoFic = custoUnitarioExecucao * toNum(comp.fic, 0);
+  const subtotal = custoUnitarioExecucao + custoFic + toNum(secoes.C, 0) + toNum(secoes.D, 0);
+  comp.custo_horario_execucao = Number(custoHorario.toFixed(4));
+  comp.custo_unitario_execucao = Number(custoUnitarioExecucao.toFixed(4));
+  comp.custo_fic = Number(custoFic.toFixed(4));
+  comp.subtotal_sicro = Number(subtotal.toFixed(4));
+  comp.custo_unitario = Number((subtotal + toNum(secoes.E, 0) + toNum(secoes.F, 0)).toFixed(4));
+  return comp;
+}
+
+async function proximoIdLogicoTenant(db, tabela, coluna) {
+  const row = await one(db, `SELECT COALESCE(MAX(${coluna}), 0) + 1 AS proximo FROM ${tabela}`);
+  return Number(row?.proximo || 1);
+}
+
+async function replaceTenantSecoesSicro(db, idComposicao, itens = []) {
+  const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
+    ? scopedComposicaoId(idComposicao).value
+    : Number(idComposicao);
+  const agora = new Date().toISOString();
+  await run(db, "UPDATE tenant_composicoes_secao_itens SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao=?", [agora, rowid]);
+  await run(db, "UPDATE tenant_composicoes_secoes SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao=?", [agora, rowid]);
+
+  const grupos = new Map();
+  for (const item of itens) {
+    const letra = String(item._secao || item.letra_secao || '').trim().toUpperCase();
+    if (!NOMES_SECOES_SICRO[letra]) continue;
+    if (!grupos.has(letra)) grupos.set(letra, []);
+    grupos.get(letra).push(item);
+  }
+
+  let idSecao = await proximoIdLogicoTenant(db, 'tenant_composicoes_secoes', 'id_secao');
+  let idItemSecao = await proximoIdLogicoTenant(db, 'tenant_composicoes_secao_itens', 'id_item_secao');
+  let ordemSecao = 0;
+  for (const [letra, itensSecao] of [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const secaoAtual = idSecao++;
+    const custos = itensSecao.map(custoItemSecaoSicro);
+    const totalSecao = Number(custos.reduce((soma, valor) => soma + valor, 0).toFixed(4));
+    await run(db, `
+      INSERT INTO tenant_composicoes_secoes
+        (id_secao, id_composicao, letra_secao, nome_secao, custo_total_secao, ordem,
+         tenant_override_action, tenant_override_status, tenant_created_at, tenant_updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'create', 'active', ?, ?)`, [
+      secaoAtual,
+      rowid,
+      letra,
+      itensSecao[0]?._secao_nome || NOMES_SECOES_SICRO[letra],
+      totalSecao,
+      ordemSecao++,
+      agora,
+      agora,
+    ]);
+
+    for (let ordem = 0; ordem < itensSecao.length; ordem += 1) {
+      const item = itensSecao[ordem] || {};
+      await run(db, `
+        INSERT INTO tenant_composicoes_secao_itens
+          (id_item_secao, id_composicao, id_secao, letra_secao, codigo_item, descricao,
+           quantidade, unidade, util_operativa, util_improdutiva, custo_hp, custo_hi,
+           preco_unitario, custo_total, cod_transporte, cod_transp_ln, cod_transp_rp,
+           cod_transp_p, fit, dmt, ordem, tenant_override_action, tenant_override_status,
+           tenant_created_at, tenant_updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                'create', 'active', ?, ?)`, [
+        idItemSecao++,
+        rowid,
+        secaoAtual,
+        letra,
+        item.codigo_item || null,
+        item.descricao || '',
+        toNum(item.quantidade ?? item.coeficiente, 0),
+        item.unidade || null,
+        item.util_operativa === undefined ? null : toNum(item.util_operativa, null),
+        item.util_improdutiva === undefined ? null : toNum(item.util_improdutiva, null),
+        item.custo_hp === undefined ? null : toNum(item.custo_hp, null),
+        item.custo_hi === undefined ? null : toNum(item.custo_hi, null),
+        item.preco_unitario === undefined ? null : toNum(item.preco_unitario, null),
+        custos[ordem],
+        item.cod_transporte || null,
+        item.cod_transp_ln || null,
+        item.cod_transp_rp || null,
+        item.cod_transp_p || null,
+        item.fit === undefined ? null : toNum(item.fit, null),
+        item.dmt === undefined ? null : toNum(item.dmt, null),
+        ordem,
+        agora,
+        agora,
+      ]);
+    }
+  }
+}
+
+async function recalcularTenantComposicaoSicro(db, idComposicao) {
+  const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
+    ? scopedComposicaoId(idComposicao).value
+    : Number(idComposicao);
+  const comp = await one(db, `
+    SELECT producao_equipe, fic
+    FROM tenant_composicoes
+    WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+  if (!comp) return 0;
+  const linhas = await all(db, `
+    SELECT letra_secao, COALESCE(SUM(COALESCE(custo_total,0)),0) AS total
+    FROM tenant_composicoes_secao_itens
+    WHERE id_composicao=? AND COALESCE(tenant_override_status,'active')='active'
+    GROUP BY letra_secao`, [rowid]);
+  const secoes = Object.fromEntries(linhas.map(linha => [String(linha.letra_secao || '').toUpperCase(), toNum(linha.total, 0)]));
+  const producao = toNum(comp.producao_equipe, 0);
+  const fic = toNum(comp.fic, 0);
+  const custoHorario = toNum(secoes.A, 0) + toNum(secoes.B, 0);
+  const custoUnitarioExecucao = producao > 0 ? custoHorario / producao : 0;
+  const custoFic = custoUnitarioExecucao * fic;
+  const subtotal = custoUnitarioExecucao + custoFic + toNum(secoes.C, 0) + toNum(secoes.D, 0);
+  const custoUnitario = subtotal + toNum(secoes.E, 0) + toNum(secoes.F, 0);
+  const agora = new Date().toISOString();
+
+  for (const [letra, total] of Object.entries(secoes)) {
+    await run(db, `
+      UPDATE tenant_composicoes_secoes
+      SET custo_total_secao=?, tenant_updated_at=?
+      WHERE id_composicao=? AND letra_secao=? AND COALESCE(tenant_override_status,'active')='active'`, [
+      Number(total.toFixed(4)), agora, rowid, letra,
+    ]);
+  }
+  await run(db, `
+    UPDATE tenant_composicoes
+    SET custo_horario_execucao=?, custo_unitario_execucao=?, custo_fic=?,
+        subtotal_sicro=?, custo_unitario=?, tenant_updated_at=?
+    WHERE rowid=?`, [
+    Number(custoHorario.toFixed(4)),
+    Number(custoUnitarioExecucao.toFixed(4)),
+    Number(custoFic.toFixed(4)),
+    Number(subtotal.toFixed(4)),
+    Number(custoUnitario.toFixed(4)),
+    agora,
+    rowid,
+  ]);
+  return Number(custoUnitario.toFixed(4));
+}
+
 async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
   const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
     ? scopedComposicaoId(idComposicao).value
@@ -1657,7 +1857,12 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
         await updateTenantComposicao(db, idResultado, { ...compOrig, ...dados, fonte: compOrig.fonte || 'USUARIO' });
       }
       await replaceTenantItens(db, idResultado, itens);
-      const custo = await recalcularTenantComposicaoUnitaria(db, idResultado);
+      const isSicro = String(dados.formato || compOrig.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
+        && ((compOrig.secoes || []).length > 0 || itens.some(item => item && (item._secao || item.letra_secao)));
+      if (isSicro) await replaceTenantSecoesSicro(db, idResultado, itens);
+      const custo = isSicro
+        ? await recalcularTenantComposicaoSicro(db, idResultado)
+        : await recalcularTenantComposicaoUnitaria(db, idResultado);
 
       if (acao_orcamentos === 'atualizar' && !String(idComposicao).startsWith('tenant:')) {
         await run(db, `

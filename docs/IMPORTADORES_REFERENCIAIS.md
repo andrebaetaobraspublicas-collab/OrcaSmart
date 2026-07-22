@@ -48,6 +48,15 @@ O adaptador deve priorizar nomes de tabela mais específicos. A regressão em qu
 `tenant_composicoes_secoes` era interpretada como `tenant_composicoes` foi
 corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 
+### Edicao de composicoes SICRO pelo usuario
+
+- A composicao referencial permanece somente leitura; a edicao cria uma composicao `USUARIO` no tenant.
+- As secoes A-F e os campos de transporte sao copiados para tabelas seccionais do tenant e passam a ser a fonte do detalhe editado.
+- O custo horario de execucao corresponde a soma das secoes A e B. O custo unitario de execucao divide esse valor pela `producao_equipe` antes da soma de FIC e das secoes C-F.
+- Na secao F, a DMT editada e persistida e multiplica a quantidade e o custo unitario de transporte; sem DMT separada, permanece compativel com o valor unitario ja consolidado informado no item.
+- Registros antigos que ficaram apenas com itens achatados recuperam os valores editados ao abrir o detalhe; ao salvar novamente, as secoes proprias sao materializadas no tenant.
+- O teste de regressao e `tests/composicoesSicroEdicao.test.js`.
+
 ## SEINFRA/CE
 
 - Endpoint: `POST /api/seinfra/importar`.
