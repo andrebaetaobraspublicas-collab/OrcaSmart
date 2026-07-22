@@ -70,7 +70,9 @@ async function run() {
       );
       INSERT INTO catalog.composicoes VALUES
         (401,'4011399','SICRO','PRODUCAO_HORARIA','Macadame betuminoso','m3',NULL,
-         '04/2026','DF','Ativo',185.2265,0.11562,15,'m3','Ativo',NULL,1393.9306,92.9287,10.7444,177.7);
+         '04/2026','DF','Ativo',185.2265,0.11562,15,'m3','Ativo',NULL,1393.9306,92.9287,10.7444,177.7),
+        (402,'4020000','SICRO','PRODUCAO_HORARIA','Referencia com FIC oficial','m3',NULL,
+         '10/2025','DF','Ativo',181.5781,0.11562,15,'m3','Ativo',NULL,1393.9306,92.9287,7.096,174.0516);
       INSERT INTO catalog.composicoes_secoes VALUES
         (1,401,'A','Equipamentos',1000,0), (2,401,'B','Mao de Obra',393.9306,1),
         (3,401,'C','Material',0,2), (4,401,'D','Atividades Auxiliares',74.0269,3),
@@ -213,6 +215,53 @@ async function run() {
     assert.strictEqual(transporteReeditado.itens[0].dmt, 20);
     assert.strictEqual(transporteReeditado.itens[0].custo_total, 790.184);
     assert.strictEqual(reeditado.composicao.custo_unitario, 975.4105);
+
+    const referenciaFic = {
+      id_composicao: '402',
+      _catalog_id: 402,
+      codigo: '4020000',
+      fonte: 'SICRO',
+      formato: 'PRODUCAO_HORARIA',
+      descricao: 'Referencia com FIC oficial',
+      unidade: 'm3',
+      mes_referencia: '10/2025',
+      uf_referencia: 'DF',
+      producao_equipe: 15,
+      unidade_producao: 'm3',
+      fic: 0.11562,
+      custo_horario_execucao: 1393.9306,
+      custo_unitario_execucao: 92.9287,
+      custo_fic: 7.096,
+      subtotal_sicro: 174.0516,
+      custo_unitario: 181.5781,
+      situacao: 'Ativo',
+      secoes: [],
+      itens: [],
+    };
+    const itensSemTransporte = itens.map(item => (
+      item._secao === 'F' ? { ...item, preco_unitario: 0, dmt: null } : item
+    ));
+    const producaoDobrada = await repo.editarComVinculo(db, 402, {
+      dados: { ...referenciaFic, codigo: 'USUARIO.4020000', fonte: 'USUARIO', producao_equipe: 30 },
+      itens: itensSemTransporte,
+      acao_orcamentos: 'manter',
+    }, {
+      current: referenciaFic,
+      impacto: { composicoes_auxiliares: [], orcamentos: [] },
+    });
+    assert.strictEqual(producaoDobrada.composicao.custo_fic, 3.548, 'o custo do FIC oficial deve acompanhar a producao');
+    assert.strictEqual(producaoDobrada.composicao.custo_unitario, 131.5658);
+
+    const producaoRestaurada = await repo.editarComVinculo(db, producaoDobrada.id_resultado, {
+      dados: { ...producaoDobrada.composicao, producao_equipe: 15 },
+      itens: itensSemTransporte,
+      acao_orcamentos: 'manter',
+    }, {
+      current: producaoDobrada.composicao,
+      impacto: { composicoes_auxiliares: [], orcamentos: [] },
+    });
+    assert.strictEqual(producaoRestaurada.composicao.custo_fic, 7.096, 'ao restaurar a producao, o FIC deve voltar ao valor oficial');
+    assert.strictEqual(producaoRestaurada.composicao.custo_unitario, 181.5781, 'a configuracao original deve recuperar exatamente o custo de origem');
   } finally {
     await close(db);
   }
