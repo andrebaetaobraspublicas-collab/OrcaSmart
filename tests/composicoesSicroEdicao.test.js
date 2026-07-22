@@ -87,7 +87,9 @@ async function run() {
          custo_unitario,fic,producao_equipe,unidade_producao,situacao,tenant_catalog_id,
          tenant_override_action,tenant_override_status)
         VALUES (50,'USUARIO.LEGADO','USUARIO','PRODUCAO_HORARIA','Edicao legada','m3','04/2026','DF',
-                2121.13,0,15,'m3','Ativo',401,'update','active');
+                2121.13,0,15,'m3','Ativo',401,'update','active'),
+               (51,'USUARIO.4011399-2','USUARIO','PRODUCAO_HORARIA','Edicao materializada','m3','04/2026','DF',
+                703.10,0.11562,15,'m3','Ativo',401,'create','active');
       INSERT INTO tenant_itens_composicao
         (id_item,id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,preco_unitario,custo_parcial,ordem,tenant_override_action,tenant_override_status)
         VALUES
@@ -97,6 +99,15 @@ async function run() {
         (4,1,'INSUMO','D1','Auxiliar','m3',1,74.0269,74.0269,3,'create','active'),
         (5,1,'INSUMO','T1','Tempo fixo','t',1,7.5265,7.5265,4,'create','active'),
         (6,1,'INSUMO','F1','Transporte editado','tkm',1.97546,10,19.7546,5,'create','active');
+      INSERT INTO tenant_composicoes_secoes
+        (id_secao,id_composicao,letra_secao,nome_secao,custo_total_secao,ordem,tenant_override_action,tenant_override_status)
+        VALUES (20,2,'F','Momento de Transporte',19.7546,5,'create','active');
+      INSERT INTO tenant_composicoes_secao_itens
+        (id_item_secao,id_composicao,id_secao,letra_secao,codigo_item,descricao,quantidade,unidade,
+         preco_unitario,custo_total,cod_transp_ln,cod_transp_rp,cod_transp_p,dmt,ordem,
+         tenant_override_action,tenant_override_status)
+        VALUES (20,2,20,'F','F1','Transporte editado',1.97546,'tkm',10,19.7546,
+                '5914359','5914374','5914389',NULL,0,'create','active');
       INSERT INTO tenant_referential_overrides
         (domain,catalog_table,catalog_id,tenant_table,tenant_rowid,action,impact_policy,status)
         VALUES ('composicoes','composicoes',401,'tenant_composicoes',1,'update','preserve','active');
@@ -113,6 +124,12 @@ async function run() {
     assert.strictEqual(transporteLegado.dmt, 10, 'a distancia antiga deve aparecer no campo DMT');
     assert.strictEqual(transporteLegado.preco_unitario, 1, 'a conversao da DMT nao pode alterar o custo total legado');
     assert.strictEqual(transporteLegado.custo_total, 19.7546);
+
+    const materializado = await repo.getComposicao(db, 'tenant:2');
+    const transporteMaterializado = materializado.secoes.find(secao => secao.letra_secao === 'F').itens[0];
+    assert.strictEqual(transporteMaterializado.dmt, 10, 'a DMT legada deve aparecer mesmo quando as secoes ja foram materializadas');
+    assert.strictEqual(transporteMaterializado.preco_unitario, 1, 'a normalizacao da memoria nao pode multiplicar o transporte novamente');
+    assert.strictEqual(transporteMaterializado.custo_total, 19.7546, 'o total da linha F deve permanecer inalterado');
 
     const listaLegada = await repo.listComposicoes(db, { quick: 1, fonte: 'USUARIO', limit: 50, offset: 0 });
     const linhaLegada = listaLegada.items.find(item => item.codigo === 'USUARIO.LEGADO');

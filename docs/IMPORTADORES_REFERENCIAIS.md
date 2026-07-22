@@ -57,6 +57,8 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - Na secao F, a DMT editada e persistida e multiplica a quantidade e o custo unitario de transporte; sem DMT separada, permanece compativel com o valor unitario ja consolidado informado no item.
 - Registros antigos que ficaram apenas com itens achatados recuperam os valores editados ao abrir o detalhe; ao salvar novamente, as secoes proprias sao materializadas no tenant.
 - Quando a secao F legada herdada do catalogo tem os codigos de transporte e o valor informado no antigo campo de preco, esse valor e apresentado como DMT. A conversao preserva o custo total e a listagem rapida usa o mesmo custo recuperado mostrado no detalhe.
+- A mesma normalizacao da DMT e aplicada a composicoes `USUARIO` que ja possuem secoes materializadas, mas ainda trazem a distancia no antigo campo de preco. O detalhe passa a mostrar a distancia sem recalcular ou multiplicar novamente o total da linha F.
+- A abertura do editor reutiliza a memoria ja carregada e os itens das secoes sao buscados em lote. No salvamento web, a resposta completa da composicao e opcional, evitando uma releitura que a interface nao utiliza.
 - O teste de regressao e `tests/composicoesSicroEdicao.test.js`.
 
 ## SEINFRA/CE

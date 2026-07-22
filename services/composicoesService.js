@@ -58,8 +58,13 @@ async function createComposicao(db, data) {
 async function editarComVinculo(db, id, payload = {}, options = {}) {
   await assertDescricao(payload.dados || {});
   const readDb = options.readDb || db;
-  const current = await repo.getComposicao(readDb, id);
   const impacto = await repo.impactoComposicao(readDb, id).catch(() => null);
+  const current = impacto?.composicao || null;
+  if (!current) {
+    const err = new Error('Composicao nao encontrada.');
+    err.status = 404;
+    throw err;
+  }
   const result = await repo.editarComVinculo(db, id, payload, { readDb, current, impacto });
   if (!result) {
     const err = new Error('Composicao nao encontrada.');

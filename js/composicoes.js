@@ -443,7 +443,10 @@ Router.register('composicoes', async () => {
       footer:`<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>
               ${comp.fonte==='USUARIO'?`<button class="btn btn-primary" onclick="Modal.close()" id="btnEditFromDet">Editar</button>`:''}`,
     });
-    document.getElementById('btnEditFromDet')?.addEventListener('click', ()=>{ Modal.close(); iniciarEdicao(id); });
+    document.getElementById('btnEditFromDet')?.addEventListener('click', ()=>{
+      Modal.close();
+      iniciarEdicao(id, { comp });
+    });
   }
 
   function infoBox(label, value) {
@@ -644,9 +647,11 @@ Router.register('composicoes', async () => {
   }
 
   /* ═══════════════════════════════ FORM COMPOSIÇÃO DO USUÁRIO ═══════════════ */
-  async function abrirForm(id=null) {
-    let c = {};
-    if (id) { try { c = await API.composicoes.get(id); } catch(e){ Toast.error(e.message); return; } }
+  async function abrirForm(id=null, composicaoCarregada=null) {
+    let c = composicaoCarregada || {};
+    if (id && !composicaoCarregada) {
+      try { c = await API.composicoes.get(id); } catch(e){ Toast.error(e.message); return; }
+    }
 
     // ── Inicializar itens: SINAPI usa itens[], SICRO usa secoes[].itens[] ──
     const formato = String(c.formato || '').toUpperCase();
@@ -1518,9 +1523,9 @@ Router.register('composicoes', async () => {
   }
 
   /* ── Abrir form com callback de salvamento (para editar com vínculo) ── */
-  function abrirFormComCallback(id, callback) {
+  function abrirFormComCallback(id, callback, composicaoCarregada=null) {
     window._formSaveCallback = callback;
-    abrirForm(id);
+    abrirForm(id, composicaoCarregada);
   }
 
   /* ── Salvar composição do usuário (header + insumos) ───────────────────── */
@@ -1879,13 +1884,13 @@ Router.register('composicoes', async () => {
   // ══════════════════════════════════════════════════════════════════════════
   async function iniciarEdicao(id, context = {}) {
     _editReturnContext = context || null;
-    // Busca composição e usos simultaneamente
-    let comp, impacto = null, usos = [], auxiliares = [];
+    // O impacto ja inclui a composicao completa. Reaproveite tambem o detalhe
+    // aberto para nao carregar a mesma memoria de calculo ate tres vezes.
+    let comp = context?.comp || null, impacto = null, usos = [], auxiliares = [];
     try {
-      [comp, impacto] = await Promise.all([
-        API.composicoes.get(id),
-        API.composicoes.impacto(id),
-      ]);
+      impacto = await API.composicoes.impacto(id);
+      comp = comp || impacto?.composicao;
+      if (!comp) comp = await API.composicoes.get(id);
       usos = impacto?.orcamentos || [];
       auxiliares = impacto?.composicoes_auxiliares || [];
     } catch(e) { Toast.error(e.message); return; }
@@ -1910,6 +1915,7 @@ Router.register('composicoes', async () => {
           dados,
           itens,
           acao_orcamentos: window._editAcaoOrcamentos,
+          retornar_composicao: false,
         });
         Toast.success(res.mensagem || 'Composicao editada com sucesso.');
         if (!voltarAoOrcamentoSeAplicavel()) carregar();
@@ -1918,7 +1924,7 @@ Router.register('composicoes', async () => {
         Toast.error(e.message);
         return false;
       }
-    });
+    }, comp);
     return;
 
     // Montar descrição dos usos
