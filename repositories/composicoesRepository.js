@@ -435,6 +435,14 @@ async function listComposicoes(db, query = {}) {
 
       // A listagem rapida usa o custo persistido. Reabrir e recalcular cada
       // composicao aqui gerava um padrao N+1 (dezenas de consultas por pagina).
+      // Para demonstrativos SICRO do tenant, entretanto, a leitura pontual e
+      // necessaria para recuperar edicoes legadas que ficaram achatadas antes
+      // da materializacao das secoes A-F. O filtro mantem o custo limitado aos
+      // poucos registros de producao horaria presentes na pagina.
+      await aplicarPrecosResolvidosTenantLista(db, items.filter(row => (
+        row?._tenant_scope === 'tenant'
+        && String(row.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
+      )));
       return { items, total: null, has_more: hasMore, limit, offset };
     }
     const baseSql = `
@@ -1648,8 +1656,22 @@ function recuperarEdicaoSicroLegada(comp) {
         const plano = itensPlanos[idx];
         if (plano.coeficiente !== null && plano.coeficiente !== undefined) item.quantidade = toNum(plano.coeficiente, 0);
         if (plano.preco_unitario !== null && plano.preco_unitario !== undefined) {
-          item.preco_unitario = toNum(plano.preco_unitario, 0);
-          if (String(secao.letra_secao || '').toUpperCase() === 'A') item.custo_hp = item.preco_unitario;
+          const letra = String(secao.letra_secao || '').toUpperCase();
+          const precoLegado = toNum(plano.preco_unitario, 0);
+          const transporteLegado = letra === 'F'
+            && item.dmt == null
+            && item.preco_unitario == null
+            && (item.cod_transp_ln || item.cod_transp_rp || item.cod_transp_p);
+          if (transporteLegado) {
+            // O editor antigo usava o campo de preco para receber a distancia.
+            // Converta somente a secao F herdada do catalogo, preservando o
+            // mesmo total: quantidade x 1 R$/tkm x DMT.
+            item.dmt = precoLegado;
+            item.preco_unitario = 1;
+          } else {
+            item.preco_unitario = precoLegado;
+          }
+          if (letra === 'A') item.custo_hp = item.preco_unitario;
         }
       }
       item.custo_total = custoItemSecaoSicro({ ...item, _secao: secao.letra_secao });

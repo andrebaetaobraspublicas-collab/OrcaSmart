@@ -97,7 +97,15 @@ async function run() {
     const legado = await repo.getComposicao(db, 'tenant:1');
     assert.strictEqual(legado.custo_unitario_execucao, 92.9287, 'a leitura deve recuperar o divisor de uma edicao antiga achatada');
     assert.strictEqual(legado.custo_unitario, 194.2367);
-    assert.strictEqual(legado.secoes.find(secao => secao.letra_secao === 'F').itens[0].custo_total, 19.7546);
+    const transporteLegado = legado.secoes.find(secao => secao.letra_secao === 'F').itens[0];
+    assert.strictEqual(transporteLegado.dmt, 10, 'a distancia antiga deve aparecer no campo DMT');
+    assert.strictEqual(transporteLegado.preco_unitario, 1, 'a conversao da DMT nao pode alterar o custo total legado');
+    assert.strictEqual(transporteLegado.custo_total, 19.7546);
+
+    const listaLegada = await repo.listComposicoes(db, { quick: 1, fonte: 'USUARIO', limit: 50, offset: 0 });
+    const linhaLegada = listaLegada.items.find(item => item.codigo === 'USUARIO.LEGADO');
+    assert(linhaLegada, 'a composicao legada deve permanecer visivel na listagem');
+    assert.strictEqual(linhaLegada.custo_unitario, 194.2367, 'a linha deve usar o mesmo custo corrigido exibido no detalhe');
 
     const original = {
       id_composicao: '401',
