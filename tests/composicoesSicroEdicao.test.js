@@ -63,9 +63,14 @@ async function run() {
         fit REAL, dmt REAL, ordem INTEGER, tenant_override_action TEXT,
         tenant_override_status TEXT, tenant_created_at TEXT, tenant_updated_at TEXT
       );
+      CREATE TABLE tenant_referential_overrides (
+        id_override INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT, catalog_table TEXT,
+        catalog_id INTEGER, tenant_table TEXT, tenant_rowid INTEGER, action TEXT,
+        impact_policy TEXT, payload_json TEXT, status TEXT, updated_at TEXT
+      );
       INSERT INTO catalog.composicoes VALUES
         (401,'4011399','SICRO','PRODUCAO_HORARIA','Macadame betuminoso','m3',NULL,
-         '04/2026','DF','Ativo',190.66,0,15,'m3','Ativo',NULL,1323.7112,88.2474,0,182.5002);
+         '04/2026','DF','Ativo',185.2265,0.11562,15,'m3','Ativo',NULL,1393.9306,92.9287,10.7444,177.7);
       INSERT INTO catalog.composicoes_secoes VALUES
         (1,401,'A','Equipamentos',1000,0), (2,401,'B','Mao de Obra',393.9306,1),
         (3,401,'C','Material',0,2), (4,401,'D','Atividades Auxiliares',74.0269,3),
@@ -92,7 +97,14 @@ async function run() {
         (4,1,'INSUMO','D1','Auxiliar','m3',1,74.0269,74.0269,3,'create','active'),
         (5,1,'INSUMO','T1','Tempo fixo','t',1,7.5265,7.5265,4,'create','active'),
         (6,1,'INSUMO','F1','Transporte editado','tkm',1.97546,10,19.7546,5,'create','active');
+      INSERT INTO tenant_referential_overrides
+        (domain,catalog_table,catalog_id,tenant_table,tenant_rowid,action,impact_policy,status)
+        VALUES ('composicoes','composicoes',401,'tenant_composicoes',1,'update','preserve','active');
     `);
+
+    const referenciaAntes = await repo.getComposicao(db, 401);
+    assert.strictEqual(referenciaAntes.fonte, 'SICRO', 'uma copia USUARIO legada nao pode substituir a referencia');
+    assert.strictEqual(referenciaAntes.custo_unitario, 185.2265, 'o custo oficial deve permanecer inalterado');
 
     const legado = await repo.getComposicao(db, 'tenant:1');
     assert.strictEqual(legado.custo_unitario_execucao, 92.9287, 'a leitura deve recuperar o divisor de uma edicao antiga achatada');
@@ -118,7 +130,7 @@ async function run() {
       uf_referencia: 'DF',
       producao_equipe: 15,
       unidade_producao: 'm3',
-      fic: 0,
+      fic: 0.11562,
       situacao: 'Ativo',
       secoes: [],
       itens: [],
@@ -145,7 +157,7 @@ async function run() {
     assert.strictEqual(result.composicao.producao_equipe, 15);
     assert.strictEqual(result.composicao.custo_horario_execucao, 1393.9306);
     assert.strictEqual(result.composicao.custo_unitario_execucao, 92.9287);
-    assert.strictEqual(result.composicao.custo_unitario, 372.0281);
+    assert.strictEqual(result.composicao.custo_unitario, 382.7725);
     assert.strictEqual(result.composicao.secoes.length, 6);
     const transporte = result.composicao.secoes.find(secao => secao.letra_secao === 'F');
     assert(transporte, 'a secao F deve ser materializada na composicao do usuario');
@@ -153,6 +165,19 @@ async function run() {
     assert.strictEqual(transporte.itens[0].preco_unitario, 10);
     assert.strictEqual(transporte.itens[0].custo_total, 197.546);
     assert.strictEqual(transporte.itens[0].cod_transp_ln, '5914359');
+    const copiaPersistida = await new Promise((resolve, reject) => db.get(
+      'SELECT tenant_catalog_id, tenant_override_action FROM tenant_composicoes WHERE rowid=?',
+      [Number(String(result.id_resultado).replace('tenant:', ''))],
+      (error, row) => (error ? reject(error) : resolve(row)),
+    ));
+    assert.strictEqual(copiaPersistida.tenant_catalog_id, 401, 'a copia deve preservar a proveniencia do catalogo');
+    assert.strictEqual(copiaPersistida.tenant_override_action, 'create', 'a copia nao pode ser gravada como substituicao');
+    const referenciaDepois = await repo.getComposicao(db, 401);
+    assert.strictEqual(referenciaDepois.fonte, 'SICRO');
+    assert.strictEqual(referenciaDepois.custo_unitario, 185.2265, 'editar a DMT nao pode alterar nem ocultar a referencia');
+    const listaAposCopia = await repo.listComposicoes(db, { quick: 1, q: '4011399', limit: 50, offset: 0 });
+    assert(listaAposCopia.items.some(item => item._tenant_scope === 'catalog' && item.codigo === '4011399'),
+      'a referencia deve continuar visivel ao lado da composicao USUARIO');
 
     const itensReeditados = itens.map(item => (
       item._secao === 'F' ? { ...item, preco_unitario: 20, dmt: 20 } : item
@@ -170,7 +195,7 @@ async function run() {
     const transporteReeditado = reeditado.composicao.secoes.find(secao => secao.letra_secao === 'F');
     assert.strictEqual(transporteReeditado.itens[0].dmt, 20);
     assert.strictEqual(transporteReeditado.itens[0].custo_total, 790.184);
-    assert.strictEqual(reeditado.composicao.custo_unitario, 964.6661);
+    assert.strictEqual(reeditado.composicao.custo_unitario, 975.4105);
   } finally {
     await close(db);
   }
