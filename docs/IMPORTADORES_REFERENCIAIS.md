@@ -61,6 +61,9 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - A abertura do editor reutiliza a memoria ja carregada e os itens das secoes sao buscados em lote. No salvamento web, a resposta completa da composicao e opcional, evitando uma releitura que a interface nao utiliza.
 - O custo do FIC da copia usa a relacao entre `custo_fic` e `custo_unitario_execucao` registrada na composicao SICRO de origem. Alterar a producao e depois restaura-la deve recuperar o FIC e o custo unitario oficiais, sem substituir essa memoria por uma formula generica.
 - A edicao de uma referencia oficial abre diretamente a copia `USUARIO`, com politica de preservacao. A consulta recursiva de impacto fica reservada a composicoes do usuario que possam ser atualizadas no proprio tenant; nessas consultas nao se pesquisa o catalogo, pois o catalogo nunca referencia uma composicao criada pelo usuario.
+- O formato e uma metodologia de calculo e fica imutavel depois que a composicao e criada. A troca direta entre `PRODUCAO_HORARIA` e `UNITARIO` e rejeitada pelo frontend e pelo backend.
+- A conversao de producao horaria para unitaria sempre cria outra composicao `USUARIO`, transforma A e B em contribuicoes divididas pela producao, preserva C-F como parcelas unitarias, materializa o FIC e valida a igualdade do custo antes da gravacao.
+- A conversao de unitaria para producao horaria exige producao e classificacao explicita de todos os itens nas secoes A-F. Se uma troca antiga deixou secoes SICRO armazenadas, a conversao oferece restaurar essa memoria em uma nova composicao, sem alterar o registro de origem.
 - O teste de regressao e `tests/composicoesSicroEdicao.test.js`.
 
 ## SEINFRA/CE

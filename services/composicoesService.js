@@ -25,6 +25,13 @@ async function updateComposicao(db, id, data, options = {}) {
     throw err;
   }
   const current = await repo.getComposicao(readDb, id);
+  const formatoAtual = String(current?.formato || 'UNITARIO').toUpperCase() === 'PRODUCAO_HORARIA' ? 'PRODUCAO_HORARIA' : 'UNITARIO';
+  const formatoNovo = String(data?.formato || current?.formato || 'UNITARIO').toUpperCase() === 'PRODUCAO_HORARIA' ? 'PRODUCAO_HORARIA' : 'UNITARIO';
+  if (formatoAtual !== formatoNovo) {
+    const err = new Error('O formato de uma composicao existente nao pode ser alterado diretamente. Use a conversao de formato.');
+    err.status = 409;
+    throw err;
+  }
   return repo.updateComposicaoDirect(db, id, { ...data, _current: current });
 }
 
@@ -85,6 +92,21 @@ async function editarComVinculo(db, id, payload = {}, options = {}) {
   return result;
 }
 
+async function converterFormato(db, id, payload = {}, options = {}) {
+  const destino = String(payload.formato_destino || '').trim().toUpperCase();
+  if (!['UNITARIO', 'PRODUCAO_HORARIA'].includes(destino)) {
+    throw badRequest('Formato de destino invalido.');
+  }
+  const readDb = options.readDb || db;
+  const current = await repo.getComposicao(readDb, id).catch(() => null);
+  if (!current) {
+    const err = new Error('Composicao nao encontrada.');
+    err.status = 404;
+    throw err;
+  }
+  return repo.converterFormato(db, id, payload, { readDb, current });
+}
+
 async function excluirComVinculo(db, id, payload = {}, options = {}) {
   const acao = payload.acao || 'desvincular';
   if (!['desvincular', 'remover'].includes(acao)) throw badRequest('Acao de exclusao invalida.');
@@ -114,6 +136,7 @@ module.exports = {
   updateComposicao,
   deleteComposicao,
   editarComVinculo,
+  converterFormato,
   excluirComVinculo,
   getComposicao,
 };

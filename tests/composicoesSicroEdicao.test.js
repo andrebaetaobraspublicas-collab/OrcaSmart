@@ -184,6 +184,48 @@ async function run() {
     assert.strictEqual(transporte.itens[0].preco_unitario, 10);
     assert.strictEqual(transporte.itens[0].custo_total, 197.546);
     assert.strictEqual(transporte.itens[0].cod_transp_ln, '5914359');
+
+    await assert.rejects(() => repo.editarComVinculo(db, result.id_resultado, {
+      dados: { ...result.composicao, formato: 'UNITARIO' },
+      itens,
+      acao_orcamentos: 'manter',
+    }, {
+      current: result.composicao,
+      impacto: { composicoes_auxiliares: [], orcamentos: [] },
+    }), /nao pode ser alterado diretamente/i, 'a troca direta de metodologia deve ser bloqueada');
+
+    const previewUnitario = await repo.converterFormato(db, result.id_resultado, {
+      formato_destino: 'UNITARIO', dry_run: true,
+    }, { current: result.composicao });
+    assert.strictEqual(previewUnitario.custo_origem, 382.7725);
+    assert.strictEqual(previewUnitario.custo_destino, 382.7725,
+      'a conversao unitaria deve preservar o custo da memoria de producao');
+    assert(previewUnitario.itens.some(item => /FIC/.test(item.descricao)),
+      'o FIC deve permanecer auditavel como parcela unitaria');
+
+    const convertidoUnitario = await repo.converterFormato(db, result.id_resultado, {
+      formato_destino: 'UNITARIO', dry_run: false,
+    }, { current: result.composicao });
+    assert.strictEqual(convertidoUnitario.criou_nova, true, 'a conversao deve criar uma nova composicao');
+    assert.strictEqual(convertidoUnitario.composicao.formato, 'UNITARIO');
+    assert.strictEqual(convertidoUnitario.composicao.custo_unitario, 382.7725);
+    const origemPreservada = await repo.getComposicao(db, result.id_resultado);
+    assert.strictEqual(origemPreservada.formato, 'PRODUCAO_HORARIA');
+    assert.strictEqual(origemPreservada.custo_unitario, 382.7725, 'a origem nao pode ser alterada pela conversao');
+
+    const planoRestauracao = repo.planoConversaoFormato({
+      ...result.composicao,
+      formato: 'UNITARIO',
+      custo_unitario: 2523.79,
+    }, {
+      formato_destino: 'PRODUCAO_HORARIA',
+      usar_memoria_existente: true,
+      producao_equipe: 15,
+    });
+    assert.strictEqual(planoRestauracao.restaurou_memoria, true,
+      'uma composicao hibrida deve recuperar as secoes A-F ainda armazenadas');
+    assert.strictEqual(planoRestauracao.custo_destino, 382.7725,
+      'a restauracao deve abandonar a soma unitaria incorreta e retomar a formula SICRO');
     const copiaPersistida = await new Promise((resolve, reject) => db.get(
       'SELECT tenant_catalog_id, tenant_override_action FROM tenant_composicoes WHERE rowid=?',
       [Number(String(result.id_resultado).replace('tenant:', ''))],
