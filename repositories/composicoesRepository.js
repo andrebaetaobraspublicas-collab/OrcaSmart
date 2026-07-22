@@ -2010,8 +2010,187 @@ async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
   return rounded;
 }
 
+function formatoNormalizado(formato) {
+  const valor = String(formato || '').trim().toUpperCase();
+  return valor === 'PRODUCAO_HORARIA' ? 'PRODUCAO_HORARIA' : 'UNITARIO';
+}
+
+function itensDasSecoes(comp = {}) {
+  return (comp.secoes || []).flatMap(secao => (secao.itens || []).map(item => ({
+    ...item,
+    tipo_item: item.tipo_item || ({ A: 'EQUIPAMENTO', B: 'MO' }[secao.letra_secao] || 'INSUMO'),
+    coeficiente: item.quantidade ?? item.coeficiente ?? 0,
+    preco_unitario: secao.letra_secao === 'A'
+      ? (item.custo_hp ?? item.preco_unitario ?? 0)
+      : (item.preco_unitario ?? 0),
+    _secao: secao.letra_secao,
+    _secao_nome: secao.nome_secao || NOMES_SECOES_SICRO[secao.letra_secao],
+  })));
+}
+
+function planoConversaoFormato(comp = {}, payload = {}) {
+  const origem = formatoNormalizado(comp.formato);
+  const destino = formatoNormalizado(payload.formato_destino);
+  if (origem === destino) {
+    const err = new Error('A composicao ja possui o formato solicitado.');
+    err.status = 400;
+    throw err;
+  }
+
+  if (origem === 'PRODUCAO_HORARIA') {
+    const producao = toNum(comp.producao_equipe, 0);
+    if (!(producao > 0)) {
+      const err = new Error('A producao da equipe deve ser maior que zero para converter a composicao em unitaria.');
+      err.status = 400;
+      throw err;
+    }
+    const itensOrigem = itensDasSecoes(comp);
+    if (!itensOrigem.length) {
+      const err = new Error('A memoria A-F da composicao nao esta disponivel para conversao.');
+      err.status = 409;
+      throw err;
+    }
+    const itens = itensOrigem.map(item => {
+      const letra = String(item._secao || '').toUpperCase();
+      const custoSecao = custoItemSecaoSicro(item);
+      const contribuicao = ['A', 'B'].includes(letra) ? custoSecao / producao : custoSecao;
+      return {
+        tipo_item: 'INSUMO',
+        codigo_item: null,
+        descricao: `[${letra}] ${item.descricao || item.codigo_item || 'Item convertido'}${item.codigo_item ? ` (origem ${item.codigo_item})` : ''}`,
+        unidade: comp.unidade || item.unidade || null,
+        coeficiente: 1,
+        preco_unitario: Number(contribuicao.toFixed(4)),
+        custo_parcial: Number(contribuicao.toFixed(4)),
+      };
+    });
+    if (toNum(comp.custo_fic, 0) !== 0) {
+      itens.push({
+        tipo_item: 'INSUMO', codigo_item: null,
+        descricao: 'FIC da composicao de producao horaria convertida',
+        unidade: comp.unidade || null, coeficiente: 1,
+        preco_unitario: Number(toNum(comp.custo_fic, 0).toFixed(4)),
+        custo_parcial: Number(toNum(comp.custo_fic, 0).toFixed(4)),
+      });
+    }
+    const alvo = Number(toNum(comp.custo_unitario, 0).toFixed(4));
+    const soma = Number(itens.reduce((total, item) => total + toNum(item.custo_parcial, 0), 0).toFixed(4));
+    const ajuste = Number((alvo - soma).toFixed(4));
+    if (Math.abs(ajuste) >= 0.0001) {
+      itens.push({
+        tipo_item: 'INSUMO', codigo_item: null, descricao: 'Ajuste de arredondamento da conversao',
+        unidade: comp.unidade || null, coeficiente: 1, preco_unitario: ajuste, custo_parcial: ajuste,
+      });
+    }
+    return {
+      origem, destino, itens, custo_origem: alvo,
+      custo_destino: Number(itens.reduce((total, item) => total + toNum(item.custo_parcial, 0), 0).toFixed(4)),
+      producao_origem: producao,
+      restaurou_memoria: false,
+      dados: {
+        ...comp, formato: destino, fonte: 'USUARIO', fic: null, producao_equipe: null,
+        unidade_producao: null, custo_horario_execucao: null, custo_unitario_execucao: null,
+        custo_fic: null, subtotal_sicro: null,
+      },
+    };
+  }
+
+  const producao = toNum(payload.producao_equipe ?? comp.producao_equipe, 0);
+  if (!(producao > 0)) {
+    const err = new Error('Informe uma producao da equipe maior que zero.');
+    err.status = 400;
+    throw err;
+  }
+  const memoriaExistente = itensDasSecoes(comp);
+  let itens = [];
+  let restaurouMemoria = false;
+  if (memoriaExistente.length && payload.usar_memoria_existente !== false) {
+    itens = memoriaExistente;
+    restaurouMemoria = true;
+  } else {
+    const origemItens = comp.itens || [];
+    const mapa = Array.isArray(payload.mapeamento) ? payload.mapeamento : [];
+    if (!origemItens.length || mapa.length !== origemItens.length) {
+      const err = new Error('Classifique todos os itens nas secoes A-F antes de criar o demonstrativo.');
+      err.status = 400;
+      throw err;
+    }
+    itens = origemItens.map((item, indice) => {
+      const config = mapa[indice] || {};
+      const letra = String(config.secao || '').trim().toUpperCase();
+      if (!NOMES_SECOES_SICRO[letra]) {
+        const err = new Error(`Secao invalida no item ${indice + 1}.`);
+        err.status = 400;
+        throw err;
+      }
+      return {
+        ...item,
+        coeficiente: item.coeficiente ?? 0,
+        _secao: letra,
+        _secao_nome: NOMES_SECOES_SICRO[letra],
+        util_operativa: letra === 'A' ? toNum(config.util_operativa, 1) : null,
+        util_improdutiva: letra === 'A' ? toNum(config.util_improdutiva, 0) : null,
+        custo_hp: letra === 'A' ? toNum(item.preco_unitario, 0) : null,
+        custo_hi: letra === 'A' ? toNum(config.custo_hi, 0) : null,
+        dmt: letra === 'F' && config.dmt !== '' && config.dmt !== null && config.dmt !== undefined
+          ? toNum(config.dmt, 0) : null,
+      };
+    });
+  }
+  const totais = {};
+  for (const letra of Object.keys(NOMES_SECOES_SICRO)) {
+    totais[letra] = Number(itens.filter(item => item._secao === letra)
+      .reduce((total, item) => total + custoItemSecaoSicro(item), 0).toFixed(4));
+  }
+  const dados = {
+    ...comp,
+    formato: destino,
+    fonte: 'USUARIO',
+    producao_equipe: producao,
+    unidade_producao: payload.unidade_producao || comp.unidade_producao || comp.unidade,
+    fic: payload.fic === undefined ? (comp.fic ?? 0) : toNum(payload.fic, 0),
+  };
+  aplicarResumoSicro(dados, totais, restaurouMemoria ? comp : {});
+  return {
+    origem, destino, itens, dados,
+    custo_origem: Number(toNum(comp.custo_unitario, 0).toFixed(4)),
+    custo_destino: dados.custo_unitario,
+    producao_destino: producao,
+    restaurou_memoria: restaurouMemoria,
+    totais_secoes: totais,
+  };
+}
+
+async function converterFormato(db, idComposicao, payload = {}, options = {}) {
+  if (!(await hasTenantComposicaoOverrides(db))) {
+    const err = new Error('A conversao de formato exige o armazenamento de composicoes do usuario.');
+    err.status = 409;
+    throw err;
+  }
+  const readDb = options.readDb || db;
+  const comp = options.current || await getComposicao(readDb, idComposicao);
+  if (!comp) return null;
+  const plano = planoConversaoFormato(comp, payload);
+  if (payload.dry_run) return { ...plano, itens: plano.itens.map(item => ({ ...item })) };
+  const resultado = await editarComVinculo(db, idComposicao, {
+    dados: {
+      ...plano.dados,
+      codigo: payload.codigo || comp.codigo,
+      descricao: payload.descricao || comp.descricao,
+      observacoes: `${String(comp.observacoes || '').trim()}${comp.observacoes ? '\n' : ''}Convertida de ${plano.origem} para ${plano.destino}. Composicao de origem: ${comp.codigo || idComposicao}.`,
+    },
+    itens: plano.itens,
+    acao_orcamentos: 'manter',
+    retornar_composicao: true,
+    forcar_nova: true,
+    permitir_mudanca_formato: true,
+  }, { readDb, current: comp, impacto: { composicoes_auxiliares: [], orcamentos: [], tem_impacto: false } });
+  return { ...resultado, conversao: { ...plano, itens: undefined, dados: undefined } };
+}
+
 async function editarComVinculo(db, idComposicao, {
   dados = {}, itens = [], acao_orcamentos = 'manter', retornar_composicao = true,
+  forcar_nova = false, permitir_mudanca_formato = false,
 } = {}, options = {}) {
   if (await hasTenantComposicaoOverrides(db)) {
     const readDb = options.readDb || db;
@@ -2021,7 +2200,14 @@ async function editarComVinculo(db, idComposicao, {
     const temImpacto = (impacto?.composicoes_auxiliares || []).length > 0 || (impacto?.orcamentos || []).length > 0;
     const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
     const scoped = scopedComposicaoId(idComposicao);
-    const criarNova = scoped.scope === 'catalog' || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
+    const formatoOrigem = formatoNormalizado(compOrig.formato);
+    const formatoDestino = formatoNormalizado(dados.formato || compOrig.formato);
+    if (formatoOrigem !== formatoDestino && !permitir_mudanca_formato) {
+      const err = new Error('O formato de uma composicao existente nao pode ser alterado diretamente. Use a conversao de formato.');
+      err.status = 409;
+      throw err;
+    }
+    const criarNova = !!forcar_nova || scoped.scope === 'catalog' || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
     const edicaoSicro = String(dados.formato || compOrig.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
       && ((compOrig.secoes || []).length > 0 || itens.some(item => item && (item._secao || item.letra_secao)));
     const baseFic = edicaoSicro ? await baseFicSicro(readDb, compOrig) : null;
@@ -2093,11 +2279,17 @@ async function editarComVinculo(db, idComposicao, {
 
   const compOrig = await one(db, 'SELECT * FROM composicoes WHERE id_composicao = ?', [idComposicao]);
   if (!compOrig) return null;
+  if (formatoNormalizado(compOrig.formato) !== formatoNormalizado(dados.formato || compOrig.formato)
+      && !permitir_mudanca_formato) {
+    const err = new Error('O formato de uma composicao existente nao pode ser alterado diretamente. Use a conversao de formato.');
+    err.status = 409;
+    throw err;
+  }
   const impacto = await impactoComposicao(db, idComposicao);
   const parentIds = (impacto?.composicoes_auxiliares || []).map(row => row.id_composicao);
   const temImpacto = parentIds.length > 0 || (impacto?.orcamentos || []).length > 0;
   const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
-  const criarNova = referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
+  const criarNova = !!forcar_nova || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
   let idResultado = Number(idComposicao);
   let codNovo = null;
 
@@ -2594,6 +2786,8 @@ module.exports = {
   deleteComposicaoDirect,
   impactoComposicao,
   editarComVinculo,
+  converterFormato,
+  planoConversaoFormato,
   excluirComVinculo,
   excluirEmLote,
   createItem,
