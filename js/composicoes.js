@@ -568,7 +568,7 @@ Router.register('composicoes', async () => {
           </tr>`);
           break;
         case 'F':
-          headers = ['Código','Descrição','Qtd.','Unid.','DMT-LN','DMT-RP','DMT-P','FIT','Total'];
+          headers = ['Código','Descrição','Qtd.','Unid.','DMT-LN','DMT-RP','DMT-P','Dist. (km)','FIT','Total'];
           rows = sec.itens.map(it=>`<tr>
             <td>${it.codigo_item||'—'}</td><td>${Utils.trunc(it.descricao||'',40)}</td>
             <td style="text-align:right">${Utils.num(it.quantidade,6)}</td>
@@ -576,6 +576,7 @@ Router.register('composicoes', async () => {
             <td class="text-3">${it.cod_transp_ln||'—'}</td>
             <td class="text-3">${it.cod_transp_rp||'—'}</td>
             <td class="text-3">${it.cod_transp_p||'—'}</td>
+            <td style="text-align:right">${it.dmt != null ? Utils.num(it.dmt,4) : '—'}</td>
             <td style="text-align:right">${it.fit != null ? Utils.num(it.fit,4) : '—'}</td>
             <td style="text-align:right;font-weight:600">${fmtItemValor(it.custo_total)}</td>
           </tr>`);
@@ -668,7 +669,15 @@ Router.register('composicoes', async () => {
                            : (it.preco_unitario || 0),
             util_operativa:  it.util_operativa  ?? null,
             util_improdutiva:it.util_improdutiva ?? null,
+            custo_hp:      it.custo_hp   ?? null,
             custo_hi:      it.custo_hi   || 0,
+            custo_total:   it.custo_total ?? null,
+            cod_transporte:it.cod_transporte || null,
+            cod_transp_ln: it.cod_transp_ln || null,
+            cod_transp_rp: it.cod_transp_rp || null,
+            cod_transp_p:  it.cod_transp_p || null,
+            fit:           it.fit ?? null,
+            dmt:           it.dmt ?? null,
             _secao:        sec.letra_secao,
             _secao_nome:   sec.nome_secao || sec.letra_secao,
           });
@@ -885,6 +894,7 @@ Router.register('composicoes', async () => {
 
       // Para equipamentos SICRO: mostrar util_operativa editável
       const isEquipSICRO = temSecao && it._secao === 'A';
+      const isTransporteSICRO = temSecao && it._secao === 'F';
       const coefLabel = isEquipSICRO ? 'Qtd.' : 'Coef.';
       const utilCell = isEquipSICRO
         ? `<td style="padding:4px 4px;text-align:right">
@@ -894,7 +904,14 @@ Router.register('composicoes', async () => {
                style="width:62px;border:1px solid var(--c-border);border-radius:var(--radius-sm);
                       padding:3px 5px;text-align:right;font-family:monospace;font-size:.78rem">
            </td>`
-        : '<td></td>';
+        : isTransporteSICRO
+          ? `<td style="padding:4px 4px;text-align:right">
+               <input type="number" step="any" min="0" class="fcDmtInput" data-idx="${idx}"
+                 value="${it.dmt ?? ''}" title="Distância média de transporte (km)"
+                 style="width:72px;border:1px solid var(--c-border);border-radius:var(--radius-sm);
+                        padding:3px 5px;text-align:right;font-family:monospace;font-size:.78rem">
+             </td>`
+          : '<td></td>';
 
       rows += `<tr style="border-bottom:1px solid var(--c-border)">
         <td style="padding:5px 8px"><span class="badge ${b.cls}" style="font-size:.62rem">${b.label}</span></td>
@@ -937,7 +954,7 @@ Router.register('composicoes', async () => {
               <th style="padding:7px 8px;text-align:left;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2)">Descrição</th>
               <th style="padding:7px 8px;text-align:center;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2);width:50px">Unid.</th>
               <th style="padding:7px 8px;text-align:right;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2);width:85px">${temSecao?'Qtd./Coef.':'Coef.'}</th>
-              ${temSecao ? '<th style="padding:7px 8px;text-align:right;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2);width:70px">Util. Op.</th>' : '<th></th>'}
+              ${temSecao ? '<th style="padding:7px 8px;text-align:right;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2);width:78px">Util./DMT</th>' : '<th></th>'}
               <th style="padding:7px 8px;text-align:right;font-size:.68rem;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--c-border-2);width:100px">Preço (R$)</th>
               <th style="width:32px;border-bottom:1px solid var(--c-border-2)"></th>
             </tr>
@@ -956,6 +973,12 @@ Router.register('composicoes', async () => {
     document.querySelectorAll('.fcUtilInput').forEach(inp => {
       inp.addEventListener('change', e => {
         _formItens[parseInt(e.target.dataset.idx)].util_operativa = parseFloat(e.target.value) ?? 1;
+      });
+    });
+    document.querySelectorAll('.fcDmtInput').forEach(inp => {
+      inp.addEventListener('change', e => {
+        const valor = parseFloat(e.target.value);
+        _formItens[parseInt(e.target.dataset.idx)].dmt = Number.isFinite(valor) ? valor : null;
       });
     });
     // Bind preço unitário (editável)
@@ -1378,6 +1401,11 @@ Router.register('composicoes', async () => {
       const idx = parseInt(inp.dataset.idx);
       if (_formItens[idx]) _formItens[idx].util_operativa = parseFloat(inp.value) ?? 1;
     });
+    document.querySelectorAll('.fcDmtInput').forEach(inp => {
+      const idx = parseInt(inp.dataset.idx);
+      const valor = parseFloat(inp.value);
+      if (_formItens[idx]) _formItens[idx].dmt = Number.isFinite(valor) ? valor : null;
+    });
     const itens = _formItens.map((it, i) => ({
       tipo_item:       it.tipo_item || 'INSUMO',
       codigo_item:     it.codigo_item,
@@ -1388,8 +1416,17 @@ Router.register('composicoes', async () => {
       custo_parcial:   (parseFloat(it.coeficiente)||0) * (parseFloat(it.preco_unitario)||0),
       util_operativa:  it.util_operativa ?? null,
       util_improdutiva:it.util_improdutiva ?? null,
+      custo_hp:        it._secao === 'A' ? (parseFloat(it.preco_unitario) || 0) : (it.custo_hp ?? null),
       custo_hi:        it.custo_hi ?? null,
+      custo_total:     it.custo_total ?? null,
+      cod_transporte:  it.cod_transporte || null,
+      cod_transp_ln:   it.cod_transp_ln || null,
+      cod_transp_rp:   it.cod_transp_rp || null,
+      cod_transp_p:    it.cod_transp_p || null,
+      fit:             it.fit ?? null,
+      dmt:             it.dmt ?? null,
       _secao:          it._secao || null,
+      _secao_nome:     it._secao_nome || null,
       ordem:           i,
       id_item:         it.id_item,
     }));
