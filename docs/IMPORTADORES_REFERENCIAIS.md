@@ -55,6 +55,7 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - O custo horario de execucao corresponde a soma das secoes A e B. O custo unitario de execucao divide esse valor pela `producao_equipe` antes da soma de FIC e das secoes C-F.
 - Na secao F, a DMT editada e persistida e multiplica a quantidade e o custo unitario de transporte; sem DMT separada, permanece compativel com o valor unitario ja consolidado informado no item.
 - Registros antigos que ficaram apenas com itens achatados recuperam os valores editados ao abrir o detalhe; ao salvar novamente, as secoes proprias sao materializadas no tenant.
+- Quando a secao F legada herdada do catalogo tem os codigos de transporte e o valor informado no antigo campo de preco, esse valor e apresentado como DMT. A conversao preserva o custo total e a listagem rapida usa o mesmo custo recuperado mostrado no detalhe.
 - O teste de regressao e `tests/composicoesSicroEdicao.test.js`.
 
 ## SEINFRA/CE
