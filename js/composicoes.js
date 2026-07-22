@@ -15,6 +15,7 @@ Object.assign(API, {
     impacto:          (id)     => API.get(`/composicoes/${id}/impacto`),
     excluirComVinculo:(id,d)   => API.post(`/composicoes/${id}/excluir-com-vinculo`, d),
     editarComVinculo: (id,d)   => API.post(`/composicoes/${id}/editar-com-vinculo`, d),
+    converterFormato: (id,d)   => API.post(`/composicoes/${id}/converter-formato`, d),
     itens: {
       create: (cid,d) => API.post(`/composicoes/${cid}/itens`, d),
       update: (id,d)  => API.put(`/composicoes/itens/${id}`, d),
@@ -728,10 +729,14 @@ Router.register('composicoes', async () => {
           </div>
           <div class="form-group">
             <label class="form-label">Formato</label>
-            <select class="form-control" id="fc_fmt">
+            <select class="form-control" id="fc_fmt" ${id ? 'disabled' : ''}>
               <option value="UNITARIO"         ${ (c.formato||'UNITARIO')==='UNITARIO'?'selected':''}>📋 Unitário (SINAPI)</option>
               <option value="PRODUCAO_HORARIA" ${c.formato==='PRODUCAO_HORARIA'?'selected':''}>⏱️ Demonstrativo de Produção (SICRO)</option>
             </select>
+            ${id ? `<button type="button" class="btn btn-ghost btn-sm" id="fcConverterFormato" style="margin-top:6px">
+              Converter para outro formato…
+            </button>
+            <div class="text-xs text-3" style="margin-top:4px">O formato é uma metodologia de cálculo e não pode ser trocado diretamente.</div>` : ''}
           </div>
           <div class="form-group">
             <label class="form-label">Grupo</label>
@@ -835,6 +840,7 @@ Router.register('composicoes', async () => {
       document.getElementById('fc_sicro_fields').style.display =
         e.target.value === 'PRODUCAO_HORARIA' ? '' : 'none';
     });
+    document.getElementById('fcConverterFormato')?.addEventListener('click', () => abrirConversaoFormato(id, c));
     document.getElementById('btnSalvComp').addEventListener('click', async () => {
       if (window._formSaveCallback) {
         // Modo callback — acionado por iniciarEdicao()
@@ -1372,6 +1378,133 @@ Router.register('composicoes', async () => {
     renderFormItens();
     _fecharBuscaForm();
     Toast.info(`"${Utils.trunc(ins.descricao, 40)}" adicionado.`);
+  }
+
+  async function abrirConversaoFormato(id, comp) {
+    if (!id || !comp) return;
+    window._formSaveCallback = null;
+    const origem = String(comp.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
+      ? 'PRODUCAO_HORARIA' : 'UNITARIO';
+    const destino = origem === 'PRODUCAO_HORARIA' ? 'UNITARIO' : 'PRODUCAO_HORARIA';
+    const possuiMemoriaSicro = Array.isArray(comp.secoes) && comp.secoes.length > 0;
+
+    if (origem === 'PRODUCAO_HORARIA' || possuiMemoriaSicro) {
+      const payload = {
+        formato_destino: destino,
+        dry_run: true,
+        usar_memoria_existente: possuiMemoriaSicro,
+        producao_equipe: comp.producao_equipe,
+        unidade_producao: comp.unidade_producao || comp.unidade,
+        fic: comp.fic,
+      };
+      try {
+        const preview = await API.composicoes.converterFormato(id, payload);
+        mostrarPreviewConversao(id, comp, payload, preview);
+      } catch (e) { Toast.error(e.message); }
+      return;
+    }
+
+    const itens = comp.itens || [];
+    Modal.open({
+      title: 'Converter composição unitária para produção horária',
+      size: 'modal-xl',
+      closeOnBackdrop: false,
+      body: `
+        <div class="alert alert-warning" style="margin-bottom:14px">
+          Esta conversão exige dados de engenharia. Informe a produção e classifique todos os itens nas seções A–F.
+          A composição atual será preservada.
+        </div>
+        <div class="form-grid form-grid-3" style="margin-bottom:14px">
+          <div class="form-group"><label class="form-label">Produção da equipe *</label>
+            <input class="form-control" id="convProd" type="number" min="0" step="any"></div>
+          <div class="form-group"><label class="form-label">Unidade de produção</label>
+            <input class="form-control" id="convProdUnd" value="${Utils.esc(comp.unidade || '')}"></div>
+          <div class="form-group"><label class="form-label">FIC</label>
+            <input class="form-control" id="convFic" type="number" min="0" step="any" value="0"></div>
+        </div>
+        <div style="border:1px solid var(--c-border);border-radius:8px;overflow:auto;max-height:430px">
+          <table style="width:100%;font-size:.78rem">
+            <thead><tr><th>Item</th><th>Coef.</th><th>Seção *</th><th>Util. op.</th><th>Util. imp.</th><th>DMT</th></tr></thead>
+            <tbody>${itens.map((item, indice) => {
+              const tipo = String(item.tipo_item || '').toUpperCase();
+              const padrao = tipo === 'EQUIPAMENTO' ? 'A' : (tipo === 'MO' ? 'B' : 'C');
+              return `<tr data-conv-idx="${indice}">
+                <td><strong>${Utils.esc(item.codigo_item || '—')}</strong><br>${Utils.esc(Utils.trunc(item.descricao || '', 55))}</td>
+                <td>${Utils.num(item.coeficiente || 0, 6)}</td>
+                <td><select class="form-control convSecao" data-idx="${indice}">
+                  ${Object.entries({A:'A — Equipamentos',B:'B — Mão de obra',C:'C — Material',D:'D — Atividades auxiliares',E:'E — Tempo fixo',F:'F — Transporte'})
+                    .map(([letra, nome]) => `<option value="${letra}" ${letra===padrao?'selected':''}>${nome}</option>`).join('')}
+                </select></td>
+                <td><input class="form-control convUo" data-idx="${indice}" type="number" min="0" step="any" value="1"></td>
+                <td><input class="form-control convUi" data-idx="${indice}" type="number" min="0" step="any" value="0"></td>
+                <td><input class="form-control convDmt" data-idx="${indice}" type="number" min="0" step="any"></td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="btnRevisarConversao">Revisar conversão</button>`,
+    });
+    document.getElementById('btnRevisarConversao').addEventListener('click', async () => {
+      const producao = parseFloat(document.getElementById('convProd').value);
+      if (!(producao > 0)) { Toast.warning('Informe uma produção maior que zero.'); return; }
+      const mapeamento = itens.map((_, indice) => ({
+        secao: document.querySelector(`.convSecao[data-idx="${indice}"]`)?.value,
+        util_operativa: document.querySelector(`.convUo[data-idx="${indice}"]`)?.value,
+        util_improdutiva: document.querySelector(`.convUi[data-idx="${indice}"]`)?.value,
+        dmt: document.querySelector(`.convDmt[data-idx="${indice}"]`)?.value,
+      }));
+      const payload = {
+        formato_destino: 'PRODUCAO_HORARIA', dry_run: true,
+        producao_equipe: producao,
+        unidade_producao: document.getElementById('convProdUnd').value.trim() || comp.unidade,
+        fic: parseFloat(document.getElementById('convFic').value) || 0,
+        usar_memoria_existente: false,
+        mapeamento,
+      };
+      try {
+        const preview = await API.composicoes.converterFormato(id, payload);
+        mostrarPreviewConversao(id, comp, payload, preview);
+      } catch (e) { Toast.error(e.message); }
+    });
+  }
+
+  function mostrarPreviewConversao(id, comp, payload, preview) {
+    const destinoLabel = preview.destino === 'UNITARIO' ? 'Unitária' : 'Produção horária';
+    const restauracao = preview.restaurou_memoria
+      ? `<div class="alert alert-info" style="margin-bottom:14px">A memória SICRO A–F ainda existente será restaurada na nova composição.</div>` : '';
+    const secoes = preview.totais_secoes || {};
+    Modal.open({
+      title: `Revisar conversão para ${destinoLabel}`,
+      size: 'modal-lg',
+      closeOnBackdrop: false,
+      body: `${restauracao}
+        <p class="text-sm text-2" style="margin-bottom:14px">A composição <strong>${Utils.esc(comp.codigo || '')}</strong> será preservada. A conversão criará uma nova composição de usuário.</p>
+        <div class="cards-grid" style="grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+          <div class="stat-card" style="padding:14px"><div class="stat-label">Custo da origem</div><div class="stat-value" style="font-size:1.25rem">${Utils.moeda(preview.custo_origem || 0)}</div></div>
+          <div class="stat-card" style="padding:14px"><div class="stat-label">Custo previsto</div><div class="stat-value" style="font-size:1.25rem;color:var(--c-primary)">${Utils.moeda(preview.custo_destino || 0)}</div></div>
+        </div>
+        ${Object.keys(secoes).length ? `<table style="width:100%;font-size:.82rem"><tbody>
+          ${Object.entries(secoes).map(([letra,total]) => `<tr><td>Seção ${letra}</td><td style="text-align:right">${Utils.moeda(total)}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+        ${preview.destino === 'UNITARIO' && Math.abs((preview.custo_destino||0)-(preview.custo_origem||0)) > 0.01
+          ? '<div class="alert alert-danger" style="margin-top:14px">A equivalência financeira não foi atendida. A conversão não deve ser executada.</div>' : ''}`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="btnExecutarConversao" ${preview.destino === 'UNITARIO' && Math.abs((preview.custo_destino||0)-(preview.custo_origem||0)) > 0.01 ? 'disabled' : ''}>Criar nova composição</button>`,
+    });
+    document.getElementById('btnExecutarConversao')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btnExecutarConversao');
+      btn.disabled = true; btn.textContent = 'Convertendo…';
+      try {
+        const result = await API.composicoes.converterFormato(id, { ...payload, dry_run: false });
+        Modal.close();
+        Toast.success(result.mensagem || 'Nova composição convertida criada.');
+        statsPromise = null;
+        await carregar();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Criar nova composição'; Toast.error(e.message);
+      }
+    });
   }
 
   /* ── Coletar dados do formulário (usado tanto por salvarComp quanto pelo callback) ── */

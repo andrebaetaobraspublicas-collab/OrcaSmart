@@ -110,5 +110,9 @@ module.exports = function(db, options = {}) {
     res.json(await withWriteConnection(writeDb => service.editarComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
   }));
 
+  router.post('/:id/converter-formato', asyncHandler(async (req, res) => {
+    res.json(await withWriteConnection(writeDb => service.converterFormato(writeDb, req.params.id, req.body || {}, { readDb })));
+  }));
+
   return router;
 };
