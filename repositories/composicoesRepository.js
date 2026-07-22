@@ -1061,9 +1061,18 @@ async function getComposicao(db, idComposicao) {
     if (!comp) return null;
     comp.itens = await all(db, 'SELECT *, id_item AS id_item_comp FROM catalog.itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [scoped.value]);
     comp.secoes = await all(db, 'SELECT * FROM catalog.composicoes_secoes WHERE id_composicao = ? ORDER BY ordem, letra_secao', [scoped.value]);
-    for (const secao of comp.secoes) {
-      secao.itens = await all(db, 'SELECT * FROM catalog.composicoes_secao_itens WHERE id_secao = ? ORDER BY ordem, id_item_secao', [secao.id_secao]);
+    const idsSecoes = comp.secoes.map(secao => secao.id_secao).filter(id => id !== null && id !== undefined);
+    const itensSecoes = idsSecoes.length ? await all(db, `
+      SELECT * FROM catalog.composicoes_secao_itens
+      WHERE id_secao IN (${idsSecoes.map(() => '?').join(',')})
+      ORDER BY id_secao, ordem, id_item_secao`, idsSecoes) : [];
+    const itensPorSecao = new Map();
+    for (const item of itensSecoes) {
+      const chave = String(item.id_secao);
+      if (!itensPorSecao.has(chave)) itensPorSecao.set(chave, []);
+      itensPorSecao.get(chave).push(item);
     }
+    comp.secoes.forEach(secao => { secao.itens = itensPorSecao.get(String(secao.id_secao)) || []; });
     return comp;
   }
 
@@ -1071,9 +1080,18 @@ async function getComposicao(db, idComposicao) {
   if (!comp) return null;
   comp.itens = await all(db, 'SELECT *, id_item AS id_item_comp FROM itens_composicao WHERE id_composicao = ? ORDER BY ordem, id_item', [idComposicao]);
   comp.secoes = await all(db, 'SELECT * FROM composicoes_secoes WHERE id_composicao = ? ORDER BY ordem, letra_secao', [idComposicao]);
-  for (const secao of comp.secoes) {
-    secao.itens = await all(db, 'SELECT * FROM composicoes_secao_itens WHERE id_secao = ? ORDER BY ordem, id_item_secao', [secao.id_secao]);
+  const idsSecoes = comp.secoes.map(secao => secao.id_secao).filter(id => id !== null && id !== undefined);
+  const itensSecoes = idsSecoes.length ? await all(db, `
+    SELECT * FROM composicoes_secao_itens
+    WHERE id_secao IN (${idsSecoes.map(() => '?').join(',')})
+    ORDER BY id_secao, ordem, id_item_secao`, idsSecoes) : [];
+  const itensPorSecao = new Map();
+  for (const item of itensSecoes) {
+    const chave = String(item.id_secao);
+    if (!itensPorSecao.has(chave)) itensPorSecao.set(chave, []);
+    itensPorSecao.get(chave).push(item);
   }
+  comp.secoes.forEach(secao => { secao.itens = itensPorSecao.get(String(secao.id_secao)) || []; });
   return comp;
 }
 
@@ -1112,14 +1130,24 @@ async function getTenantComposicao(db, rowid) {
       FROM tenant_composicoes_secoes
       WHERE id_composicao = ? AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY ordem, letra_secao, id_secao`, [rowid]) : [];
+  const idsSecoesTenant = comp.secoes.map(secao => secao._rowid || secao.id_secao)
+    .filter(id => id !== null && id !== undefined);
+  const itensSecoesTenant = hasTenantSecaoItens && idsSecoesTenant.length ? await all(db, `
+      SELECT tenant_composicoes_secao_itens.*, id_item_secao AS _rowid
+      FROM tenant_composicoes_secao_itens
+      WHERE id_secao IN (${idsSecoesTenant.map(() => '?').join(',')})
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY id_secao, ordem, id_item_secao`, idsSecoesTenant) : [];
+  const itensTenantPorSecao = new Map();
+  for (const item of itensSecoesTenant) {
+    const chave = String(item.id_secao);
+    if (!itensTenantPorSecao.has(chave)) itensTenantPorSecao.set(chave, []);
+    itensTenantPorSecao.get(chave).push(item);
+  }
   for (const secao of comp.secoes) {
     const secaoRowid = secao._rowid || secao.id_secao;
     secao.id_secao = `tenant:${secaoRowid}`;
-    secao.itens = hasTenantSecaoItens ? await all(db, `
-        SELECT tenant_composicoes_secao_itens.*, id_item_secao AS _rowid
-        FROM tenant_composicoes_secao_itens
-        WHERE id_secao = ? AND COALESCE(tenant_override_status,'active')='active'
-        ORDER BY ordem, id_item_secao`, [secaoRowid]) : [];
+    secao.itens = itensTenantPorSecao.get(String(secaoRowid)) || [];
     secao.itens.forEach((item) => {
       item.id_item_secao = `tenant:${item._rowid || item.id_item_secao}`;
     });
@@ -1130,15 +1158,22 @@ async function getTenantComposicao(db, rowid) {
       FROM catalog.composicoes_secoes
       WHERE id_composicao = ?
       ORDER BY ordem, letra_secao`, [comp._catalog_id]).catch(() => []);
-    for (const secao of comp.secoes) {
-      secao.itens = await all(db, `
-        SELECT *, 'catalog' AS _tenant_scope
-        FROM catalog.composicoes_secao_itens
-        WHERE id_secao = ?
-        ORDER BY ordem, id_item_secao`, [secao.id_secao]).catch(() => []);
+    const idsSecoesCatalogo = comp.secoes.map(secao => secao.id_secao).filter(id => id !== null && id !== undefined);
+    const itensSecoesCatalogo = idsSecoesCatalogo.length ? await all(db, `
+      SELECT *, 'catalog' AS _tenant_scope
+      FROM catalog.composicoes_secao_itens
+      WHERE id_secao IN (${idsSecoesCatalogo.map(() => '?').join(',')})
+      ORDER BY id_secao, ordem, id_item_secao`, idsSecoesCatalogo).catch(() => []) : [];
+    const itensCatalogoPorSecao = new Map();
+    for (const item of itensSecoesCatalogo) {
+      const chave = String(item.id_secao);
+      if (!itensCatalogoPorSecao.has(chave)) itensCatalogoPorSecao.set(chave, []);
+      itensCatalogoPorSecao.get(chave).push(item);
     }
+    comp.secoes.forEach(secao => { secao.itens = itensCatalogoPorSecao.get(String(secao.id_secao)) || []; });
     recuperarEdicaoSicroLegada(comp);
   }
+  normalizarDmtSicroUsuario(comp);
   return aplicarPrecosResolvidosTenant(db, comp);
 }
 
@@ -1630,15 +1665,18 @@ async function replaceTenantItens(db, idComposicao, itens = []) {
   const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
     ? scopedComposicaoId(idComposicao).value
     : Number(idComposicao);
-  await run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [new Date().toISOString(), rowid]);
+  const agora = new Date().toISOString();
+  await run(db, "UPDATE tenant_itens_composicao SET tenant_override_status='deleted', tenant_updated_at=? WHERE id_composicao = ?", [agora, rowid]);
+  let idItem = await proximoIdLogicoTenant(db, 'tenant_itens_composicao', 'id_item');
   for (let ordem = 0; ordem < itens.length; ordem += 1) {
     const item = itens[ordem] || {};
-    const result = await run(db, `
+    await run(db, `
       INSERT INTO tenant_itens_composicao
-        (id_composicao, tipo_item, codigo_item, descricao, unidade, coeficiente, preco_unitario,
+        (id_item, id_composicao, tipo_item, codigo_item, descricao, unidade, coeficiente, preco_unitario,
          custo_parcial, situacao_item, ordem, tenant_override_action, tenant_override_status,
          tenant_created_at, tenant_updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'create', 'active', ?, ?)`, [
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'create', 'active', ?, ?)`, [
+      idItem++,
       rowid,
       item.tipo_item || 'INSUMO',
       item.codigo_item || null,
@@ -1649,10 +1687,9 @@ async function replaceTenantItens(db, idComposicao, itens = []) {
       item.custo_parcial === undefined ? null : toNum(item.custo_parcial, null),
       item.situacao_item || null,
       ordem,
-      new Date().toISOString(),
-      new Date().toISOString(),
+      agora,
+      agora,
     ]);
-    await run(db, 'UPDATE tenant_itens_composicao SET id_item = ? WHERE rowid = ?', [result.lastID, result.lastID]);
   }
 }
 
@@ -1678,6 +1715,32 @@ function custoItemSecaoSicro(item = {}) {
   const temDmt = item.dmt !== null && item.dmt !== undefined && item.dmt !== '';
   const distancia = letra === 'F' && temDmt ? toNum(item.dmt, 0) : 1;
   return Number((quantidade * toNum(item.preco_unitario, 0) * distancia).toFixed(4));
+}
+
+function normalizarDmtSicroUsuario(comp) {
+  if (!comp
+      || String(comp.fonte || '').toUpperCase() !== 'USUARIO'
+      || String(comp.formato || '').toUpperCase() !== 'PRODUCAO_HORARIA'
+      || !Array.isArray(comp.secoes)) return comp;
+
+  const secaoF = comp.secoes.find(secao => String(secao.letra_secao || '').toUpperCase() === 'F');
+  for (const item of secaoF?.itens || []) {
+    if (item.dmt !== null && item.dmt !== undefined && item.dmt !== '') continue;
+    if (!(item.cod_transp_ln || item.cod_transp_rp || item.cod_transp_p)) continue;
+    const precoLegado = toNum(item.preco_unitario, 0);
+    const quantidade = toNum(item.quantidade, 0);
+    const totalPersistido = toNum(item.custo_total, null);
+    if (!(precoLegado > 0) || totalPersistido === null) continue;
+    const totalLegado = quantidade * precoLegado;
+    const tolerancia = Math.max(0.0001, Math.abs(totalPersistido) * 0.000001);
+    if (Math.abs(totalPersistido - totalLegado) > tolerancia) continue;
+
+    // Versoes antigas do editor gravavam a distancia no campo de preco da
+    // secao F. Exponha esse valor como DMT sem alterar o total persistido.
+    item.dmt = precoLegado;
+    item.preco_unitario = 1;
+  }
+  return comp;
 }
 
 function recuperarEdicaoSicroLegada(comp) {
@@ -1756,11 +1819,13 @@ async function replaceTenantSecoesSicro(db, idComposicao, itens = []) {
 
   let idSecao = await proximoIdLogicoTenant(db, 'tenant_composicoes_secoes', 'id_secao');
   let idItemSecao = await proximoIdLogicoTenant(db, 'tenant_composicoes_secao_itens', 'id_item_secao');
+  const totaisSecoes = {};
   let ordemSecao = 0;
   for (const [letra, itensSecao] of [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const secaoAtual = idSecao++;
     const custos = itensSecao.map(custoItemSecaoSicro);
     const totalSecao = Number(custos.reduce((soma, valor) => soma + valor, 0).toFixed(4));
+    totaisSecoes[letra] = totalSecao;
     await run(db, `
       INSERT INTO tenant_composicoes_secoes
         (id_secao, id_composicao, letra_secao, nome_secao, custo_total_secao, ordem,
@@ -1813,23 +1878,30 @@ async function replaceTenantSecoesSicro(db, idComposicao, itens = []) {
       ]);
     }
   }
+  return totaisSecoes;
 }
 
-async function recalcularTenantComposicaoSicro(db, idComposicao) {
+async function recalcularTenantComposicaoSicro(db, idComposicao, calculo = {}) {
   const rowid = scopedComposicaoId(idComposicao).scope === 'tenant'
     ? scopedComposicaoId(idComposicao).value
     : Number(idComposicao);
-  const comp = await one(db, `
-    SELECT producao_equipe, fic
-    FROM tenant_composicoes
-    WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+  let comp = calculo.composicao || null;
+  if (!comp) {
+    comp = await one(db, `
+      SELECT producao_equipe, fic
+      FROM tenant_composicoes
+      WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`, [rowid]);
+  }
   if (!comp) return 0;
-  const linhas = await all(db, `
-    SELECT letra_secao, COALESCE(SUM(COALESCE(custo_total,0)),0) AS total
-    FROM tenant_composicoes_secao_itens
-    WHERE id_composicao=? AND COALESCE(tenant_override_status,'active')='active'
-    GROUP BY letra_secao`, [rowid]);
-  const secoes = Object.fromEntries(linhas.map(linha => [String(linha.letra_secao || '').toUpperCase(), toNum(linha.total, 0)]));
+  let secoes = calculo.secoes || null;
+  if (!secoes) {
+    const linhas = await all(db, `
+      SELECT letra_secao, COALESCE(SUM(COALESCE(custo_total,0)),0) AS total
+      FROM tenant_composicoes_secao_itens
+      WHERE id_composicao=? AND COALESCE(tenant_override_status,'active')='active'
+      GROUP BY letra_secao`, [rowid]);
+    secoes = Object.fromEntries(linhas.map(linha => [String(linha.letra_secao || '').toUpperCase(), toNum(linha.total, 0)]));
+  }
   const producao = toNum(comp.producao_equipe, 0);
   const fic = toNum(comp.fic, 0);
   const custoHorario = toNum(secoes.A, 0) + toNum(secoes.B, 0);
@@ -1839,13 +1911,15 @@ async function recalcularTenantComposicaoSicro(db, idComposicao) {
   const custoUnitario = subtotal + toNum(secoes.E, 0) + toNum(secoes.F, 0);
   const agora = new Date().toISOString();
 
-  for (const [letra, total] of Object.entries(secoes)) {
-    await run(db, `
-      UPDATE tenant_composicoes_secoes
-      SET custo_total_secao=?, tenant_updated_at=?
-      WHERE id_composicao=? AND letra_secao=? AND COALESCE(tenant_override_status,'active')='active'`, [
-      Number(total.toFixed(4)), agora, rowid, letra,
-    ]);
+  if (!calculo.secoes) {
+    for (const [letra, total] of Object.entries(secoes)) {
+      await run(db, `
+        UPDATE tenant_composicoes_secoes
+        SET custo_total_secao=?, tenant_updated_at=?
+        WHERE id_composicao=? AND letra_secao=? AND COALESCE(tenant_override_status,'active')='active'`, [
+        Number(total.toFixed(4)), agora, rowid, letra,
+      ]);
+    }
   }
   await run(db, `
     UPDATE tenant_composicoes
@@ -1885,7 +1959,9 @@ async function recalcularTenantComposicaoUnitaria(db, idComposicao) {
   return rounded;
 }
 
-async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao_orcamentos = 'manter' } = {}, options = {}) {
+async function editarComVinculo(db, idComposicao, {
+  dados = {}, itens = [], acao_orcamentos = 'manter', retornar_composicao = true,
+} = {}, options = {}) {
   if (await hasTenantComposicaoOverrides(db)) {
     const readDb = options.readDb || db;
     const compOrig = options.current || await getComposicao(readDb, idComposicao);
@@ -1924,9 +2000,15 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
       await replaceTenantItens(db, idResultado, itens);
       const isSicro = String(dados.formato || compOrig.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
         && ((compOrig.secoes || []).length > 0 || itens.some(item => item && (item._secao || item.letra_secao)));
-      if (isSicro) await replaceTenantSecoesSicro(db, idResultado, itens);
+      const totaisSecoes = isSicro ? await replaceTenantSecoesSicro(db, idResultado, itens) : null;
       const custo = isSicro
-        ? await recalcularTenantComposicaoSicro(db, idResultado)
+        ? await recalcularTenantComposicaoSicro(db, idResultado, {
+          secoes: totaisSecoes,
+          composicao: {
+            producao_equipe: dados.producao_equipe === undefined ? compOrig.producao_equipe : dados.producao_equipe,
+            fic: dados.fic === undefined ? compOrig.fic : dados.fic,
+          },
+        })
         : await recalcularTenantComposicaoUnitaria(db, idResultado);
 
       if (acao_orcamentos === 'atualizar' && !String(idComposicao).startsWith('tenant:')) {
@@ -1944,7 +2026,7 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
 
       await run(db, 'COMMIT');
       return {
-        composicao: await getTenantComposicao(db, idResultado),
+        composicao: retornar_composicao ? await getTenantComposicao(db, idResultado) : undefined,
         id_resultado: `tenant:${idResultado}`,
         criou_nova: criarNova,
         cod_novo: codNovo,
@@ -2058,7 +2140,7 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
 
     await run(db, 'COMMIT');
     return {
-      composicao: await getComposicao(db, idResultado),
+      composicao: retornar_composicao ? await getComposicao(db, idResultado) : undefined,
       id_resultado: idResultado,
       criou_nova: criarNova,
       cod_novo: codNovo,
