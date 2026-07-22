@@ -51,6 +51,7 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 ### Edicao de composicoes SICRO pelo usuario
 
 - A composicao referencial permanece somente leitura; a edicao cria uma composicao `USUARIO` no tenant.
+- A composicao `USUARIO` conserva o identificador do catalogo apenas como proveniencia e e gravada como criacao independente; ela nao substitui nem oculta a referencia que serviu de base. Copias legadas registradas como `update` tambem nao podem ocultar o catalogo.
 - As secoes A-F e os campos de transporte sao copiados para tabelas seccionais do tenant e passam a ser a fonte do detalhe editado.
 - O custo horario de execucao corresponde a soma das secoes A e B. O custo unitario de execucao divide esse valor pela `producao_equipe` antes da soma de FIC e das secoes C-F.
 - Na secao F, a DMT editada e persistida e multiplica a quantidade e o custo unitario de transporte; sem DMT separada, permanece compativel com o valor unitario ja consolidado informado no item.

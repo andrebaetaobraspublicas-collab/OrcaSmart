@@ -92,11 +92,24 @@ async function hasTenantReferentialOverrides(db) {
 
 async function hasActiveComposicaoOverrides(db) {
   if (!await hasTenantReferentialOverrides(db)) return false;
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
   const row = await one(db, `
     SELECT 1 AS found
-    FROM tenant_referential_overrides
-    WHERE domain='composicoes' AND catalog_table='composicoes'
-      AND status='active' AND action IN ('update','delete')
+    FROM tenant_referential_overrides r
+    WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
+      AND r.status='active'
+      AND (
+        r.action='delete'
+        OR (
+          r.action='update'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM tenant_composicoes tc
+            WHERE tc.${tenantComposicaoPk}=r.tenant_rowid
+              AND UPPER(COALESCE(tc.fonte,''))='USUARIO'
+          )
+        )
+      )
     LIMIT 1`).catch(() => null);
   return !!row;
 }
@@ -104,6 +117,7 @@ async function hasActiveComposicaoOverrides(db) {
 function visibleCatalogClause(alias = 'c', hasOverrides = true) {
   const nonUserCatalog = `UPPER(COALESCE(${alias}.fonte,'')) <> 'USUARIO'`;
   if (!hasOverrides) return nonUserCatalog;
+  const tenantComposicaoPk = tenantSyntheticPk('tenant_composicoes');
   return `
     ${nonUserCatalog}
     AND
@@ -111,7 +125,18 @@ function visibleCatalogClause(alias = 'c', hasOverrides = true) {
       SELECT 1 FROM tenant_referential_overrides r
       WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
         AND r.catalog_id=${alias}.id_composicao AND r.status='active'
-        AND r.action IN ('update','delete')
+        AND (
+          r.action='delete'
+          OR (
+            r.action='update'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM tenant_composicoes tc
+              WHERE tc.${tenantComposicaoPk}=r.tenant_rowid
+                AND UPPER(COALESCE(tc.fonte,''))='USUARIO'
+            )
+          )
+        )
     )`;
 }
 
@@ -317,7 +342,14 @@ async function stats(db) {
       FROM tenant_referential_overrides r
       JOIN catalog.composicoes c ON c.id_composicao=r.catalog_id
       WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
-        AND r.status='active' AND r.action IN ('update','delete')
+        AND r.status='active' AND (
+          r.action='delete'
+          OR (r.action='update' AND NOT EXISTS (
+            SELECT 1 FROM tenant_composicoes tc
+            WHERE tc.${tenantSyntheticPk('tenant_composicoes')}=r.tenant_rowid
+              AND UPPER(COALESCE(tc.fonte,''))='USUARIO'
+          ))
+        )
       GROUP BY c.fonte`) : [];
     const catalogFormato = await all(db, 'SELECT formato, COUNT(*) AS total FROM catalog.composicoes GROUP BY formato');
     const tenantFormato = await all(db, "SELECT formato, COUNT(*) AS total FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active' GROUP BY formato");
@@ -326,7 +358,14 @@ async function stats(db) {
       FROM tenant_referential_overrides r
       JOIN catalog.composicoes c ON c.id_composicao=r.catalog_id
       WHERE r.domain='composicoes' AND r.catalog_table='composicoes'
-        AND r.status='active' AND r.action IN ('update','delete')
+        AND r.status='active' AND (
+          r.action='delete'
+          OR (r.action='update' AND NOT EXISTS (
+            SELECT 1 FROM tenant_composicoes tc
+            WHERE tc.${tenantSyntheticPk('tenant_composicoes')}=r.tenant_rowid
+              AND UPPER(COALESCE(tc.fonte,''))='USUARIO'
+          ))
+        )
       GROUP BY c.formato`) : [];
     const porFonte = combine(catalogFonte, tenantFonte, hiddenFonte, 'fonte');
     const porFormato = combine(catalogFormato, tenantFormato, hiddenFormato, 'formato');
@@ -998,6 +1037,7 @@ async function getComposicao(db, idComposicao) {
       FROM tenant_composicoes
       WHERE tenant_catalog_id = ?
         AND tenant_override_action='update'
+        AND UPPER(COALESCE(fonte,'')) <> 'USUARIO'
         AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY ${tenantComposicaoPk} DESC LIMIT 1`, [scoped.value]);
     if (override) return getTenantComposicao(db, override.tenant_rowid);
@@ -1871,7 +1911,10 @@ async function editarComVinculo(db, idComposicao, { dados = {}, itens = [], acao
           custo_unitario: 0,
         }, {
           catalogId: scoped.scope === 'catalog' ? Number(scoped.value) : null,
-          action: scoped.scope === 'catalog' ? 'update' : 'create',
+          // A edicao de uma referencia gera uma composicao independente do
+          // usuario. O vinculo com o catalogo serve somente como proveniencia;
+          // nao pode transformar a copia em override nem ocultar a referencia.
+          action: 'create',
           impactPolicy: acao_orcamentos,
         });
         idResultado = created.lastID;
