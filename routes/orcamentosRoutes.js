@@ -44,7 +44,10 @@ module.exports = function(db) {
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.updateOrcamento(db, req.params.id, req.body || {}));
+    const row = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.updateOrcamento(writeDb, req.params.id, req.body || {}))
+      : await orcamentosService.updateOrcamento(db, req.params.id, req.body || {});
+    res.json(row);
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {

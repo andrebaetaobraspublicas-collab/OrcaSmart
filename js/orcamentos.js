@@ -214,10 +214,60 @@ Router.register('orcamentos', async () => {
     });
 
     document.getElementById('btnCancelarOrc').addEventListener('click', () => Modal.close());
-    document.getElementById('btnSalvarOrc').addEventListener('click', () => salvar(id));
+    document.getElementById('btnSalvarOrc').addEventListener('click', () => salvar(id, orc));
   }
 
-  async function salvar(id) {
+  function alteracoesContexto(orc = {}, payload = {}) {
+    const alteracoes = [];
+    if (String(orc.id_data_base ?? '') !== String(payload.id_data_base ?? '')) {
+      alteracoes.push({ campo: 'id_data_base', label: 'Data-Base' });
+    }
+    if (String(orc.uf_referencia || '').toUpperCase() !== String(payload.uf_referencia || '').toUpperCase()) {
+      alteracoes.push({ campo: 'uf_referencia', label: 'UF de Referência' });
+    }
+    if (String(orc.regime_previdenciario || 'Onerado') !== String(payload.regime_previdenciario || 'Onerado')) {
+      alteracoes.push({ campo: 'regime_previdenciario', label: 'Regime Previdenciário' });
+    }
+    return alteracoes;
+  }
+
+  function mostrarResumoAtualizacao(resumo = {}) {
+    const semCorrespondencia = Number(resumo.sem_correspondencia || 0);
+    const semVinculo = Number(resumo.linhas_sem_vinculo || 0);
+    const atualizadas = Number(resumo.composicoes_atualizadas || 0);
+    const jaCompativeis = Number(resumo.composicoes_ja_compativeis || 0);
+    const totais = resumo.totais || {};
+    const avisoBdi = resumo.selecionar_novo_bdi
+      ? `<div style="margin-top:14px;padding:12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412">
+          <strong>Atenção ao BDI:</strong> o Regime Previdenciário foi alterado.
+          Selecione e aplique uma nova composição de BDI adequada ao novo regime.
+        </div>`
+      : '';
+    const avisoPendencias = semCorrespondencia
+      ? `<div style="margin-top:12px;padding:12px;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;color:#92400e">
+          ${semCorrespondencia} linha(s) vinculada(s) permaneceram inalteradas porque não existe composição
+          com o mesmo código, fonte, UF, data-base e regime selecionados.
+        </div>`
+      : '';
+
+    Modal.open({
+      title: 'Orçamento atualizado e recalculado',
+      body: `
+        <div style="line-height:1.6">
+          <p><strong>${atualizadas}</strong> composição(ões) substituída(s) pela referência correspondente.</p>
+          <p><strong>${jaCompativeis}</strong> composição(ões) já estavam compatíveis com a nova seleção.</p>
+          <p><strong>${semVinculo}</strong> linha(s) sem vínculo não foram modificadas automaticamente.</p>
+          <p style="margin-top:10px"><strong>Novo total:</strong> ${Utils.moeda(totais.total || 0)}</p>
+          ${avisoPendencias}
+          ${avisoBdi}
+        </div>`,
+      footer: '<button class="btn btn-primary" id="btnFecharResumoOrc">Entendi</button>',
+      closeOnBackdrop: false,
+    });
+    document.getElementById('btnFecharResumoOrc').addEventListener('click', () => Modal.close());
+  }
+
+  async function salvar(id, orcOriginal = {}) {
     const cd = parseFloat(document.getElementById('f_cd')?.value) || 0;
     const bdi = parseFloat(document.getElementById('f_bdi')?.value) || 0;
     const payload = {
@@ -236,11 +286,28 @@ Router.register('orcamentos', async () => {
     };
     if (!payload.id_obra) { Toast.warning('Selecione uma obra.'); return; }
     if (!payload.nome_orcamento) { Toast.warning('Nome do orçamento é obrigatório.'); return; }
+    const mudancas = id ? alteracoesContexto(orcOriginal, payload) : [];
+    if (mudancas.length) {
+      const campos = mudancas.map(item => item.label).join(', ');
+      const confirmou = await Confirm.ask(
+        `Você alterou: ${campos}.\n\n`
+        + 'As linhas vinculadas serão substituídas somente quando existir uma composição com o mesmo código e fonte, na UF, data-base e regime selecionados. '
+        + 'Quando não houver correspondência exata, a composição atual será mantida e informada ao final.\n\n'
+        + 'As linhas sem vínculo não serão modificadas automaticamente. Deseja atualizar e recalcular o orçamento?',
+        'Atualizar composições vinculadas',
+        { okText: 'Atualizar e recalcular', okClass: 'btn btn-primary' },
+      );
+      if (!confirmou) return;
+      payload.confirmar_atualizacao_composicoes = true;
+    }
     try {
-      if (id) { await API.orcamentos.update(id, payload); Toast.success('Orçamento atualizado!'); }
+      let resposta = null;
+      if (id) { resposta = await API.orcamentos.update(id, payload); }
       else     { await API.orcamentos.create(payload);    Toast.success('Orçamento criado!'); }
       Modal.close();
-      carregar();
+      await carregar();
+      if (resposta?.atualizacao_composicoes) mostrarResumoAtualizacao(resposta.atualizacao_composicoes);
+      else if (id) Toast.success('Orçamento atualizado!');
     } catch(e) { Toast.error(e.message); }
   }
 

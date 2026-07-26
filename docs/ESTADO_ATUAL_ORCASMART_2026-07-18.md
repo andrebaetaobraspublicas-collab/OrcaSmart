@@ -73,6 +73,18 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Cabeçalho e linhas são gravados na mesma transação; uma falha durante a cópia
   não deixa orçamento parcial.
 
+### Alteração de regime, UF e data-base do orçamento
+
+- A edição compara Regime Previdenciário, UF de Referência e Data-Base com os
+  valores anteriores e exige confirmação antes de atualizar composições.
+- Somente linhas vinculadas são remapeadas, com correspondência estrita por
+  código/fonte, UF, mês/ano e regime. Sem correspondência exata, o vínculo e o
+  custo existentes são preservados.
+- Linhas sem composição vinculada não são modificadas automaticamente.
+- Após o remapeamento, custo direto, BDI e total são recalculados na mesma
+  transação. Mudanças de regime geram aviso para seleção de um novo perfil de
+  BDI compatível.
+
 ### BDI e Reforma Tributária
 
 - IVA equivalente calculado por

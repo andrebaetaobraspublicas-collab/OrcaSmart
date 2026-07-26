@@ -199,6 +199,22 @@ async function getOrcamentoContexto(db, idOrcamento) {
   };
 }
 
+function camposContextoAlterados(anterior = {}, data = {}) {
+  const alterados = [];
+  if (String(anterior.id_data_base ?? '') !== String(data.id_data_base ?? '')) {
+    alterados.push('id_data_base');
+  }
+  if (String(anterior.uf_referencia || '').trim().toUpperCase()
+      !== String(data.uf_referencia || '').trim().toUpperCase()) {
+    alterados.push('uf_referencia');
+  }
+  if ((normalizarRegime(anterior.regime_previdenciario) || 'Onerado')
+      !== (normalizarRegime(data.regime_previdenciario) || 'Onerado')) {
+    alterados.push('regime_previdenciario');
+  }
+  return alterados;
+}
+
 function compSelectForAuto(idExpr, scopeExpr, tableExpr, hasOverrides = true) {
   const visible = hasOverrides
     ? `NOT EXISTS (
@@ -278,13 +294,14 @@ function chunkArray(items, size) {
   return chunks;
 }
 
-async function buildComposicaoCandidatesForAutoLink(db, itens) {
+async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
+  const includeUsuario = options.includeUsuario === true;
   const codigosSet = new Set();
   const fontesSet = new Set();
 
   for (const item of itens || []) {
     const fonteNorm = normalizarFonte(item.fonte);
-    if (!fonteNorm || fonteNorm === 'USUARIO') continue;
+    if (!fonteNorm || (!includeUsuario && fonteNorm === 'USUARIO')) continue;
     codigoVariantesComposicao(item.codigo, item.fonte)
       .forEach(codigo => codigosSet.add(String(codigo || '').trim()));
     fonteAliases(item.fonte)
@@ -349,6 +366,146 @@ function escolherComposicaoParaItemNoCache(item, contexto, cache) {
   return escolherComposicaoCandidata(candidatos, contexto);
 }
 
+function composicaoCompativelEstrita(candidato, contexto) {
+  const ufAlvo = String(contexto?.uf || '').trim().toUpperCase();
+  const ufCandidato = String(candidato?.uf_referencia || '').trim().toUpperCase();
+  if (!ufAlvo || ufCandidato !== ufAlvo) return false;
+
+  const dataAlvo = parseMesRef(contexto?.mes_ref);
+  const dataCandidato = parseMesRef(candidato?.mes_referencia);
+  if (!dataAlvo || !dataCandidato || dataAlvo.index !== dataCandidato.index) return false;
+
+  const regimeAlvo = normalizarRegime(contexto?.regime);
+  const regimeCandidato = normalizarRegime(candidato?.situacao_ref);
+  return !!regimeAlvo && regimeCandidato === regimeAlvo;
+}
+
+function escolherComposicaoEstritaParaItem(item, contexto, cache) {
+  const fontes = new Set(fonteAliases(item.fonte).map(f => String(f || '').trim().toUpperCase()));
+  const candidatos = [];
+  for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
+    const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
+    rows.forEach((row) => {
+      if (fontes.has(String(row.fonte || '').trim().toUpperCase())
+          && composicaoCompativelEstrita(row, contexto)) {
+        candidatos.push(row);
+      }
+    });
+  }
+  candidatos.sort((a, b) => {
+    const scopeA = (a._tenant_scope || a.scope) === 'tenant' ? 0 : 1;
+    const scopeB = (b._tenant_scope || b.scope) === 'tenant' ? 0 : 1;
+    if (scopeA !== scopeB) return scopeA - scopeB;
+    const custoA = toNum(a.custo_unitario, 0) > 0 ? 0 : 1;
+    const custoB = toNum(b.custo_unitario, 0) > 0 ? 0 : 1;
+    return custoA - custoB;
+  });
+  return candidatos[0] || null;
+}
+
+async function recalcularTotaisDoOrcamento(db, idOrcamento) {
+  const orcamento = await one(db, 'SELECT bdi_percentual FROM orcamentos WHERE id_orcamento=?', [idOrcamento]);
+  const bdiPadrao = toNum(orcamento?.bdi_percentual, 0);
+  const itens = await all(db, `
+    SELECT quantidade, custo_unitario, bdi_percentual_linha
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item'`, [idOrcamento]);
+
+  let custoDireto = 0;
+  let total = 0;
+  for (const item of itens) {
+    const valorDireto = toNum(item.quantidade, 0) * toNum(item.custo_unitario, 0);
+    const bdiLinha = item.bdi_percentual_linha === null
+      || item.bdi_percentual_linha === undefined
+      || item.bdi_percentual_linha === ''
+      ? bdiPadrao
+      : toNum(item.bdi_percentual_linha, bdiPadrao);
+    custoDireto += valorDireto;
+    total += valorDireto * (1 + bdiLinha / 100);
+  }
+
+  const valores = {
+    custo_direto: Number(custoDireto.toFixed(8)),
+    valor_bdi: Number((total - custoDireto).toFixed(8)),
+    total: Number(total.toFixed(8)),
+  };
+  await updateTotais(db, idOrcamento, valores);
+  return valores;
+}
+
+async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = []) {
+  await ensureBdiLinha(db);
+  const contexto = await getOrcamentoContexto(db, idOrcamento);
+  const vinculadas = await all(db, `
+    SELECT *
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item'
+      AND id_composicao IS NOT NULL AND TRIM(CAST(id_composicao AS TEXT)) <> ''
+    ORDER BY ordem, id_item`, [idOrcamento]);
+  const semVinculo = await one(db, `
+    SELECT COUNT(*) AS total
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item'
+      AND (id_composicao IS NULL OR TRIM(CAST(id_composicao AS TEXT)) = '')`, [idOrcamento]);
+  const cache = await buildComposicaoCandidatesForAutoLink(
+    db,
+    vinculadas,
+    { includeUsuario: true },
+  );
+
+  let atualizadas = 0;
+  let jaCompativeis = 0;
+  let semCorrespondencia = 0;
+  const detalhes = [];
+  for (const item of vinculadas) {
+    const composicao = escolherComposicaoEstritaParaItem(item, contexto, cache);
+    if (!composicao) {
+      semCorrespondencia += 1;
+      if (detalhes.length < 100) {
+        detalhes.push({
+          id_item: item.id_item,
+          item_num: item.item_num,
+          codigo: item.codigo,
+          fonte: item.fonte,
+          status: 'mantida_sem_correspondencia',
+        });
+      }
+      continue;
+    }
+
+    const mesmoVinculo = String(composicao.id_composicao) === String(item.id_composicao);
+    const custo = toNum(composicao.custo_unitario, 0) > 0
+      ? composicao.custo_unitario
+      : item.custo_unitario;
+    await run(db, `
+      UPDATE orcamento_sintetico
+      SET tipo_item='composicao', id_composicao=?, id_insumo=NULL,
+          codigo=?, fonte=?, descricao=?, unidade=?, custo_unitario=?
+      WHERE id_item=? AND id_orcamento=?`, [
+      composicao.id_composicao,
+      composicao.codigo || item.codigo,
+      composicao.fonte || item.fonte,
+      composicao.descricao || item.descricao,
+      composicao.unidade || item.unidade,
+      custo,
+      item.id_item,
+      idOrcamento,
+    ]);
+    if (mesmoVinculo) jaCompativeis += 1;
+    else atualizadas += 1;
+  }
+
+  return {
+    campos_alterados: camposAlterados,
+    vinculadas_verificadas: vinculadas.length,
+    composicoes_atualizadas: atualizadas,
+    composicoes_ja_compativeis: jaCompativeis,
+    sem_correspondencia: semCorrespondencia,
+    linhas_sem_vinculo: Number(semVinculo?.total || 0),
+    detalhes,
+  };
+}
+
 const selectBase = `
   SELECT o.*, ob.nome_obra, ob.uf AS obra_uf,
          db.mes AS data_base_mes, db.ano AS data_base_ano,
@@ -388,13 +545,14 @@ async function obraExists(db, idObra) {
 async function createOrcamento(db, data = {}) {
   const result = await run(db, `
     INSERT INTO orcamentos (id_obra, nome_orcamento, descricao, id_data_base,
-      uf_referencia, versao, status, observacoes)
-    VALUES (?,?,?,?,?,?,?,?)`, [
+      uf_referencia, regime_previdenciario, versao, status, observacoes)
+    VALUES (?,?,?,?,?,?,?,?,?)`, [
     data.id_obra,
     String(data.nome_orcamento || '').trim(),
     data.descricao || null,
     data.id_data_base || null,
     data.uf_referencia || null,
+    normalizarRegime(data.regime_previdenciario) || 'Onerado',
     data.versao || '1.0',
     data.status || 'Em elaboração',
     data.observacoes || null,
@@ -403,26 +561,59 @@ async function createOrcamento(db, data = {}) {
 }
 
 async function updateOrcamento(db, id, data = {}) {
-  const result = await run(db, `
-    UPDATE orcamentos SET id_obra=?, nome_orcamento=?, descricao=?, id_data_base=?,
-      uf_referencia=?, versao=?, status=?, valor_custo_direto=?,
-      valor_bdi=?, valor_total=?, observacoes=?
-    WHERE id_orcamento=?`, [
-    data.id_obra,
-    String(data.nome_orcamento || '').trim(),
-    data.descricao || null,
-    data.id_data_base || null,
-    data.uf_referencia || null,
-    data.versao || '1.0',
-    data.status || 'Em elaboração',
-    data.valor_custo_direto || 0,
-    data.valor_bdi || 0,
-    data.valor_total || 0,
-    data.observacoes || null,
-    id,
-  ]);
-  if (!result.changes) return null;
-  return getOrcamento(db, id);
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const anterior = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento=?', [id]);
+    if (!anterior) {
+      await run(db, 'COMMIT');
+      return null;
+    }
+
+    const alteracoesContexto = camposContextoAlterados(anterior, data);
+    if (alteracoesContexto.length && data.confirmar_atualizacao_composicoes !== true) {
+      const err = new Error('Confirme a atualização das composições vinculadas antes de alterar regime previdenciário, UF ou data-base.');
+      err.status = 409;
+      err.codigo = 'CONFIRMACAO_COMPOSICOES_OBRIGATORIA';
+      err.campos = alteracoesContexto;
+      throw err;
+    }
+
+    await run(db, `
+      UPDATE orcamentos SET id_obra=?, nome_orcamento=?, descricao=?, id_data_base=?,
+        uf_referencia=?, regime_previdenciario=?, versao=?, status=?,
+        valor_custo_direto=?, valor_bdi=?, valor_total=?, observacoes=?
+      WHERE id_orcamento=?`, [
+      data.id_obra,
+      String(data.nome_orcamento || '').trim(),
+      data.descricao || null,
+      data.id_data_base || null,
+      data.uf_referencia || null,
+      normalizarRegime(data.regime_previdenciario) || 'Onerado',
+      data.versao || '1.0',
+      data.status || 'Em elaboração',
+      data.valor_custo_direto ?? 0,
+      data.valor_bdi ?? 0,
+      data.valor_total ?? 0,
+      data.observacoes || null,
+      id,
+    ]);
+
+    let atualizacaoComposicoes = null;
+    if (alteracoesContexto.length) {
+      atualizacaoComposicoes = await remapearComposicoesVinculadas(db, id, alteracoesContexto);
+      atualizacaoComposicoes.totais = await recalcularTotaisDoOrcamento(db, id);
+      atualizacaoComposicoes.selecionar_novo_bdi = alteracoesContexto.includes('regime_previdenciario');
+    }
+
+    const atualizado = await getOrcamento(db, id);
+    await run(db, 'COMMIT');
+    return atualizacaoComposicoes
+      ? { ...atualizado, atualizacao_composicoes: atualizacaoComposicoes }
+      : atualizado;
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 async function deleteOrcamento(db, id) {
