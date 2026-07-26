@@ -238,8 +238,29 @@ Router.register('orcamentos', async () => {
     const atualizadas = Number(resumo.composicoes_atualizadas || 0);
     const jaCompativeis = Number(resumo.composicoes_ja_compativeis || 0);
     const referenciasCandidatas = Number(resumo.referencias_candidatas || 0);
+    const identidadesResolvidas = Number(resumo.identidades_vinculadas_resolvidas || 0);
+    const vinculadasVerificadas = Number(resumo.vinculadas_verificadas || 0);
+    const contexto = resumo.contexto_aplicado || {};
+    const detalhes = Array.isArray(resumo.detalhes) ? resumo.detalhes : [];
     const recalculado = resumo.recalculado === true;
     const totais = resumo.totais || {};
+    const diagnosticoDetalhes = detalhes.length
+      ? `<div style="margin-top:14px;padding:12px;border-radius:8px;background:#f8fafc;border:1px solid #cbd5e1;color:#334155">
+          <strong>Diagnóstico das primeiras linhas preservadas:</strong>
+          <div style="margin-top:8px;display:grid;gap:7px;font-size:12px">
+            ${detalhes.slice(0, 5).map((item) => `
+              <div style="padding:8px;background:white;border:1px solid #e2e8f0;border-radius:6px">
+                <strong>${Utils.esc(item.item_num || '—')} · ${Utils.esc(item.codigo || 'sem código')}</strong>
+                — fonte ${Utils.esc(item.fonte || 'não informada')}<br>
+                Vínculo interpretado: ${Utils.esc(item.codigo_vinculo || 'não resolvido')}
+                / ${Utils.esc(item.fonte_vinculo || 'não resolvida')} ·
+                candidatas: ${Number(item.candidatas_do_item || 0)} ·
+                regime exigido: ${Utils.esc(item.regime_desejado_linha || item.regime_orcamento || 'não resolvido')} ·
+                regimes encontrados: ${Utils.esc((item.regimes_encontrados || []).join(', ') || 'não informados')}
+              </div>`).join('')}
+          </div>
+        </div>`
+      : '';
     const avisoBdi = resumo.selecionar_novo_bdi
       ? `<div style="margin-top:14px;padding:12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412">
           <strong>Atenção ao BDI:</strong> o Regime Previdenciário foi alterado.
@@ -268,10 +289,17 @@ Router.register('orcamentos', async () => {
           <p><strong>${atualizadas}</strong> composição(ões) substituída(s) pela referência correspondente.</p>
           <p><strong>${jaCompativeis}</strong> composição(ões) já estavam compatíveis com a nova seleção.</p>
           <p><strong>${referenciasCandidatas}</strong> referência(s) candidata(s) localizada(s) na UF e data-base selecionadas.</p>
+          <p><strong>${identidadesResolvidas} de ${vinculadasVerificadas}</strong> vínculo(s) anterior(es) tiveram a identidade cadastral confirmada.</p>
+          <p><strong>Contexto usado pelo servidor:</strong>
+            UF ${Utils.esc(contexto.uf || 'não resolvida')} ·
+            data-base ${Utils.esc(contexto.data_base || 'não resolvida')} ·
+            regime ${Utils.esc(contexto.regime || 'não resolvido')}
+          </p>
           <p><strong>${semVinculo}</strong> linha(s) sem vínculo não foram modificadas automaticamente.</p>
           <p style="margin-top:10px"><strong>${recalculado ? 'Novo total' : 'Total preservado'}:</strong> ${Utils.moeda(totais.total || 0)}</p>
           ${avisoRegime}
           ${avisoPendencias}
+          ${diagnosticoDetalhes}
           ${avisoBdi}
         </div>`,
       footer: '<button class="btn btn-primary" id="btnFecharResumoOrc">Entendi</button>',

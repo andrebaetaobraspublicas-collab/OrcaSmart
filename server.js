@@ -845,6 +845,7 @@ app.get('/api/status', (_req, res) => res.json({
   build: BUILD_ID,
   runtime: 'node',
   budgetContextRemapVersion: 8,
+  budgetContextDiagnosticsVersion: 1,
   budgetRecalculationJobVersion: 4,
   budgetSocialChargesSummaryVersion: 1,
   budgetDerivedEventogramVersion: 1,

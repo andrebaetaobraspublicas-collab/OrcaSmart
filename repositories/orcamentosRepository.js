@@ -1022,6 +1022,11 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
 
   return {
     campos_alterados: camposAlterados,
+    contexto_aplicado: {
+      uf: String(contexto?.uf || '').trim().toUpperCase() || null,
+      data_base: String(contexto?.mes_ref || '').trim() || null,
+      regime: normalizarRegime(contexto?.regime) || null,
+    },
     vinculadas_verificadas: vinculadas.length,
     composicoes_atualizadas: atualizadas,
     composicoes_ja_compativeis: jaCompativeis,

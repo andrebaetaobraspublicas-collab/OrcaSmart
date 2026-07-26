@@ -295,6 +295,11 @@ async function main() {
     assert.strictEqual(loteAlagoas.atualizacao_composicoes.composicoes_atualizadas, 234);
     assert.strictEqual(loteAlagoas.atualizacao_composicoes.linhas_modificadas, 234);
     assert.strictEqual(loteAlagoas.atualizacao_composicoes.sem_correspondencia, 0);
+    assert.deepStrictEqual(loteAlagoas.atualizacao_composicoes.contexto_aplicado, {
+      uf: 'AL',
+      data_base: '04/2026',
+      regime: 'Desonerado',
+    });
 
     // Reproduz um orçamento legado cujo cabeçalho diz "Onerado", embora a
     // composição vinculada seja efetivamente desonerada. Ao trocar somente a
