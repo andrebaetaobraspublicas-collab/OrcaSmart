@@ -2764,14 +2764,18 @@ async function buildItensSecaoComposicaoCacheForAbc(db, idsComposicoes = []) {
 }
 
 function mesclarCachesDeListas(destino, origem) {
+  const identidade = (row) => {
+    const escopo = row._tenant_scope || row.scope || '';
+    const composicao = String(row.id_composicao || '');
+    const linha = row.sort_id == null ? '' : `:linha:${String(row.sort_id)}`;
+    return `${escopo}:${composicao}${linha}`;
+  };
   origem.forEach((rows, key) => {
     if (!destino.has(key)) destino.set(key, []);
     const atuais = destino.get(key);
-    const ids = new Set(atuais.map(row => (
-      `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || row.sort_id || '')}`
-    )));
+    const ids = new Set(atuais.map(identidade));
     rows.forEach((row) => {
-      const id = `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || row.sort_id || '')}`;
+      const id = identidade(row);
       if (!ids.has(id)) {
         atuais.push(row);
         ids.add(id);
@@ -3140,7 +3144,10 @@ async function curvaAbcInsumos(db, idOrcamento) {
   } = grafo;
   const codigosInsumos = new Set();
   const coletarCodigos = (cache) => cache.forEach((rows) => rows.forEach((row) => {
-    if (!isComposicaoItemRobusto(row)) codigosInsumos.add(row.codigo_item);
+    // Composições sem detalhamento adicional são folhas válidas da curva ABC
+    // (por exemplo, serviços auxiliares e cotações) e também precisam de preço
+    // e tributação carregados no cache contextual.
+    codigosInsumos.add(row.codigo_item);
   }));
   coletarCodigos(itensCompCache);
   coletarCodigos(itensSecaoCompCache);
@@ -3245,7 +3252,13 @@ async function curvaAbcInsumos(db, idOrcamento) {
           descricao: item.descricao,
           unidade: item.unidade,
         }, contexto, compCache, []);
-        if (sub && await expandirComposicao(sub.id_composicao, qtd, servico, new Set(visitados))) continue;
+        if (sub) {
+          const subId = String(sub.id_composicao || '').trim();
+          // Uma aresta cíclica não é uma folha analítica e não deve reaparecer
+          // na curva como uma composição de custo zero.
+          if (visitados.has(subId)) continue;
+          if (await expandirComposicao(subId, qtd, servico, new Set(visitados))) continue;
+        }
         const resolvidoInsumo = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
         if (toNum(resolvidoInsumo.preco, 0) > 0) {
           addInsumo(resolvidoInsumo, qtd, servico, resolvidoInsumo.preco, resolvidoInsumo.ibs_percentual, resolvidoInsumo.cbs_percentual);

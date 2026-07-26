@@ -859,7 +859,7 @@ app.get('/api/status', (_req, res) => res.json({
   budgetRecalculationJobVersion: 4,
   budgetSocialChargesSummaryVersion: 1,
   budgetDerivedEventogramVersion: 1,
-  budgetAbcReachableGraphVersion: 2,
+  budgetAbcReachableGraphVersion: 3,
   sicroLaborRegimesVersion: 1,
   sicroDerivedCostFixVersion: 1,
   pemPerformanceVersion: 1,
