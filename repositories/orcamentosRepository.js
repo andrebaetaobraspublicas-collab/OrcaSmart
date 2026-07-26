@@ -139,6 +139,17 @@ function codigoCanonicoComposicao(codigo, fonte = '') {
   return value;
 }
 
+function descricaoCanonicaComposicao(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
 function normalizarRegime(value) {
   const s = String(value || '').toLowerCase();
   if (s.includes('sem desoner') || s.includes('nao desoner') || s.includes('não desoner')) return 'Onerado';
@@ -330,6 +341,9 @@ function chunkArray(items, size) {
 async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   const includeUsuario = options.includeUsuario === true;
   const contexto = options.contexto || null;
+  const buscarTodoContexto = options.buscarTodoContexto === true
+    && String(contexto?.uf || '').trim()
+    && String(contexto?.mes_ref || '').trim();
   const codigosSet = new Set();
 
   for (const item of itens || []) {
@@ -341,7 +355,7 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
 
   const codigos = [...codigosSet].filter(Boolean);
   const cache = new Map();
-  if (!codigos.length) return cache;
+  if (!codigos.length && !buscarTodoContexto) return cache;
 
   const hasTenant = await tableExists(db, 'tenant_composicoes');
   const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
@@ -359,12 +373,14 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   }
   if (!selects.length) return cache;
 
-  for (const chunk of chunkArray(codigos, 500)) {
-    const qCod = chunk.map(() => '?').join(',');
-    const where = [
-      `codigo IN (${qCod})`,
-    ];
-    const params = [...chunk];
+  const chunks = buscarTodoContexto ? [[]] : chunkArray(codigos, 500);
+  for (const chunk of chunks) {
+    const where = [];
+    const params = [];
+    if (!buscarTodoContexto) {
+      where.push(`codigo IN (${chunk.map(() => '?').join(',')})`);
+      params.push(...chunk);
+    }
     const uf = String(contexto?.uf || '').trim().toUpperCase();
     const mesRef = String(contexto?.mes_ref || '').trim();
     if (uf) {
@@ -380,7 +396,7 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
       rows = await all(db, `
         SELECT *
         FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
-        WHERE ${where.join(' AND ')}`, params);
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`, params);
     } catch (error) {
       if (contexto) {
         const err = new Error(
@@ -404,6 +420,13 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
         const canonicalKey = `@${fonte}:${canonico}`;
         if (!cache.has(canonicalKey)) cache.set(canonicalKey, []);
         cache.get(canonicalKey).push(row);
+      }
+      const descricao = descricaoCanonicaComposicao(row.descricao);
+      const unidade = String(row.unidade || '').trim().toUpperCase();
+      if (fonte && descricao) {
+        const descriptionKey = `#${fonte}:${descricao}:${unidade}`;
+        if (!cache.has(descriptionKey)) cache.set(descriptionKey, []);
+        cache.get(descriptionKey).push(row);
       }
     }
   }
@@ -519,7 +542,7 @@ function candidatosParaItemNoCache(item, cache) {
   );
   const canonico = codigoCanonicoComposicao(item.codigo, fonteItem);
   if (fonteItem && canonico) keys.add(`@${fonteItem}:${canonico}`);
-  for (const key of keys) {
+  const adicionarPorChave = (key) => {
     const rows = cache.get(key) || [];
     rows.forEach((row) => {
       if (normalizarFonte(row.fonte) !== fonteItem) return;
@@ -528,6 +551,14 @@ function candidatosParaItemNoCache(item, cache) {
       ids.add(id);
       candidatos.push(row);
     });
+  };
+  for (const key of keys) adicionarPorChave(key);
+  if (!candidatos.length) {
+    const descricao = descricaoCanonicaComposicao(item.descricao);
+    const unidade = String(item.unidade || '').trim().toUpperCase();
+    if (fonteItem && descricao) {
+      adicionarPorChave(`#${fonteItem}:${descricao}:${unidade}`);
+    }
   }
   return candidatos;
 }
@@ -757,13 +788,23 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
   const cache = await buildComposicaoCandidatesForAutoLink(
     db,
     vinculadasParaBusca,
-    { includeUsuario: true, contexto },
+    {
+      includeUsuario: true,
+      contexto,
+      // A tela de Composições consulta o contexto completo. Fazer o mesmo aqui
+      // evita falsos negativos provocados por diferenças de prefixo/sufixo nos
+      // códigos persistidos nas linhas do orçamento.
+      buscarTodoContexto: true,
+    },
   );
-  const referenciasCandidatas = new Set(
-    [...cache.values()].flat().map(row => (
-      `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || '')}`
-    )),
-  ).size;
+  const referenciasCandidatas = new Set();
+  vinculadasParaBusca.forEach((item) => {
+    candidatosParaItemNoCache(item, cache).forEach((row) => {
+      referenciasCandidatas.add(
+        `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || '')}`,
+      );
+    });
+  });
 
   let atualizadas = 0;
   let jaCompativeis = 0;
@@ -853,7 +894,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     sem_correspondencia_ausente: semCorrespondenciaAusente,
     regime_orcamento: normalizarRegime(contexto?.regime) || null,
     linhas_sem_vinculo: Number(semVinculo?.total || 0),
-    referencias_candidatas: referenciasCandidatas,
+    referencias_candidatas: referenciasCandidatas.size,
     identidades_vinculadas_resolvidas: identidades.size,
     detalhes,
   };
@@ -888,7 +929,50 @@ async function listOrcamentos(db, query = {}) {
 }
 
 async function getOrcamento(db, id) {
-  return one(db, `${selectBase} WHERE o.id_orcamento = ?`, [id]);
+  let orcamento = await one(db, `${selectBase} WHERE o.id_orcamento = ?`, [id]);
+  if (orcamento?.id_obra) {
+    const obra = await one(
+      db,
+      'SELECT descricao AS descricao_obra FROM obras WHERE id_obra=?',
+      [orcamento.id_obra],
+    ).catch(() => null);
+    orcamento = { ...orcamento, descricao_obra: obra?.descricao_obra || null };
+  }
+  if (!orcamento || !await tableExists(db, 'encargos_orcamento_aplicacoes')) return orcamento;
+  const aplicacao = await one(db, `
+    SELECT id_perfil, encargo_novo_percentual, observacoes, data_aplicacao
+    FROM encargos_orcamento_aplicacoes
+    WHERE id_orcamento=?
+    ORDER BY id_aplicacao DESC
+    LIMIT 1`, [id]).catch(() => null);
+  if (!aplicacao) return orcamento;
+
+  let nomePerfil = null;
+  const fontesPerfil = [
+    { schema: 'main', table: 'tenant_perfis_encargos' },
+    { schema: 'catalog', table: 'perfis_encargos' },
+    { schema: 'main', table: 'perfis_encargos' },
+  ];
+  for (const source of fontesPerfil) {
+    if (!await tableExists(db, source.table, source.schema)) continue;
+    const perfil = await one(db, `
+      SELECT nome_perfil
+      FROM ${quoteIdent(source.schema)}.${quoteIdent(source.table)}
+      WHERE id_perfil=?
+      LIMIT 1`, [aplicacao.id_perfil]).catch(() => null);
+    if (perfil?.nome_perfil) {
+      nomePerfil = perfil.nome_perfil;
+      break;
+    }
+  }
+  return {
+    ...orcamento,
+    encargo_social_id_perfil: aplicacao.id_perfil,
+    encargo_social_nome_perfil: nomePerfil,
+    encargo_social_percentual: toNum(aplicacao.encargo_novo_percentual, 0),
+    encargo_social_observacoes: aplicacao.observacoes || null,
+    encargo_social_data_aplicacao: aplicacao.data_aplicacao || null,
+  };
 }
 
 async function obraExists(db, idObra) {
@@ -944,9 +1028,11 @@ async function updateOrcamento(db, id, data = {}) {
       normalizarRegime(data.regime_previdenciario) || 'Onerado',
       data.versao || '1.0',
       data.status || 'Em elaboração',
-      data.valor_custo_direto ?? 0,
-      data.valor_bdi ?? 0,
-      data.valor_total ?? 0,
+      // Estes valores são derivados exclusivamente do orçamento sintético.
+      // Uma edição cadastral nunca deve aceitar totais enviados pelo cliente.
+      anterior.valor_custo_direto ?? 0,
+      anterior.valor_bdi ?? 0,
+      anterior.valor_total ?? 0,
       data.observacoes || null,
       id,
     ]);

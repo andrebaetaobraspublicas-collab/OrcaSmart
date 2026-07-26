@@ -282,6 +282,18 @@ Router.register('orcamento-sintetico', async () => {
       `<option value="${b.id_perfil_bdi}" ${orc.id_bdi_perfil == b.id_perfil_bdi ? 'selected' : ''}>` +
       `${Utils.esc(b.nome_perfil)} — ${Utils.num(b.bdi_percentual, 4)}%</option>`
     ).join('');
+    const dataBaseLabel = orc.data_base_mes
+      ? `${Utils.nomeMes(orc.data_base_mes)}/${orc.data_base_ano}`
+      : 'Não informada';
+    const encargoLabel = orc.encargo_social_percentual !== undefined
+      && orc.encargo_social_percentual !== null
+      ? `${orc.encargo_social_nome_perfil ? `${Utils.esc(orc.encargo_social_nome_perfil)} — ` : ''}${Utils.num(orc.encargo_social_percentual, 4)}%`
+      : 'Não aplicado';
+    const contextoCard = (label, value, wide = false) => `
+      <div style="min-width:145px;${wide ? 'grid-column:span 2;' : ''}padding:8px 10px;border:1px solid var(--c-border);border-radius:8px;background:var(--c-surface)">
+        <div class="text-xs text-3" style="font-weight:600;letter-spacing:.3px;text-transform:uppercase">${label}</div>
+        <div class="text-sm" style="margin-top:3px;font-weight:600">${value}</div>
+      </div>`;
 
     document.getElementById('pageContent').innerHTML = `
       <!-- ── Cabeçalho ─────────────────────────────────────────────────────── -->
@@ -290,10 +302,16 @@ Router.register('orcamento-sintetico', async () => {
           <h1 style="font-size:1.25rem">Orçamento Sintético</h1>
           <p class="text-2" style="margin-top:2px">${Utils.esc(orc.nome_orcamento || '—')}</p>
           <p class="text-3 text-xs" style="margin-top:4px">
-            ${Utils.esc(orc.nome_obra || '—')} · v${Utils.esc(orc.versao||'1.0')} ·
-            ${Utils.statusBadge(orc.status)}
-            ${orc.data_base_mes ? `· <span class="text-3">Base: ${Utils.nomeMes(orc.data_base_mes)}/${orc.data_base_ano}</span>` : ''}
+            v${Utils.esc(orc.versao||'1.0')} · ${Utils.statusBadge(orc.status)}
           </p>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(145px,1fr));gap:7px;margin-top:12px;max-width:820px">
+            ${contextoCard('Obra', Utils.esc(orc.nome_obra || '—'))}
+            ${contextoCard('Descrição da obra', Utils.esc(orc.descricao_obra || 'Não informada'), true)}
+            ${contextoCard('Encargos sociais aplicados', encargoLabel, true)}
+            ${contextoCard('Regime previdenciário', Utils.esc(orc.regime_previdenciario || 'Não informado'))}
+            ${contextoCard('Data-base', Utils.esc(dataBaseLabel))}
+            ${contextoCard('UF do orçamento', Utils.esc(orc.uf_referencia || orc.obra_uf || 'Não informada'))}
+          </div>
         </div>
 
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-left:auto">

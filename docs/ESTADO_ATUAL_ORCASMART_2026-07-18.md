@@ -94,10 +94,13 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   BDI compatível.
 - Se nenhuma linha for efetivamente modificada, os totais anteriores são
   preservados; uma simples mudança cadastral não pode alterar o valor global.
-- A busca de substituições filtra UF e data-base diretamente no banco. Ela não
-  carrega mais todas as referências de todas as UFs para depois filtrar em
-  memória; isso evitava timeouts que eram anteriormente interpretados, de forma
-  incorreta, como ausência de composição.
+- A busca de substituições carrega somente o contexto completo da UF e data-base
+  selecionadas, o mesmo universo apresentado pelo módulo Composições. Dentro
+  desse conjunto, a correspondência usa identidade vinculada, código e fonte
+  canônicos e, apenas como contingência para vínculos legados inconsistentes,
+  descrição e unidade canônicas com a mesma fonte. Isso evita falsos negativos
+  causados por prefixos, sufixos ou identificadores físicos antigos sem carregar
+  referências de outras UFs ou competências.
 - Falhas reais na consulta de referências cancelam a transação e são exibidas ao
   usuário; não são mais convertidas silenciosamente em zero correspondências.
 - A atualização nunca insere nem remove linhas e valida essa invariável antes do
@@ -130,6 +133,10 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - O total exibido inicialmente é o mesmo total persistido e apresentado na lista
   de orçamentos. Edições explícitas de linhas ou BDI recalculam e persistem o
   novo total.
+- Custo direto, BDI em reais e total são derivados do orçamento sintético e não
+  aparecem nem são aceitos como campos editáveis no cadastro do orçamento.
+- O cabeçalho do orçamento sintético informa obra, descrição da obra, último
+  encargo social aplicado, regime previdenciário, data-base e UF de referência.
 
 ### Regime e encargos das composições
 
@@ -155,6 +162,9 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   efetivamente vinculada por `id_composicao`, e não os textos de código/fonte
   copiados para a linha sintética. Códigos e fontes também possuem chave
   canônica de contingência para prefixos, sufixos de regime e nomes equivalentes.
+  Quando um vínculo legado aponta para uma identidade inexistente e não há código
+  aproveitável, a correspondência exata por fonte, descrição e unidade recupera
+  a referência equivalente dentro da UF, data-base e regime selecionados.
   O fluxo sequencial onerado → desonerado → nova UF possui teste de regressão
   tanto no catálogo principal quanto no catálogo anexado.
 - A listagem de composições usa paginação rápida com custo persistido para

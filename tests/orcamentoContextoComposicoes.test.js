@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const repo = require('../repositories/orcamentosRepository');
 
@@ -139,6 +141,15 @@ async function main() {
     assert.strictEqual((await one(db, 'SELECT regime_previdenciario FROM orcamentos WHERE id_orcamento=1')).regime_previdenciario, 'Onerado');
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '1');
 
+    const cadastralSemAlterarTotais = await repo.updateOrcamento(db, 1, payload({
+      valor_custo_direto: 999999,
+      valor_bdi: 999999,
+      valor_total: 1999998,
+    }));
+    assert.strictEqual(cadastralSemAlterarTotais.valor_custo_direto, 300);
+    assert.strictEqual(cadastralSemAlterarTotais.valor_bdi, 60);
+    assert.strictEqual(cadastralSemAlterarTotais.valor_total, 360);
+
     const desonerado = await repo.updateOrcamento(db, 1, payload({
       regime_previdenciario: 'Desonerado',
       confirmar_atualizacao_composicoes: true,
@@ -243,6 +254,10 @@ async function main() {
         8, '100', 'SINAPI', 'UNITARIO', 'Serviço desonerado CE',
         'm²', '04/2026', 'CE', 'Desonerado', 75
       );
+      INSERT INTO catalog.composicoes VALUES
+        (9, '777', 'SINAPI', 'UNITARIO', 'Serviço equivalente', 'm²', '04/2026', 'DF', 'Onerado', 110),
+        (10, '777', 'SINAPI', 'UNITARIO', 'Serviço equivalente', 'm²', '04/2026', 'DF', 'Desonerado', 90),
+        (11, '777', 'SINAPI', 'UNITARIO', 'Serviço equivalente', 'm²', '04/2026', 'CE', 'Desonerado', 85);
       INSERT INTO orcamentos VALUES (
         3, 1, 'Orçamento sequencial no catálogo', '', 1, 'DF', '1.0', 'Em elaboração',
         'Onerado', 200, 40, 240, '2026-07-26', '', NULL, 20
@@ -251,6 +266,15 @@ async function main() {
         11, 3, '1.1', 'item', 1, 1, 'composicao', 'catalog:1', NULL,
         'CODIGO VISUAL DIFERENTE', 'CAIXA ECONOMICA / SINAPI',
         'Serviço onerado DF', 'm²', 2, 100, NULL
+      );
+      INSERT INTO orcamentos VALUES (
+        4, 1, 'Orçamento com vínculo legado', '', 1, 'DF', '1.0', 'Em elaboração',
+        'Onerado', 110, 22, 132, '2026-07-26', '', NULL, 20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        12, 4, '1.1', 'item', 1, 1, 'composicao', 'catalog:999999', NULL,
+        'CODIGO LEGADO SEM EQUIVALENCIA TEXTUAL', 'REFERENCIAL SINAPI',
+        'Serviço equivalente', 'm²', 1, 110, NULL
       );
     `);
     const sequencialDesonerado = await repo.updateOrcamento(db, 3, payload({
@@ -276,6 +300,49 @@ async function main() {
     assert.strictEqual(sequencialCe.atualizacao_composicoes.composicoes_atualizadas, 1);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '8');
     assert.strictEqual(sequencialCe.valor_total, 180);
+
+    const legadoDesonerado = await repo.updateOrcamento(db, 4, payload({
+      nome_orcamento: 'Orçamento com vínculo legado',
+      regime_previdenciario: 'Desonerado',
+      valor_custo_direto: 110,
+      valor_bdi: 22,
+      valor_total: 132,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoDesonerado.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=12')).id_composicao, '10');
+
+    const legadoCe = await repo.updateOrcamento(db, 4, payload({
+      nome_orcamento: 'Orçamento com vínculo legado',
+      uf_referencia: 'CE',
+      regime_previdenciario: 'Desonerado',
+      valor_custo_direto: 90,
+      valor_bdi: 18,
+      valor_total: 108,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoCe.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=12')).id_composicao, '11');
+
+    await exec(db, `
+      ALTER TABLE obras ADD COLUMN descricao TEXT;
+      UPDATE obras SET descricao='Descrição técnica da obra de teste' WHERE id_obra=1;
+      CREATE TABLE encargos_orcamento_aplicacoes (
+        id_aplicacao INTEGER PRIMARY KEY,
+        id_orcamento INTEGER,
+        id_perfil INTEGER,
+        encargo_novo_percentual REAL,
+        observacoes TEXT,
+        data_aplicacao TEXT
+      );
+      INSERT INTO encargos_orcamento_aplicacoes VALUES (
+        1, 3, 55, 84.44, 'Encargos SINAPI desonerados', '2026-07-26'
+      );
+    `);
+    const completoComContexto = await repo.getOrcamento(db, 3);
+    assert.strictEqual(completoComContexto.descricao_obra, 'Descrição técnica da obra de teste');
+    assert.strictEqual(completoComContexto.encargo_social_percentual, 84.44);
+    assert.strictEqual(completoComContexto.encargo_social_observacoes, 'Encargos SINAPI desonerados');
 
     await exec(db, `
       INSERT INTO orcamento_sintetico
@@ -307,6 +374,15 @@ async function main() {
       regime_previdenciario: 'Desonerado',
     }));
     assert.strictEqual(criadoDesonerado.regime_previdenciario, 'Desonerado');
+
+    const orcamentosJs = fs.readFileSync(path.join(__dirname, '..', 'js', 'orcamentos.js'), 'utf8');
+    assert(!orcamentosJs.includes('id="f_cd"'));
+    assert(!orcamentosJs.includes('id="f_bdi"'));
+    const sinteticoJs = fs.readFileSync(path.join(__dirname, '..', 'js', 'orcamentoSintetico.js'), 'utf8');
+    assert(sinteticoJs.includes('Descrição da obra'));
+    assert(sinteticoJs.includes('Encargos sociais aplicados'));
+    assert(sinteticoJs.includes('Regime previdenciário'));
+    assert(sinteticoJs.includes('UF do orçamento'));
 
     console.log('orcamentoContextoComposicoes.test.js: OK');
   } finally {

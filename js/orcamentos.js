@@ -196,16 +196,6 @@ Router.register('orcamentos', async () => {
               <option value="Cancelado"     ${orc.status==='Cancelado'?'selected':''}>Cancelado</option>
             </select>
           </div>
-          ${id ? `
-          <div class="form-group">
-            <label class="form-label">Custo Direto (R$)</label>
-            <input class="form-control" id="f_cd" type="number" step="0.01" value="${orc.valor_custo_direto||0}">
-          </div>
-          <div class="form-group">
-            <label class="form-label">BDI (R$)</label>
-            <input class="form-control" id="f_bdi" type="number" step="0.01" value="${orc.valor_bdi||0}">
-          </div>
-          ` : ''}
           <div class="form-group span-2">
             <label class="form-label">Descrição</label>
             <textarea class="form-control" id="f_desc" rows="3" placeholder="Observações sobre o orçamento...">${Utils.esc(orc.descricao||'')}</textarea>
@@ -291,8 +281,12 @@ Router.register('orcamentos', async () => {
   }
 
   async function salvar(id, orcOriginal = {}) {
-    const cd = parseFloat(document.getElementById('f_cd')?.value) || 0;
-    const bdi = parseFloat(document.getElementById('f_bdi')?.value) || 0;
+    // Valores financeiros pertencem ao orçamento sintético. A edição cadastral
+    // apenas os preserva; uma troca de contexto os recalcula no backend quando
+    // houver composições efetivamente substituídas.
+    const cd = Number(orcOriginal.valor_custo_direto || 0);
+    const bdi = Number(orcOriginal.valor_bdi || 0);
+    const total = Number(orcOriginal.valor_total || (cd + bdi));
     const payload = {
       id_obra:           document.getElementById('f_obra').value,
       nome_orcamento:    document.getElementById('f_nome').value.trim(),
@@ -305,7 +299,7 @@ Router.register('orcamentos', async () => {
       observacoes:       document.getElementById('f_obs').value.trim(),
       valor_custo_direto: cd,
       valor_bdi:          bdi,
-      valor_total:        cd + bdi,
+      valor_total:        total,
     };
     if (!payload.id_obra) { Toast.warning('Selecione uma obra.'); return; }
     if (!payload.nome_orcamento) { Toast.warning('Nome do orçamento é obrigatório.'); return; }
