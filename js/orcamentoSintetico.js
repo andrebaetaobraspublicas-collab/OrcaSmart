@@ -6,6 +6,8 @@ Object.assign(API, {
     completo:         (id)    => API.get(`/orcamentos/${id}/completo`),
     recalcularCustos: (id)    => API.post(`/orcamentos/${id}/recalcular-custos`),
     vincularAuto:     (id)    => API.post(`/orcamentos/${id}/sintetico/vincular-composicoes`),
+    diagnosticarDuplicatas: (id) => API.get(`/orcamentos/${id}/sintetico/duplicatas`),
+    repararDuplicatas: (id) => API.post(`/orcamentos/${id}/sintetico/reparar-duplicatas`),
     list:      (id)       => API.get(`/orcamentos/${id}/sintetico`),
     create:    (id, d)    => API.post(`/orcamentos/${id}/sintetico`, d),
     update:    (id, d)    => API.put(`/orcamentos/sintetico/${id}`, d),
@@ -83,6 +85,8 @@ Router.register('orcamento-sintetico', async () => {
   let buscaCallback  = null;  // id_item aguardando vínculo
   let undoState = null;
   let pendingSubsectionPlacement = null;
+  let verificandoDuplicatas = false;
+  let duplicatasIgnoradas = false;
 
   /* ── ID do orçamento vem via sessionStorage ──────────────────────────────── */
   const id_orc = parseInt(sessionStorage.getItem('osSintId') || '0');
@@ -102,7 +106,45 @@ Router.register('orcamento-sintetico', async () => {
       ]);
       bdiPct = parseFloat(orc.bdi_percentual) || 0;
       renderPage();
+      await verificarDuplicatasExatas();
     } catch(e) { Toast.error(e.message); }
+  }
+
+  async function verificarDuplicatasExatas() {
+    if (verificandoDuplicatas || duplicatasIgnoradas) return;
+    verificandoDuplicatas = true;
+    try {
+      const diagnostico = await API.osSint.diagnosticarDuplicatas(id_orc);
+      const excedentes = Number(diagnostico?.linhas_duplicadas_excedentes || 0);
+      if (!excedentes) return;
+
+      const confirmar = await Confirm.ask(
+        `Foram encontradas ${excedentes} linha(s) estruturalmente idêntica(s), ` +
+        'com o mesmo item, ordem, vínculo, quantidade e custo. ' +
+        'A correção manterá uma ocorrência de cada linha, preservará os vínculos do eventograma e recalculará o orçamento.',
+        {
+          title: 'Linhas duplicadas detectadas',
+          okText: 'Corrigir duplicatas',
+          okClass: 'btn btn-warning',
+        },
+      );
+      if (!confirmar) {
+        duplicatasIgnoradas = true;
+        return;
+      }
+
+      const resultado = await API.osSint.repararDuplicatas(id_orc);
+      Toast.show(
+        `${resultado.linhas_removidas || 0} linha(s) duplicada(s) removida(s). Total recalculado.`,
+        'success',
+        7000,
+      );
+      await carregar();
+    } catch (e) {
+      Toast.error(e.message);
+    } finally {
+      verificandoDuplicatas = false;
+    }
   }
 
   /* ═══════════════════ CÁLCULOS ══════════════════════════════════════════════ */

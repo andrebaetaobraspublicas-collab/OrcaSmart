@@ -72,6 +72,8 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   unitários e BDI específico por linha.
 - Cabeçalho e linhas são gravados na mesma transação; uma falha durante a cópia
   não deixa orçamento parcial.
+- A transação também valida que a quantidade de linhas gravadas é exatamente
+  igual à quantidade existente na origem; qualquer divergência cancela a cópia.
 
 ### Alteração de regime, UF e data-base do orçamento
 
@@ -84,6 +86,12 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Após o remapeamento, custo direto, BDI e total são recalculados na mesma
   transação. Mudanças de regime geram aviso para seleção de um novo perfil de
   BDI compatível.
+- A atualização nunca insere nem remove linhas e valida essa invariável antes do
+  commit. Se houver duplicatas estruturais exatas preexistentes, o recálculo é
+  bloqueado para impedir a consolidação de um total incorreto.
+- Ao abrir o orçamento sintético, duplicatas exatas podem ser reparadas mediante
+  confirmação: preserva-se uma ocorrência, os vínculos do eventograma são
+  remapeados e o total é recalculado na mesma transação.
 
 ### BDI e Reforma Tributária
 

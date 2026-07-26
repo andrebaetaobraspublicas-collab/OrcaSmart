@@ -172,6 +172,31 @@ async function main() {
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '4');
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=1')).custo_unitario, 60);
 
+    await exec(db, `
+      INSERT INTO orcamento_sintetico
+      SELECT 3, id_orcamento, item_num, tipo_linha, profundidade, ordem, tipo_item,
+             id_composicao, id_insumo, codigo, fonte, descricao, unidade,
+             quantidade, custo_unitario, bdi_percentual_linha
+      FROM orcamento_sintetico
+      WHERE id_item=1;
+    `);
+    await assert.rejects(
+      () => repo.updateOrcamento(db, 1, payload({
+        id_data_base: 1,
+        uf_referencia: 'DF',
+        regime_previdenciario: 'Onerado',
+        confirmar_atualizacao_composicoes: true,
+      })),
+      error => error.status === 409
+        && error.codigo === 'ORCAMENTO_COM_LINHAS_DUPLICADAS'
+        && /duplicada/.test(error.message),
+    );
+    assert.strictEqual((await one(db, 'SELECT COUNT(*) AS total FROM orcamento_sintetico WHERE id_orcamento=1')).total, 3);
+    assert.strictEqual((await one(db, 'SELECT uf_referencia FROM orcamentos WHERE id_orcamento=1')).uf_referencia, 'GO');
+    const reparado = await repo.repararDuplicatasSintetico(db, 1);
+    assert.strictEqual(reparado.linhas_removidas, 1);
+    assert.strictEqual((await one(db, 'SELECT COUNT(*) AS total FROM orcamento_sintetico WHERE id_orcamento=1')).total, 2);
+
     const criadoDesonerado = await repo.createOrcamento(db, payload({
       nome_orcamento: 'Novo orçamento desonerado',
       regime_previdenciario: 'Desonerado',

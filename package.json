@@ -11,7 +11,7 @@
         "start:python": "python server.py",
         "test:bdi": "node tests/bdiRules.test.js && node tests/bdiRoutesScope.test.js",
         "test:riscos": "node tests/riscosEngine.test.js && node tests/riscosBdiIntegration.test.js",
-        "test:orcamentos": "node tests/orcamentoBdi.test.js && node tests/orcamentoDuplicacao.test.js && node tests/orcamentoContextoComposicoes.test.js",
+        "test:orcamentos": "node tests/orcamentoBdi.test.js && node tests/orcamentoDuplicacao.test.js && node tests/orcamentoContextoComposicoes.test.js && node tests/orcamentoDuplicatasSintetico.test.js",
         "test:insumos": "node tests/insumosTenantRevision.test.js",
         "test:eventogramas": "node tests/eventogramas.test.js",
         "test:composicoes": "node tests/composicoesRecalculo.test.js && node tests/composicoesSicroDetalhe.test.js && node tests/composicoesSicroEdicao.test.js",

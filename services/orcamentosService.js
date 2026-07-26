@@ -260,6 +260,23 @@ async function restoreSintetico(db, idOrcamento, data = {}) {
   return { mensagem: 'Orçamento restaurado.', itens: rows || [] };
 }
 
+async function diagnosticarDuplicatasSintetico(db, idOrcamento) {
+  const resultado = await repo.diagnosticarDuplicatasSintetico(db, idOrcamento);
+  if (!resultado) throw httpError(404, 'Orçamento não encontrado.');
+  return resultado;
+}
+
+async function repararDuplicatasSintetico(db, idOrcamento) {
+  const resultado = await repo.repararDuplicatasSintetico(db, idOrcamento);
+  if (!resultado) throw httpError(404, 'Orçamento não encontrado.');
+  return {
+    ...resultado,
+    mensagem: resultado.linhas_removidas
+      ? `${resultado.linhas_removidas} linha(s) duplicada(s) removida(s).`
+      : 'Nenhuma linha duplicada exata foi encontrada.',
+  };
+}
+
 async function curvaAbcServicos(db, idOrcamento) {
   const result = await repo.curvaAbcServicos(db, idOrcamento);
   if (!result) throw httpError(404, 'Orçamento não encontrado.');
@@ -1229,6 +1246,8 @@ module.exports = {
   deleteSinteticoItem,
   reordenarSintetico,
   restoreSintetico,
+  diagnosticarDuplicatasSintetico,
+  repararDuplicatasSintetico,
   recalcularCustos: repo.recalcularCustos,
   vincularComposicoesAutomaticamente: repo.vincularComposicoesAutomaticamente,
   importarSinteticoIA,

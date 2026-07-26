@@ -65,6 +65,17 @@ module.exports = function(db) {
     res.json(await orcamentosService.listSintetico(db, req.params.id));
   }));
 
+  router.get('/:id/sintetico/duplicatas', asyncHandler(async (req, res) => {
+    res.json(await orcamentosService.diagnosticarDuplicatasSintetico(db, req.params.id));
+  }));
+
+  router.post('/:id/sintetico/reparar-duplicatas', asyncHandler(async (req, res) => {
+    const resultado = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.repararDuplicatasSintetico(writeDb, req.params.id))
+      : await orcamentosService.repararDuplicatasSintetico(db, req.params.id);
+    res.json(resultado);
+  }));
+
   router.post('/:id/sintetico', asyncHandler(async (req, res) => {
     res.status(201).json(await orcamentosService.createSinteticoItem(db, req.params.id, req.body || {}));
   }));

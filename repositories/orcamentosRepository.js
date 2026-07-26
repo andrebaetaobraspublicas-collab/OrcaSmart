@@ -403,6 +403,156 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache) {
   return candidatos[0] || null;
 }
 
+function assinaturaLinhaSintetico(item = {}) {
+  const text = value => String(value ?? '');
+  const number = value => Number(toNum(value, 0).toFixed(8));
+  const nullableNumber = value => (
+    value === null || value === undefined || value === '' ? null : number(value)
+  );
+  return JSON.stringify([
+    text(item.item_num),
+    text(item.tipo_linha),
+    number(item.profundidade),
+    number(item.ordem),
+    text(item.tipo_item),
+    text(item.id_composicao),
+    text(item.id_insumo),
+    text(item.codigo),
+    text(item.fonte),
+    text(item.descricao),
+    text(item.unidade),
+    number(item.quantidade),
+    number(item.custo_unitario),
+    nullableNumber(item.bdi_percentual_linha),
+  ]);
+}
+
+function agruparDuplicatasExatas(rows = []) {
+  const grupos = new Map();
+  for (const row of rows) {
+    const assinatura = assinaturaLinhaSintetico(row);
+    if (!grupos.has(assinatura)) grupos.set(assinatura, []);
+    grupos.get(assinatura).push(row);
+  }
+  return [...grupos.values()]
+    .filter(grupo => grupo.length > 1)
+    .map(grupo => grupo.sort((a, b) => toNum(a.id_item, 0) - toNum(b.id_item, 0)));
+}
+
+async function diagnosticarDuplicatasSintetico(db, idOrcamento) {
+  const orcamento = await one(db, 'SELECT id_orcamento FROM orcamentos WHERE id_orcamento=?', [idOrcamento]);
+  if (!orcamento) return null;
+  const rows = await all(db, `
+    SELECT *
+    FROM orcamento_sintetico
+    WHERE id_orcamento=?
+    ORDER BY ordem, id_item`, [idOrcamento]);
+  const grupos = agruparDuplicatasExatas(rows);
+  const exemplos = grupos.slice(0, 20).map((grupo) => ({
+    manter_id_item: grupo[0].id_item,
+    remover_ids: grupo.slice(1).map(item => item.id_item),
+    item_num: grupo[0].item_num,
+    codigo: grupo[0].codigo,
+    descricao: grupo[0].descricao,
+    ocorrencias: grupo.length,
+  }));
+  return {
+    linhas_totais: rows.length,
+    grupos_duplicados: grupos.length,
+    linhas_duplicadas_excedentes: grupos.reduce((total, grupo) => total + grupo.length - 1, 0),
+    exemplos,
+  };
+}
+
+async function repararDuplicatasSintetico(db, idOrcamento) {
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const diagnostico = await diagnosticarDuplicatasSintetico(db, idOrcamento);
+    if (!diagnostico) {
+      await run(db, 'COMMIT');
+      return null;
+    }
+    if (!diagnostico.linhas_duplicadas_excedentes) {
+      const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+      await run(db, 'COMMIT');
+      return { ...diagnostico, linhas_removidas: 0, totais };
+    }
+
+    const rows = await all(db, `
+      SELECT *
+      FROM orcamento_sintetico
+      WHERE id_orcamento=?
+      ORDER BY ordem, id_item`, [idOrcamento]);
+    const grupos = agruparDuplicatasExatas(rows);
+    const hasEventoItens = await tableExists(db, 'ev_evento_itens');
+    const itensReparados = new Set();
+    let removidas = 0;
+
+    for (const grupo of grupos) {
+      const manterId = grupo[0].id_item;
+      itensReparados.add(String(manterId));
+      for (const duplicada of grupo.slice(1)) {
+        if (hasEventoItens) {
+          const vinculosDuplicada = await all(db, `
+            SELECT id, id_evento
+            FROM ev_evento_itens
+            WHERE id_item=?`, [duplicada.id_item]);
+          for (const vinculo of vinculosDuplicada) {
+            const existente = await one(db, `
+              SELECT id
+              FROM ev_evento_itens
+              WHERE id_evento=? AND id_item=?`, [vinculo.id_evento, manterId]);
+            if (existente) {
+              await run(db, 'DELETE FROM ev_evento_itens WHERE id=?', [vinculo.id]);
+            } else {
+              await run(db, 'UPDATE ev_evento_itens SET id_item=? WHERE id=?', [manterId, vinculo.id]);
+            }
+          }
+        }
+        const result = await run(db, `
+          DELETE FROM orcamento_sintetico
+          WHERE id_orcamento=? AND id_item=?`, [idOrcamento, duplicada.id_item]);
+        removidas += Number(result.changes || 0);
+      }
+    }
+
+    if (hasEventoItens) {
+      for (const idItem of itensReparados) {
+        const eventoItens = await all(db, `
+          SELECT id, id_evento, id_item
+          FROM ev_evento_itens
+          WHERE id_item=?
+          ORDER BY id_evento, id`, [idItem]);
+        const eventosVistos = new Set();
+        for (const vinculo of eventoItens) {
+          const key = String(vinculo.id_evento);
+          if (!eventosVistos.has(key)) {
+            eventosVistos.add(key);
+            continue;
+          }
+          await run(db, 'DELETE FROM ev_evento_itens WHERE id=?', [vinculo.id]);
+        }
+      }
+    }
+
+    const depois = await diagnosticarDuplicatasSintetico(db, idOrcamento);
+    if (depois?.linhas_duplicadas_excedentes) {
+      throw new Error('A reparação não conseguiu eliminar todas as duplicatas exatas.');
+    }
+    const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    await run(db, 'COMMIT');
+    return {
+      ...diagnostico,
+      linhas_removidas: removidas,
+      linhas_restantes: depois?.linhas_totais ?? null,
+      totais,
+    };
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+
 async function recalcularTotaisDoOrcamento(db, idOrcamento) {
   const orcamento = await one(db, 'SELECT bdi_percentual FROM orcamentos WHERE id_orcamento=?', [idOrcamento]);
   const bdiPadrao = toNum(orcamento?.bdi_percentual, 0);
@@ -600,7 +750,25 @@ async function updateOrcamento(db, id, data = {}) {
 
     let atualizacaoComposicoes = null;
     if (alteracoesContexto.length) {
+      const diagnosticoDuplicatas = await diagnosticarDuplicatasSintetico(db, id);
+      if (diagnosticoDuplicatas?.linhas_duplicadas_excedentes) {
+        const err = new Error(
+          `Foram detectadas ${diagnosticoDuplicatas.linhas_duplicadas_excedentes} linha(s) duplicada(s) exata(s). `
+          + 'Abra o Orçamento Sintético e confirme a reparação antes de alterar regime, UF ou data-base.',
+        );
+        err.status = 409;
+        err.codigo = 'ORCAMENTO_COM_LINHAS_DUPLICADAS';
+        throw err;
+      }
+      const totalLinhasAntes = diagnosticoDuplicatas?.linhas_totais ?? 0;
       atualizacaoComposicoes = await remapearComposicoesVinculadas(db, id, alteracoesContexto);
+      const totalLinhasDepois = Number((await one(db, `
+        SELECT COUNT(*) AS total
+        FROM orcamento_sintetico
+        WHERE id_orcamento=?`, [id]))?.total || 0);
+      if (totalLinhasDepois !== totalLinhasAntes) {
+        throw new Error('A atualização foi cancelada porque alterou indevidamente a quantidade de linhas do orçamento.');
+      }
       atualizacaoComposicoes.totais = await recalcularTotaisDoOrcamento(db, id);
       atualizacaoComposicoes.selecionar_novo_bdi = alteracoesContexto.includes('regime_previdenciario');
     }
@@ -684,6 +852,17 @@ async function duplicarOrcamento(db, id) {
         item.data_criacao,
         item.bdi_percentual_linha,
       ]);
+    }
+
+    const totalInserido = Number((await one(db, `
+      SELECT COUNT(*) AS total
+      FROM orcamento_sintetico
+      WHERE id_orcamento=?`, [result.lastID]))?.total || 0);
+    if (totalInserido !== itens.length) {
+      throw new Error(
+        `A duplicação foi cancelada por inconsistência: eram esperadas ${itens.length} linha(s), `
+        + `mas foram gravadas ${totalInserido}.`,
+      );
     }
 
     const duplicado = await getOrcamento(db, result.lastID);
@@ -2058,6 +2237,8 @@ module.exports = {
   deleteSinteticoItem,
   reordenarSintetico,
   restoreSintetico,
+  diagnosticarDuplicatasSintetico,
+  repararDuplicatasSintetico,
   recalcularCustos,
   vincularComposicoesAutomaticamente,
   importarSinteticoRows,
