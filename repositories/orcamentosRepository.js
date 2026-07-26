@@ -95,6 +95,8 @@ function codigoVariantesComposicao(codigo, fonte = '') {
     bases.add(original.replace(/^[A-Z]+[./-]/i, ''));
   }
   if (original.includes('/')) bases.add(original.split('/').pop());
+  const canonico = codigoCanonicoComposicao(original, fonteNorm);
+  if (canonico) bases.add(canonico);
 
   const out = new Set();
   bases.forEach((base) => {
@@ -105,6 +107,36 @@ function codigoVariantesComposicao(codigo, fonte = '') {
     if (fonteNorm) out.add(`${fonteNorm}.${b}`);
   });
   return [...out].filter(Boolean);
+}
+
+function codigoCanonicoComposicao(codigo, fonte = '') {
+  let value = String(codigo || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .toUpperCase();
+  if (!value) return '';
+  const fonteNorm = normalizarFonte(fonte);
+  const prefixos = [
+    fonteNorm,
+    'SINAPI',
+    'SICRO',
+    'SICOR',
+    'SEINFRA',
+    'SUDECAP',
+    'GOINFRA',
+    'CDHU',
+    'USUARIO',
+  ].filter(Boolean);
+  for (const prefixo of prefixos) {
+    const escaped = prefixo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    value = value.replace(new RegExp(`^${escaped}[\\s./:_-]+`, 'i'), '');
+  }
+  value = value
+    .replace(/[./:_-]+(?:DESONERAD[OA]?|DES|ONERAD[OA]?|ON|O)$/i, '')
+    .replace(/[\s./:_-]+/g, '');
+  return value;
 }
 
 function normalizarRegime(value) {
@@ -299,21 +331,17 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   const includeUsuario = options.includeUsuario === true;
   const contexto = options.contexto || null;
   const codigosSet = new Set();
-  const fontesSet = new Set();
 
   for (const item of itens || []) {
     const fonteNorm = normalizarFonte(item.fonte);
     if (!fonteNorm || (!includeUsuario && fonteNorm === 'USUARIO')) continue;
     codigoVariantesComposicao(item.codigo, item.fonte)
       .forEach(codigo => codigosSet.add(String(codigo || '').trim()));
-    fonteAliases(item.fonte)
-      .forEach(fonte => fontesSet.add(String(fonte || '').trim().toUpperCase()));
   }
 
   const codigos = [...codigosSet].filter(Boolean);
-  const fontes = [...fontesSet].filter(Boolean);
   const cache = new Map();
-  if (!codigos.length || !fontes.length) return cache;
+  if (!codigos.length) return cache;
 
   const hasTenant = await tableExists(db, 'tenant_composicoes');
   const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
@@ -331,14 +359,12 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   }
   if (!selects.length) return cache;
 
-  const qFonte = fontes.map(() => '?').join(',');
   for (const chunk of chunkArray(codigos, 500)) {
     const qCod = chunk.map(() => '?').join(',');
     const where = [
       `codigo IN (${qCod})`,
-      `UPPER(COALESCE(fonte,'')) IN (${qFonte})`,
     ];
-    const params = [...chunk, ...fontes];
+    const params = [...chunk];
     const uf = String(contexto?.uf || '').trim().toUpperCase();
     const mesRef = String(contexto?.mes_ref || '').trim();
     if (uf) {
@@ -372,10 +398,86 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
       if (!key) continue;
       if (!cache.has(key)) cache.set(key, []);
       cache.get(key).push(row);
+      const fonte = normalizarFonte(row.fonte);
+      const canonico = codigoCanonicoComposicao(row.codigo, fonte);
+      if (fonte && canonico) {
+        const canonicalKey = `@${fonte}:${canonico}`;
+        if (!cache.has(canonicalKey)) cache.set(canonicalKey, []);
+        cache.get(canonicalKey).push(row);
+      }
     }
   }
 
   return cache;
+}
+
+function idComposicaoComparavel(value) {
+  return String(value ?? '').trim().replace(/^(?:catalog|main):/i, '');
+}
+
+async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
+  const ids = [...new Set(
+    itens
+      .map(item => idComposicaoComparavel(item.id_composicao))
+      .filter(Boolean),
+  )];
+  const identidades = new Map();
+  if (!ids.length) return identidades;
+
+  const hasTenant = await tableExists(db, 'tenant_composicoes');
+  const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
+  const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
+  const selects = [];
+  if (hasCatalog) {
+    selects.push(compSelectForAuto(
+      'CAST(c.id_composicao AS TEXT)',
+      "'catalog'",
+      'catalog.composicoes',
+      hasOverrides,
+    ));
+  }
+  if (hasTenant) {
+    const tenantPk = tenantSyntheticPk('tenant_composicoes');
+    const tenantIdExpr = isMysqlRuntime()
+      ? `CONCAT('tenant:', c.${tenantPk})`
+      : "'tenant:' || c.rowid";
+    selects.push(compSelectForAuto(tenantIdExpr, "'tenant'", 'tenant_composicoes'));
+  }
+  if (!hasCatalog && (await tableExists(db, 'composicoes'))) {
+    selects.push(compSelectForAuto(
+      'CAST(c.id_composicao AS TEXT)',
+      "'main'",
+      'composicoes',
+      false,
+    ));
+  }
+  if (!selects.length) return identidades;
+
+  for (const chunk of chunkArray(ids, 500)) {
+    const rows = await all(db, `
+      SELECT *
+      FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_vinculadas
+      WHERE id_composicao IN (${chunk.map(() => '?').join(',')})`, chunk).catch(() => []);
+    rows.forEach((row) => {
+      const key = idComposicaoComparavel(row.id_composicao);
+      if (!key) return;
+      identidades.set(key, row);
+    });
+  }
+  return identidades;
+}
+
+function itemComIdentidadeVinculada(item, identidades) {
+  const identidade = identidades.get(idComposicaoComparavel(item.id_composicao));
+  if (!identidade) return item;
+  return {
+    ...item,
+    codigo: identidade.codigo || item.codigo,
+    fonte: identidade.fonte || item.fonte,
+    _situacao_ref_vinculada: identidade.situacao_ref || null,
+    _codigo_exibicao: item.codigo,
+    _fonte_exibicao: item.fonte,
+  };
 }
 
 function escolherComposicaoParaItemNoCache(item, contexto, cache) {
@@ -408,14 +510,20 @@ function composicaoCompativelEstrita(candidato, contexto, options = {}) {
 }
 
 function candidatosParaItemNoCache(item, cache) {
-  const fontes = new Set(fonteAliases(item.fonte).map(f => String(f || '').trim().toUpperCase()));
+  const fonteItem = normalizarFonte(item.fonte);
   const candidatos = [];
   const ids = new Set();
-  for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
-    const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
+  const keys = new Set(
+    codigoVariantesComposicao(item.codigo, item.fonte)
+      .map(codigo => String(codigo || '').trim().toUpperCase()),
+  );
+  const canonico = codigoCanonicoComposicao(item.codigo, fonteItem);
+  if (fonteItem && canonico) keys.add(`@${fonteItem}:${canonico}`);
+  for (const key of keys) {
+    const rows = cache.get(key) || [];
     rows.forEach((row) => {
-      if (!fontes.has(String(row.fonte || '').trim().toUpperCase())) return;
-      const id = String(row.id_composicao || '');
+      if (normalizarFonte(row.fonte) !== fonteItem) return;
+      const id = `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || '')}`;
       if (ids.has(id)) return;
       ids.add(id);
       candidatos.push(row);
@@ -429,9 +537,12 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterado
   const candidatos = [];
   let composicaoAtual = null;
   candidatosItem.forEach((row) => {
-    if (String(row.id_composicao) === String(item.id_composicao)) composicaoAtual = row;
+    if (idComposicaoComparavel(row.id_composicao)
+        === idComposicaoComparavel(item.id_composicao)) composicaoAtual = row;
   });
-  const regimeAtual = normalizarRegime(composicaoAtual?.situacao_ref);
+  const regimeAtual = normalizarRegime(
+    item._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
+  );
   const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario') && !regimeAtual;
   candidatosItem.forEach((row) => {
     if (composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) candidatos.push(row);
@@ -641,13 +752,18 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     FROM orcamento_sintetico
     WHERE id_orcamento=? AND tipo_linha='item'
       AND (id_composicao IS NULL OR TRIM(CAST(id_composicao AS TEXT)) = '')`, [idOrcamento]);
+  const identidades = await buscarIdentidadesComposicoesVinculadas(db, vinculadas);
+  const vinculadasParaBusca = vinculadas.map(item => itemComIdentidadeVinculada(item, identidades));
   const cache = await buildComposicaoCandidatesForAutoLink(
     db,
-    vinculadas,
+    vinculadasParaBusca,
     { includeUsuario: true, contexto },
   );
-  const referenciasCandidatas = [...cache.values()]
-    .reduce((total, rows) => total + rows.length, 0);
+  const referenciasCandidatas = new Set(
+    [...cache.values()].flat().map(row => (
+      `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || '')}`
+    )),
+  ).size;
 
   let atualizadas = 0;
   let jaCompativeis = 0;
@@ -656,11 +772,13 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
   let semCorrespondenciaRegime = 0;
   let semCorrespondenciaAusente = 0;
   const detalhes = [];
-  for (const item of vinculadas) {
-    const composicao = escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados);
+  for (let index = 0; index < vinculadas.length; index += 1) {
+    const item = vinculadas[index];
+    const itemBusca = vinculadasParaBusca[index];
+    const composicao = escolherComposicaoEstritaParaItem(itemBusca, contexto, cache, camposAlterados);
     if (!composicao) {
       semCorrespondencia += 1;
-      const candidatasItem = candidatosParaItemNoCache(item, cache);
+      const candidatasItem = candidatosParaItemNoCache(itemBusca, cache);
       const regimeAlvo = normalizarRegime(contexto?.regime);
       const regimesCandidatos = new Set(
         candidatasItem.map(row => normalizarRegime(row.situacao_ref)).filter(Boolean),
@@ -677,6 +795,9 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
           item_num: item.item_num,
           codigo: item.codigo,
           fonte: item.fonte,
+          codigo_vinculo: itemBusca.codigo,
+          fonte_vinculo: itemBusca.fonte,
+          candidatas_do_item: candidatasItem.length,
           status: rejeitadaPorRegime
             ? 'mantida_regime_incompativel'
             : 'mantida_sem_correspondencia',
@@ -687,7 +808,8 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       continue;
     }
 
-    const mesmoVinculo = String(composicao.id_composicao) === String(item.id_composicao);
+    const mesmoVinculo = idComposicaoComparavel(composicao.id_composicao)
+      === idComposicaoComparavel(item.id_composicao);
     const custo = toNum(composicao.custo_unitario, 0) > 0
       ? composicao.custo_unitario
       : item.custo_unitario;
@@ -732,6 +854,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     regime_orcamento: normalizarRegime(contexto?.regime) || null,
     linhas_sem_vinculo: Number(semVinculo?.total || 0),
     referencias_candidatas: referenciasCandidatas,
+    identidades_vinculadas_resolvidas: identidades.size,
     detalhes,
   };
 }

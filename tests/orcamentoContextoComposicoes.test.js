@@ -107,7 +107,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         1, 1, '1.1', 'item', 1, 1, 'composicao', '1', NULL,
-        'SINAPI.100', 'SINAPI', 'Serviço onerado DF', 'm²', 2, 100, NULL
+        'SERVICO-100-V1', 'REFERENCIAL SINAPI', 'Serviço onerado DF', 'm²', 2, 100, NULL
       );
       INSERT INTO orcamento_sintetico VALUES (
         2, 1, '1.2', 'item', 1, 2, 'composicao', NULL, NULL,
@@ -128,7 +128,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         10, 2, '1.1', 'item', 1, 1, 'composicao', '6', NULL,
-        'SINAPI.93358', 'SINAPI', 'Escavação DF', 'm³', 1, 100, NULL
+        'ITEM-ORCAMENTO-93358', 'CAIXA / SINAPI', 'Escavação DF', 'm³', 1, 100, NULL
       );
     `);
 
@@ -148,6 +148,7 @@ async function main() {
     assert.strictEqual(desonerado.atualizacao_composicoes.linhas_sem_vinculo, 1);
     assert.strictEqual(desonerado.atualizacao_composicoes.selecionar_novo_bdi, true);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '2');
+    assert.strictEqual((await one(db, 'SELECT codigo FROM orcamento_sintetico WHERE id_item=1')).codigo, 'SINAPI.100');
     assert.strictEqual(desonerado.valor_custo_direto, 260);
     assert.strictEqual(desonerado.valor_bdi, 52);
     assert.strictEqual(desonerado.valor_total, 312);
@@ -209,6 +210,7 @@ async function main() {
     assert.strictEqual(alteradoParaCe.atualizacao_composicoes.referencias_candidatas, 1);
     assert.strictEqual(alteradoParaCe.atualizacao_composicoes.recalculado, true);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=10')).id_composicao, '7');
+    assert.strictEqual((await one(db, 'SELECT codigo FROM orcamento_sintetico WHERE id_item=10')).codigo, '93358');
     assert.strictEqual(alteradoParaCe.valor_total, 114);
     assert(
       consultasCandidatas.some(sql => (
@@ -232,6 +234,48 @@ async function main() {
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 1);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.recalculado, false);
     assert.strictEqual(regimeSemReferencia.valor_total, 114);
+
+    await exec(db, `
+      ATTACH DATABASE ':memory:' AS catalog;
+      CREATE TABLE catalog.composicoes AS SELECT * FROM main.composicoes WHERE 0;
+      INSERT INTO catalog.composicoes SELECT * FROM main.composicoes;
+      INSERT INTO catalog.composicoes VALUES (
+        8, '100', 'SINAPI', 'UNITARIO', 'Serviço desonerado CE',
+        'm²', '04/2026', 'CE', 'Desonerado', 75
+      );
+      INSERT INTO orcamentos VALUES (
+        3, 1, 'Orçamento sequencial no catálogo', '', 1, 'DF', '1.0', 'Em elaboração',
+        'Onerado', 200, 40, 240, '2026-07-26', '', NULL, 20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        11, 3, '1.1', 'item', 1, 1, 'composicao', 'catalog:1', NULL,
+        'CODIGO VISUAL DIFERENTE', 'CAIXA ECONOMICA / SINAPI',
+        'Serviço onerado DF', 'm²', 2, 100, NULL
+      );
+    `);
+    const sequencialDesonerado = await repo.updateOrcamento(db, 3, payload({
+      nome_orcamento: 'Orçamento sequencial no catálogo',
+      regime_previdenciario: 'Desonerado',
+      valor_custo_direto: 200,
+      valor_bdi: 40,
+      valor_total: 240,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(sequencialDesonerado.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '2');
+
+    const sequencialCe = await repo.updateOrcamento(db, 3, payload({
+      nome_orcamento: 'Orçamento sequencial no catálogo',
+      uf_referencia: 'CE',
+      regime_previdenciario: 'Desonerado',
+      valor_custo_direto: 160,
+      valor_bdi: 32,
+      valor_total: 192,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(sequencialCe.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '8');
+    assert.strictEqual(sequencialCe.valor_total, 180);
 
     await exec(db, `
       INSERT INTO orcamento_sintetico

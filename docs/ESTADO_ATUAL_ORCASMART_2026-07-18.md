@@ -151,6 +151,12 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   em regime incompatível não são utilizadas. O resumo diferencia ausência real
   de composição da rejeição por regime e informa o regime atual do orçamento;
   registros SINAPI legados `COM CUSTO` são tratados como `Desonerado`.
+- A substituição contextual usa como identidade principal a composição
+  efetivamente vinculada por `id_composicao`, e não os textos de código/fonte
+  copiados para a linha sintética. Códigos e fontes também possuem chave
+  canônica de contingência para prefixos, sufixos de regime e nomes equivalentes.
+  O fluxo sequencial onerado → desonerado → nova UF possui teste de regressão
+  tanto no catálogo principal quanto no catálogo anexado.
 - A listagem de composições usa paginação rápida com custo persistido para
   referências oficiais, evitando a abertura N+1 de até 50 memórias SICRO por
   página. Estatísticas e resultados recentes possuem cache curto por tenant;
