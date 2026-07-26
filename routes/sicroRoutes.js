@@ -97,19 +97,74 @@ module.exports = function sicroRoutes(db) {
 
   router.post('/importar-insumos', upload, async (req, res) => {
     try {
+      cleanupJobs();
       const { fields, files } = parseMultipartAll(req.body, req.headers['content-type']);
-      const required = ['arq_mo', 'arq_mat', 'arq_equip'];
+      const required = ['arq_mo_on', 'arq_mo_des', 'arq_mat', 'arq_equip'];
       const missing = required.filter(name => !files[name]?.buffer?.length);
       if (missing.length) return res.status(400).json({ erro: `Arquivos ausentes: ${missing.join(', ')}.` });
       const invalid = required.find(name => !validOffice(files[name]));
       if (invalid) return res.status(400).json({ erro: `O arquivo ${invalid} deve estar em .xlsx ou .xlsm.` });
       const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
       if (!Number.isInteger(tenantId) || tenantId <= 0) return res.status(400).json({ erro: 'Tenant do usuário não identificado.' });
-      return res.json(await importSicroInputs(db, files, fields, tenantId));
+      const active = [...JOBS.values()].find(job => job.tenant_id === tenantId && job.status === 'running');
+      if (active) return res.status(409).json({ erro: 'Ja existe uma importacao SICRO em andamento para este usuario.', job_id: active.id });
+      const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+      const job = {
+        id,
+        tenant_id: tenantId,
+        id_user: req.user?.id_user || null,
+        status: 'running',
+        percent: 3,
+        fase: 'Recebendo arquivos',
+        mensagem: 'Quatro relatorios recebidos. Preparando precos e composicoes desoneradas.',
+        counts: {},
+        result: null,
+        erro: null,
+        updated_at_ms: Date.now(),
+      };
+      JOBS.set(id, job);
+      setImmediate(async () => {
+        try {
+          Object.assign(job, {
+            percent: 10,
+            fase: 'Importando insumos',
+            mensagem: 'Processando mao de obra onerada/desonerada, materiais e equipamentos.',
+            updated_at_ms: Date.now(),
+          });
+          const result = await importSicroInputs(db, files, fields, tenantId);
+          Object.assign(job, {
+            status: 'done',
+            percent: 100,
+            fase: 'Concluido',
+            mensagem: result.mensagem,
+            counts: result,
+            result,
+            updated_at_ms: Date.now(),
+          });
+        } catch (err) {
+          console.error('Falha na importação de insumos SICRO:', err);
+          Object.assign(job, {
+            status: 'error',
+            fase: 'Erro',
+            mensagem: err.message,
+            erro: err.message,
+            updated_at_ms: Date.now(),
+          });
+        }
+      });
+      return res.status(202).json(publicJob(job));
     } catch (err) {
       console.error('Falha na importação de insumos SICRO:', err);
       return res.status(err.status || 500).json({ erro: err.message || 'Falha ao importar insumos SICRO.' });
     }
+  });
+
+  router.get('/importar-insumos/:jobId', (req, res) => {
+    cleanupJobs();
+    const job = JOBS.get(req.params.jobId);
+    const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+    if (!job || job.tenant_id !== tenantId) return res.status(404).json({ erro: 'Importacao SICRO nao encontrada.' });
+    return res.json(publicJob(job));
   });
 
   return router;

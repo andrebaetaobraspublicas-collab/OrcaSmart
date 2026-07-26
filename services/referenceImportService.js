@@ -1,6 +1,7 @@
 const pdfParse = require('pdf-parse');
 const XLSX = require('xlsx');
 const { parseXlsxBuffer, parseXlsxSheets, forEachXlsxSheetRow } = require('../utils/spreadsheetUpload');
+const { materializarComposicoesSicroDesoneradas } = require('./sicroService');
 
 function text(value) { return String(value ?? '').trim(); }
 function ascii(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
@@ -80,12 +81,14 @@ function parseReference(value, fallbackMes, fallbackAno) {
   return { mes: Number(fallbackMes), ano: Number(fallbackAno) };
 }
 
-function parseSicroLaborOrMaterial(buffer, prefix, tipo) {
+function parseSicroLaborOrMaterial(buffer, prefix, tipo, desonerado = false) {
   const rows = parseXlsxBuffer(buffer);
   return rows.map(row => ({
     codigo: code(row[0]), descricao: text(row[1]), unidade: code(row[2]) || 'UN', tipo,
-    precoNaoDesonerado: number(row[3]),
-  })).filter(item => item.codigo.startsWith(prefix) && item.descricao && item.precoNaoDesonerado != null);
+    [desonerado ? 'precoDesonerado' : 'precoNaoDesonerado']: number(row[3]),
+  })).filter(item => item.codigo.startsWith(prefix)
+    && item.descricao
+    && (item.precoDesonerado != null || item.precoNaoDesonerado != null));
 }
 
 function parseSicroEquipment(buffer) {
@@ -536,7 +539,11 @@ async function persistInsumos(conn, records, options) {
   let ignored = 0; let updated = 0;
   for (const item of records) {
     const id = ids.get(item.codigo); const old = prices.get(id);
-    if (old && !options.sobrepor) { ignored += 1; continue; }
+    const completaRegimeAusente = old && !options.sobrepor && (
+      (item.precoDesonerado != null && !(Number(old.preco_desonerado) > 0))
+      || (item.precoNaoDesonerado != null && !(Number(old.preco_nao_desonerado) > 0))
+    );
+    if (old && !options.sobrepor && !completaRegimeAusente) { ignored += 1; continue; }
     if (old) { deleteIds.push(Number(old.id_preco)); updated += 1; }
     const des = item.precoDesonerado ?? old?.preco_desonerado ?? null;
     const on = item.precoNaoDesonerado ?? old?.preco_nao_desonerado ?? null;
@@ -595,7 +602,24 @@ async function importSicroInputs(db, files, fields, tenantId) {
   const uf = code(fields.uf); const match = text(fields.mes_ref).match(/^(\d{2})\/(\d{4})$/);
   if (!uf) throw Object.assign(new Error('UF é obrigatória.'), { status: 400 });
   if (!match) throw Object.assign(new Error('Mês de referência inválido. Use MM/AAAA.'), { status: 400 });
-  const records = mergeInsumos(parseSicroLaborOrMaterial(files.arq_mo.buffer, 'P', 'Mão de Obra'), parseSicroLaborOrMaterial(files.arq_mat.buffer, 'M', 'Material'));
+  const maoObraOnerada = parseSicroLaborOrMaterial(files.arq_mo_on.buffer, 'P', 'Mão de Obra');
+  const maoObraDesonerada = parseSicroLaborOrMaterial(files.arq_mo_des.buffer, 'P', 'Mão de Obra', true);
+  const codigosOnerados = new Set(maoObraOnerada.map(item => item.codigo));
+  const codigosDesonerados = new Set(maoObraDesonerada.map(item => item.codigo));
+  const apenasOnerados = [...codigosOnerados].filter(codigo => !codigosDesonerados.has(codigo));
+  const apenasDesonerados = [...codigosDesonerados].filter(codigo => !codigosOnerados.has(codigo));
+  if (apenasOnerados.length || apenasDesonerados.length) {
+    throw Object.assign(new Error(
+      'Os relatórios de mão de obra onerada e desonerada não possuem o mesmo conjunto de códigos. '
+      + `Somente no onerado: ${apenasOnerados.slice(0, 8).join(', ') || 'nenhum'}; `
+      + `somente no desonerado: ${apenasDesonerados.slice(0, 8).join(', ') || 'nenhum'}.`,
+    ), { status: 400 });
+  }
+  const records = mergeInsumos(
+    maoObraOnerada,
+    maoObraDesonerada,
+    parseSicroLaborOrMaterial(files.arq_mat.buffer, 'M', 'Material'),
+  );
   const equipments = parseSicroEquipment(files.arq_equip.buffer);
   if (!records.length && !equipments.length) throw Object.assign(new Error('Nenhum insumo SICRO foi encontrado nos arquivos enviados.'), { status: 400 });
   return transaction(db, async conn => {
@@ -614,7 +638,31 @@ async function importSicroInputs(db, files, fields, tenantId) {
       await dbRun(conn, `INSERT INTO tenant_precos_equipamentos (tenant_id,id_preco_eq,id_equip,id_data_base,id_fonte,uf_referencia,preco_aquisicao,custo_depreciacao,custo_juros,custo_imp_seguros,custo_manutencao,custo_materiais,custo_mao_obra,chp_calculado,chi_calculado,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [tenantId,next,id,ctx.idDataBase,ctx.idFonte,uf,eq.precoAquisicao,eq.depreciacao,eq.juros,eq.seguros,eq.manutencao,eq.materiais,eq.maoObra,eq.custoProdutivo,eq.custoImprodutivo,'create','active',new Date().toISOString(),new Date().toISOString()]);
       if (!old) pricesInserted += 1;
     }
-    return { ins_insumos:ins.insumos_inseridos, upd_insumos:ins.insumos_atualizados, ins_precos:ins.precos_inseridos, upd_precos:ins.precos_atualizados, ins_equip:eqInserted, upd_equip:eqUpdated, ins_preco_equip:pricesInserted, upd_preco_equip:pricesUpdated, uf, mes_referencia:fields.mes_ref, mensagem:`Insumos: ${ins.insumos_inseridos} inseridos, ${ins.insumos_atualizados} atualizados. Equipamentos: ${eqInserted} inseridos, ${eqUpdated} atualizados.` };
+    const desoneradas = await materializarComposicoesSicroDesoneradas(conn, {
+      tenantId,
+      uf,
+      mesRef: fields.mes_ref,
+      precosMaoObra: new Map(maoObraDesonerada.map(item => [item.codigo, item.precoDesonerado])),
+    });
+    return {
+      ins_insumos:ins.insumos_inseridos,
+      upd_insumos:ins.insumos_atualizados,
+      ins_precos:ins.precos_inseridos,
+      upd_precos:ins.precos_atualizados,
+      ins_equip:eqInserted,
+      upd_equip:eqUpdated,
+      ins_preco_equip:pricesInserted,
+      upd_preco_equip:pricesUpdated,
+      ...desoneradas,
+      mao_obra_onerada: maoObraOnerada.length,
+      mao_obra_desonerada: maoObraDesonerada.length,
+      uf,
+      mes_referencia:fields.mes_ref,
+      mensagem:`Insumos: ${ins.insumos_inseridos} inseridos, ${ins.insumos_atualizados} atualizados. `
+        + `Equipamentos: ${eqInserted} inseridos, ${eqUpdated} atualizados. `
+        + `Composições SICRO desoneradas: ${desoneradas.composicoes_desoneradas_geradas} geradas e `
+        + `${desoneradas.composicoes_desoneradas_atualizadas} recalculadas.`,
+    };
   });
 }
 

@@ -1,4 +1,7 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const XLSX = require('xlsx');
 const sicroRoutes = require('../routes/sicroRoutes');
 const sinapiRoutes = require('../routes/sinapiRoutes');
 const referenceImportRoutes = require('../routes/referenceImportRoutes');
@@ -13,6 +16,7 @@ const {
   validOffice,
   parseSicorMgInputRows,
   createSicorMgCompositionParser,
+  parseSicroLaborOrMaterial,
 } = require('../services/referenceImportService');
 
 assert.deepStrictEqual(parseReference('Data Base: MAIO/26', 2, 2026), { mes: 5, ano: 2026 });
@@ -41,7 +45,9 @@ function paths(router) {
 }
 
 const db = {};
-assert(paths(sicroRoutes(db)).includes('POST /importar-insumos'));
+const sicroPaths = paths(sicroRoutes(db));
+assert(sicroPaths.includes('POST /importar-insumos'));
+assert(sicroPaths.includes('GET /importar-insumos/:jobId'));
 const imports = paths(referenceImportRoutes(db));
 assert(imports.includes('POST /seinfra/importar'));
 assert(imports.includes('POST /sudecap/importar'));
@@ -50,6 +56,24 @@ assert(imports.includes('POST /sicor-mg/importar'));
 assert(imports.includes('POST /cdhu/importar'));
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }), false);
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }, true), true);
+
+function sicroLaborBuffer(preco) {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['Código', 'Descrição', 'Unidade', 'Custo (R$)'],
+    ['P9801', 'Ajudante', 'h', preco],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Rel. Sintético de Mão de Obra');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+assert.strictEqual(
+  parseSicroLaborOrMaterial(sicroLaborBuffer(30.63), 'P', 'Mão de Obra')[0].precoNaoDesonerado,
+  30.63,
+);
+assert.strictEqual(
+  parseSicroLaborOrMaterial(sicroLaborBuffer(28.8975), 'P', 'Mão de Obra', true)[0].precoDesonerado,
+  28.8975,
+);
 
 assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('Sem desoneração'), 'Onerado');
 assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('COM CUSTO'), 'Desonerado');
@@ -76,6 +100,14 @@ const multipart = parseMultipartAll(body, `multipart/form-data; boundary=${bound
 assert.strictEqual(multipart.fields.uf, 'DF');
 assert.strictEqual(multipart.files.arq_mo.originalname, 'mo.xlsx');
 assert.strictEqual(multipart.files.arq_mat.buffer.toString(), 'MAT');
+
+const fontesJs = fs.readFileSync(path.join(__dirname, '..', 'js', 'fontes.js'), 'utf8');
+assert(fontesJs.includes("['mo_on','mo_des','mat','equip']"));
+assert(fontesJs.includes("fd.append('arq_mo_on',fMoOn)"));
+assert(fontesJs.includes("fd.append('arq_mo_des',fMoDes)"));
+assert(fontesJs.includes("['/api/sicro/importar-composicoes', '/api/sicro/importar-insumos']"));
+const sicroRouteSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'sicroRoutes.js'), 'utf8');
+assert(sicroRouteSource.includes("['arq_mo_on', 'arq_mo_des', 'arq_mat', 'arq_equip']"));
 
 const cdhu = parseCdhuPdfText(`
 M2 Plantio de grama em placas 985040

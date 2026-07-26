@@ -154,6 +154,11 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Composições SICRO sem regime explícito são normalizadas e persistidas como
   `Onerado`. A CDHU/SP permanece com regime não informado, pois a carga atual
   não diferencia essa informação.
+- A importação de insumos SICRO recebe quatro relatórios sintéticos: mão de obra
+  onerada, mão de obra desonerada, materiais e equipamentos. A carga desonerada
+  replica a memória analítica onerada da mesma UF/data-base, preserva todas as
+  seções e itens e recalcula custos de mão de obra, composições auxiliares, FIC e
+  total em um conjunto independente marcado como `Desonerado`.
 - Na atualização de UF/data-base/regime do orçamento, referências existentes
   em regime incompatível não são utilizadas. O resumo diferencia ausência real
   de composição da rejeição por regime e informa o regime atual do orçamento;

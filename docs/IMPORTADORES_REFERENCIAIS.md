@@ -22,8 +22,25 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
 - Endpoint: `POST /api/sicro/importar-insumos`.
 - Implementação: `routes/sicroRoutes.js` e
   `services/referenceImportService.js`.
-- Entradas: relatórios sintéticos de mão de obra, materiais e equipamentos.
-- Importa preços e metadados para a UF/data-base informadas.
+- Entradas: relatórios sintéticos de mão de obra onerada, mão de obra
+  desonerada, materiais e equipamentos.
+- Os dois relatórios de mão de obra devem possuir o mesmo conjunto de códigos.
+  Os preços são persistidos separadamente em `preco_nao_desonerado` e
+  `preco_desonerado`.
+- A importação exige que as composições analíticas SICRO oneradas da mesma UF e
+  data-base já tenham sido carregadas. Ela replica integralmente essas
+  composições, seções A–F e itens como registros `Desonerado`.
+- Na réplica, a seção B usa os novos preços desonerados. As dependências das
+  seções D e E são propagadas iterativamente entre as composições auxiliares; o
+  custo horário, custo unitário de execução, FIC, subtotal e custo unitário são
+  recalculados. A operação é transacional e falha sem gravar dados parciais se
+  algum código de mão de obra utilizado não estiver no relatório desonerado.
+- Reimportar a mão de obra desonerada recalcula o conjunto já existente sem
+  duplicá-lo. O regime integra a identidade lógica da composição SICRO, de modo
+  que onerada e desonerada coexistem com o mesmo código, UF e data-base.
+- O processamento ocorre como job em segundo plano, consultado por
+  `GET /api/sicro/importar-insumos/:jobId`, evitando timeout HTTP durante a
+  replicação integral.
 
 ## SICRO — composições analíticas
 
@@ -39,8 +56,8 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
   persistidas como `Onerado`.
 - A contagem de análise deve refletir todos os blocos do workbook, não apenas o
   número de abas.
-- A opção de sobrepor atualiza a composição lógica da mesma fonte, código, UF e
-  data-base; deve aceitar códigos legados com ou sem prefixo `SICRO.`.
+- A opção de sobrepor atualiza a composição lógica da mesma fonte, código, UF,
+  data-base e regime; deve aceitar códigos legados com ou sem prefixo `SICRO.`.
 - Jobs duram até quatro horas em memória e um tenant não pode iniciar duas
   importações simultâneas.
 

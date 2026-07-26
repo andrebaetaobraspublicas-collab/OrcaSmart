@@ -256,8 +256,16 @@ Router.register('fontes', async () => {
       }
       return startData.job_id ? acompanharSinapiJob(startData.job_id, containerId) : startData;
     }
-    if (url === '/api/sicro/importar-composicoes') {
-      _setProgress(containerId, 1, 'Enviando relatorio SICRO', 'O arquivo sera processado em segundo plano.');
+    if (['/api/sicro/importar-composicoes', '/api/sicro/importar-insumos'].includes(url)) {
+      const importandoInsumos = url.endsWith('/importar-insumos');
+      _setProgress(
+        containerId,
+        1,
+        importandoInsumos ? 'Enviando relatórios SICRO' : 'Enviando relatório SICRO',
+        importandoInsumos
+          ? 'Os quatro arquivos serão processados em segundo plano.'
+          : 'O arquivo será processado em segundo plano.',
+      );
       const startResponse = await fetch(url, { method: 'POST', body: formData });
       const startText = await startResponse.text();
       let startData;
@@ -268,7 +276,7 @@ Router.register('fontes', async () => {
       let lastStatus = startData;
       for (let tentativa = 0; tentativa < 2880; tentativa += 1) {
         await new Promise(resolve => setTimeout(resolve, 5000));
-        const response = await fetch(`/api/sicro/importar-composicoes/${encodeURIComponent(startData.job_id)}`);
+        const response = await fetch(`${url}/${encodeURIComponent(startData.job_id)}`);
         const status = await response.json();
         if (!response.ok || status.erro && status.status !== 'error') throw new Error(status.erro || `Erro HTTP ${response.status}`);
         lastStatus = status;
@@ -1295,8 +1303,8 @@ Router.register('fontes', async () => {
             <div>
               <div style="font-weight:700;font-size:.93rem;margin-bottom:3px">Importar Insumos</div>
               <div style="color:#7c3aed;font-size:.78rem;line-height:1.45">
-                3 arquivos: Relatório Sintético de Mão de Obra, Materiais e Equipamentos<br>
-                Atualiza insumos, preços e custo horário de equipamentos SICRO.
+                4 arquivos: mão de obra onerada/desonerada, materiais e equipamentos<br>
+                Atualiza os preços e gera as composições SICRO desoneradas.
               </div>
             </div>
           </button>
@@ -1458,7 +1466,7 @@ Router.register('fontes', async () => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // FLUXO B: Insumos SICRO (3 arquivos)
+  // FLUXO B: Insumos SICRO (4 arquivos)
   // ─────────────────────────────────────────────────────────────────────────
   function sicroInsumos_form() {
     Modal.open({
@@ -1466,7 +1474,9 @@ Router.register('fontes', async () => {
       size: 'modal-lg',
       body: `
         <p class="text-sm text-2" style="margin-bottom:14px">
-          Informe a UF e o mês de referência, depois selecione os 3 arquivos sintéticos.
+          Informe a UF e o mês de referência, depois selecione os 4 arquivos sintéticos.
+          A mão de obra desonerada gerará um conjunto integral de composições
+          SICRO desoneradas para a mesma UF e data-base.
         </p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
@@ -1483,19 +1493,20 @@ Router.register('fontes', async () => {
           </div>
         </div>
 
-        ${['mo','mat','equip'].map((key, i) => {
-          const labels = ['Mão de Obra','Materiais','Equipamentos'];
+        ${['mo_on','mo_des','mat','equip'].map((key, i) => {
+          const labels = ['Mão de Obra — Onerada','Mão de Obra — Desonerada','Materiais','Equipamentos'];
           const hints  = [
-            'Rel. Sintético de Mão de Obra — colunas: Código, Descrição, Unidade, Custo (R$)',
+            'Rel. Sintético de Mão de Obra sem desoneração — colunas: Código, Descrição, Unidade, Custo (R$)',
+            'Rel. Sintético de Mão de Obra com desoneração — recalcula e replica as composições no regime desonerado',
             'Rel. Sintético de Materiais — colunas: Código, Descrição, Unidade, Preço Unitário (R$)',
             'Rel. Sintético de Equipamentos — colunas: Código, Descrição, Val. Aquisição, Depreciação…',
           ];
-          const colors = ['#7c3aed','#059669','#d97706'];
-          const bgs    = ['#f5f3ff','#ecfdf5','#fffbeb'];
+          const colors = ['#7c3aed','#2563eb','#059669','#d97706'];
+          const bgs    = ['#f5f3ff','#eff6ff','#ecfdf5','#fffbeb'];
           return `
           <div style="border:1px solid var(--c-border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;background:${bgs[i]}">
             <div style="font-weight:700;font-size:.85rem;color:${colors[i]};margin-bottom:6px">
-              ${['🧑‍🔧','🧱','🚜'][i]} ${labels[i]}
+              ${['🧑‍🔧','👷','🧱','🚜'][i]} ${labels[i]}
             </div>
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
               <input type="file" id="sicroFile_${key}" accept=".xlsx,.xlsm" style="display:none">
@@ -1525,7 +1536,7 @@ Router.register('fontes', async () => {
     });
 
     // File label updates
-    ['mo','mat','equip'].forEach(key => {
+    ['mo_on','mo_des','mat','equip'].forEach(key => {
       document.getElementById('sicroFile_' + key).addEventListener('change', e => {
         const f = e.target.files[0];
         document.getElementById('sicroNome_' + key).textContent =
@@ -1537,13 +1548,15 @@ Router.register('fontes', async () => {
       const uf     = document.getElementById('sicroInsUF').value.trim();
       const mes    = document.getElementById('sicroInsMes').value.trim();
       const sob    = document.getElementById('sicroInsSob').checked;
-      const fMo    = document.getElementById('sicroFile_mo').files[0];
+      const fMoOn  = document.getElementById('sicroFile_mo_on').files[0];
+      const fMoDes = document.getElementById('sicroFile_mo_des').files[0];
       const fMat   = document.getElementById('sicroFile_mat').files[0];
       const fEquip = document.getElementById('sicroFile_equip').files[0];
 
       if (!uf)            { Toast.warning('Selecione a UF.'); return; }
       if (!/^\d{2}\/\d{4}$/.test(mes)) { Toast.warning('Informe o mês no formato MM/AAAA.'); return; }
-      if (!fMo)    { Toast.warning('Selecione o arquivo de Mão de Obra.'); return; }
+      if (!fMoOn)  { Toast.warning('Selecione o arquivo de Mão de Obra onerada.'); return; }
+      if (!fMoDes) { Toast.warning('Selecione o arquivo de Mão de Obra desonerada.'); return; }
       if (!fMat)   { Toast.warning('Selecione o arquivo de Materiais.'); return; }
       if (!fEquip) { Toast.warning('Selecione o arquivo de Equipamentos.'); return; }
 
@@ -1551,12 +1564,13 @@ Router.register('fontes', async () => {
       const st  = document.getElementById('sicroInsStatus');
       btn.disabled = true; btn.textContent = '⏳ Importando…';
       st.style.display = 'block';
-      st.innerHTML = `<div style="text-align:center;padding:14px"><div class="spinner" style="width:28px;height:28px;margin:0 auto"></div><div style="margin-top:8px;font-size:.82rem;color:var(--c-text-2)">Processando os 3 arquivos…</div></div>`;
+      st.innerHTML = `<div style="text-align:center;padding:14px"><div class="spinner" style="width:28px;height:28px;margin:0 auto"></div><div style="margin-top:8px;font-size:.82rem;color:var(--c-text-2)">Processando os 4 arquivos e gerando as composições desoneradas…</div></div>`;
 
       st.innerHTML = _mkProgressBar('sicroInsProg','#7c3aed');
       try {
         const fd = new FormData();
-        fd.append('arq_mo',   fMo);
+        fd.append('arq_mo_on',fMoOn);
+        fd.append('arq_mo_des',fMoDes);
         fd.append('arq_mat',  fMat);
         fd.append('arq_equip',fEquip);
         fd.append('uf',       uf);
@@ -1608,6 +1622,8 @@ Router.register('fontes', async () => {
           ${kpi('Equipamentos atualizados',res.upd_equip,       '#f59e0b')}
           ${kpi('Custos equip. inseridos', res.ins_preco_equip, '#d97706')}
           ${kpi('Custos equip. atualizados',res.upd_preco_equip,'#f59e0b')}
+          ${kpi('Comp. desoneradas geradas',res.composicoes_desoneradas_geradas,'#2563eb')}
+          ${kpi('Comp. desoneradas recalculadas',res.composicoes_desoneradas_atualizadas,'#7c3aed')}
         </div>`;
     }
 

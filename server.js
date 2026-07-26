@@ -845,6 +845,7 @@ app.get('/api/status', (_req, res) => res.json({
   build: BUILD_ID,
   runtime: 'node',
   budgetContextRemapVersion: 3,
+  sicroLaborRegimesVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
