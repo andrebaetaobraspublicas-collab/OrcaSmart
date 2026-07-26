@@ -2,7 +2,7 @@ const express = require('express');
 const service = require('../services/encargosService');
 const repository = require('../repositories/encargosRepository');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
-const { ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
+const { ensureAdmin, ensureAdminOrTenantScoped } = require('../utils/accessPolicy');
 
 module.exports = function(db, options = {}) {
   const router = express.Router();
@@ -193,6 +193,7 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/importar-sicro', uploadRaw, asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'A importacao dos encargos referenciais SICRO e permitida apenas para administradores.');
     const { fields, files } = multipart(req);
     res.json(await writeWithSingleConnection(conn => service.importarAnalitico(conn, 'SICRO', files, fields)));
   }));

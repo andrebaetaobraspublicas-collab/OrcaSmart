@@ -204,6 +204,85 @@ function parseProfissionaisXlsx(file) {
   return profissionais;
 }
 
+function percentualSicro(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim().replace(/\s*%\s*$/, '');
+  const text = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw;
+  const numero = Number(text);
+  if (!Number.isFinite(numero) || Math.abs(numero) > 200) return null;
+  return numero;
+}
+
+function parseProfissionaisSicroXlsx(file) {
+  if (!file || !file.buffer?.length) return [];
+  const rows = parseXlsxBuffer(file.buffer);
+  const cabecalhoParcelas = rows[1] || [];
+  const grupos = [
+    { letra: 'A', inicio: 3, fim: 11 },
+    { letra: 'B', inicio: 12, fim: 21 },
+    { letra: 'C', inicio: 22, fim: 26 },
+    { letra: 'D', inicio: 27, fim: 28 },
+  ];
+  const profissionais = [];
+
+  for (const row of rows.slice(2)) {
+    const codigo = String(row[0] || '').trim();
+    const descricao = String(row[1] || '').trim();
+    const unidade = String(row[2] || '').trim();
+    if (!/^P[\w.-]+$/i.test(codigo) || !descricao) continue;
+
+    const parcelas = [];
+    const totais = { A: 0, B: 0, C: 0, D: 0 };
+    for (const grupo of grupos) {
+      for (let coluna = grupo.inicio; coluna <= grupo.fim; coluna += 1) {
+        const valor = percentualSicro(row[coluna]);
+        if (valor === null) continue;
+        totais[grupo.letra] += valor;
+        parcelas.push({
+          grupo: grupo.letra,
+          codigo: String(cabecalhoParcelas[coluna] || `${grupo.letra}${coluna - grupo.inicio + 1}`).trim(),
+          percentual: valor,
+        });
+      }
+    }
+
+    const totalCalculado = totais.A + totais.B + totais.C + totais.D;
+    const totalOficial = percentualSicro(row[29]);
+    if (!Number.isFinite(totalOficial) && !Number.isFinite(totalCalculado)) continue;
+    profissionais.push({
+      codigo_profissional: codigo,
+      descricao,
+      unidade,
+      categoria: categoriaFromUnidade(unidade),
+      total_grupo_a: Number(totais.A.toFixed(8)),
+      total_grupo_b: Number(totais.B.toFixed(8)),
+      total_grupo_c: Number(totais.C.toFixed(8)),
+      total_grupo_d: Number(totais.D.toFixed(8)),
+      encargo_total: Number((totalOficial ?? totalCalculado).toFixed(8)),
+      parcelas,
+      total_calculado: Number(totalCalculado.toFixed(8)),
+      divergencia_total: totalOficial === null
+        ? null
+        : Number((totalOficial - totalCalculado).toFixed(8)),
+    });
+  }
+  return profissionais;
+}
+
+function normalizarMesReferencia(value, vigenciaInicio = null) {
+  const bruto = String(value || '').trim();
+  let match = bruto.match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) {
+    match = bruto.match(/^(\d{1,2})\/(\d{4})$/);
+    if (match) return `${String(Number(match[1])).padStart(2, '0')}/${match[2]}`;
+  } else {
+    return `${String(Number(match[2])).padStart(2, '0')}/${match[1]}`;
+  }
+  const legado = String(vigenciaInicio || '').trim().match(/^(\d{4})-(\d{1,2})/);
+  if (legado) return `${String(Number(legado[2])).padStart(2, '0')}/${legado[1]}`;
+  return null;
+}
+
 function defaultTotaisUniformes(categoria, regime) {
   const horista = categoria === 'Horista';
   const desonerado = regime === 'Desonerado';
@@ -250,6 +329,107 @@ async function importarAnalitico(db, fonte, files = {}, fields = {}) {
   const fonteNorm = String(fonte || '').toUpperCase();
   const table = fonteNorm === 'SICRO' ? 'encargos_sicro_profissionais' : 'encargos_goinfra_profissionais';
   const uf = fields.uf || (fonteNorm === 'GOINFRA' ? 'GO' : 'DF');
+  const mesReferencia = normalizarMesReferencia(
+    fields.mes_referencia || fields.data_base || fields.referencia,
+    fields.vigencia_inicio,
+  );
+  if (fonteNorm === 'SICRO' && !mesReferencia) {
+    const err = new Error('Informe o mes de referencia dos encargos SICRO.');
+    err.status = 400;
+    throw err;
+  }
+  if (fonteNorm === 'SICRO') {
+    if (!files.arquivo_onerado || !files.arquivo_desonerado) {
+      const err = new Error('Selecione as duas planilhas SICRO: onerada e desonerada.');
+      err.status = 400;
+      throw err;
+    }
+    const entradasSicro = [
+      ['Normal', parseProfissionaisSicroXlsx(files.arquivo_onerado)],
+      ['Desonerado', parseProfissionaisSicroXlsx(files.arquivo_desonerado)],
+    ];
+    for (const [regime, profissionais] of entradasSicro) {
+      if (!profissionais.length) {
+        const err = new Error(`Nenhum profissional foi identificado na planilha SICRO ${regime === 'Normal' ? 'onerada' : 'desonerada'}.`);
+        err.status = 400;
+        throw err;
+      }
+    }
+    const perfis = [];
+    let profissionaisImportados = 0;
+    let insumosAtualizados = 0;
+    const codigosPorRegime = new Map();
+    let idDataBase;
+    await repository.run(db, 'BEGIN');
+    try {
+      idDataBase = await repository.resolveCatalogDataBase(db, mesReferencia, `SICRO ${mesReferencia}`);
+      for (const [regime, profissionais] of entradasSicro) {
+        codigosPorRegime.set(regime, new Set(profissionais.map(p => p.codigo_profissional)));
+        const perfilPorCategoria = {};
+        for (const categoria of ['Horista', 'Mensalista']) {
+          const subset = profissionais.filter(p => p.categoria === categoria);
+          if (!subset.length) continue;
+          const medias = {
+            A: average(subset.map(p => p.total_grupo_a)),
+            B: average(subset.map(p => p.total_grupo_b)),
+            C: average(subset.map(p => p.total_grupo_c)),
+            D: average(subset.map(p => p.total_grupo_d)),
+          };
+          const regimeTxt = regime === 'Desonerado' ? 'Com Desoneracao' : 'Sem Desoneracao';
+          const perfil = await repository.upsertCatalogPerfilComTotais(db, {
+            nome_perfil: `SICRO/${uf} - ${mesReferencia} - ${categoria} - ${regimeTxt}`,
+            categoria,
+            regime,
+            uf_referencia: uf,
+            id_data_base: idDataBase,
+            fonte_referencia: 'SICRO',
+            vigencia: mesReferencia,
+            vigencia_inicio: null,
+            vigencia_fim: null,
+            observacoes: 'Conjunto analitico SICRO por profissional. Os percentuais individuais, e nao a media do perfil, sao a fonte de calculo.',
+          }, medias);
+          const inseridos = await repository.replaceCatalogProfissionais(db, table, perfil.id_perfil, subset);
+          profissionaisImportados += inseridos;
+          perfilPorCategoria[categoria] = perfil.id_perfil;
+          perfis.push(perfil);
+        }
+        insumosAtualizados += await repository.syncCatalogEncargosInsumosSicro(
+          db,
+          uf,
+          idDataBase,
+          regime,
+          profissionais,
+          perfilPorCategoria,
+        );
+      }
+      await repository.run(db, 'COMMIT');
+    } catch (err) {
+      await repository.run(db, 'ROLLBACK').catch(() => {});
+      throw err;
+    }
+
+    const onerados = codigosPorRegime.get('Normal') || new Set();
+    const desonerados = codigosPorRegime.get('Desonerado') || new Set();
+    const divergentes = [...new Set([
+      ...[...onerados].filter(codigo => !desonerados.has(codigo)),
+      ...[...desonerados].filter(codigo => !onerados.has(codigo)),
+    ])];
+    return {
+      mensagem: `Encargos SICRO/${uf} de ${mesReferencia} importados por profissional.`,
+      mes_referencia: mesReferencia,
+      id_data_base: idDataBase,
+      perfis_atualizados: perfis.length,
+      profissionais_importados: profissionaisImportados,
+      profissionais_por_regime: {
+        onerado: onerados.size,
+        desonerado: desonerados.size,
+      },
+      codigos_divergentes_entre_planilhas: divergentes,
+      insumos_atualizados: insumosAtualizados,
+      perfis,
+    };
+  }
+
   const vigenciaInicio = fields.vigencia_inicio || null;
   const vigenciaFim = fields.vigencia_fim || null;
   const vigencia = fields.vigencia || (vigenciaInicio || vigenciaFim ? `${vigenciaInicio || ''} a ${vigenciaFim || ''}` : null);
@@ -315,4 +495,6 @@ module.exports = {
   aplicarAoOrcamento,
   importarUniforme,
   importarAnalitico,
+  parseProfissionaisSicroXlsx,
+  normalizarMesReferencia,
 };

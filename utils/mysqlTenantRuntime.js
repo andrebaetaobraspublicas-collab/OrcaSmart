@@ -458,5 +458,6 @@ module.exports = {
   checkBusinessRuntimeMysql,
   _test: {
     qualifyTenantSelect,
+    normalizeSqlDialect,
   },
 };

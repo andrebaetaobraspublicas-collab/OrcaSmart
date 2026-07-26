@@ -310,13 +310,13 @@ Router.register('encargos', async () => {
 
   async function importarSicro() {
     const hoje = new Date();
-    const ano = hoje.getFullYear();
+    const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
     Modal.open({
       title: 'Importar encargos SICRO',
       size: 'modal-lg',
       body: `
         <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:12px 14px;margin-bottom:14px;color:#4c1d95;font-size:.84rem;line-height:1.45">
-          O SICRO usa encargos sociais por profissional da mão de obra. Envie a planilha onerada e/ou desonerada; o sistema criará perfis SICRO e armazenará os percentuais detalhados por código profissional.
+          O SICRO usa encargos sociais próprios para cada profissional da mão de obra. Envie as duas planilhas; o sistema armazenará os percentuais por código profissional, UF, data-base e regime previdenciário.
         </div>
         <div class="form-grid form-grid-2">
           <div class="form-group span-2">
@@ -332,16 +332,8 @@ Router.register('encargos', async () => {
             <select class="form-control" id="imp_sicro_uf">${Utils.ufOptions('DF')}</select>
           </div>
           <div class="form-group">
-            <label class="form-label">Início de vigência</label>
-            <input class="form-control" id="imp_sicro_ini" type="date" value="${ano}-01-01">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Fim de vigência</label>
-            <input class="form-control" id="imp_sicro_fim" type="date" value="${ano}-12-31">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Descrição da vigência</label>
-            <input class="form-control" id="imp_sicro_vig" value="SICRO DF 01/${ano} a 12/${ano}">
+            <label class="form-label">Mês de referência</label>
+            <input class="form-control" id="imp_sicro_mes" type="month" value="${mesAtual}" required>
           </div>
         </div>
       `,
@@ -352,14 +344,14 @@ Router.register('encargos', async () => {
     document.getElementById('btnExecutarImportacaoSicro').addEventListener('click', async () => {
       const on = document.getElementById('imp_sicro_on').files[0];
       const des = document.getElementById('imp_sicro_des').files[0];
+      const mesReferencia = document.getElementById('imp_sicro_mes').value;
       if (!on || !des) { Toast.warning('Selecione as duas planilhas SICRO: onerada e desonerada.'); return; }
+      if (!mesReferencia) { Toast.warning('Informe o mês de referência dos encargos SICRO.'); return; }
       const fd = new FormData();
       if (on) fd.append('arquivo_onerado', on);
       if (des) fd.append('arquivo_desonerado', des);
       fd.append('uf', document.getElementById('imp_sicro_uf').value || 'DF');
-      fd.append('vigencia_inicio', document.getElementById('imp_sicro_ini').value || '');
-      fd.append('vigencia_fim', document.getElementById('imp_sicro_fim').value || '');
-      fd.append('vigencia', document.getElementById('imp_sicro_vig').value.trim() || '');
+      fd.append('mes_referencia', mesReferencia);
       const btn = document.getElementById('btnExecutarImportacaoSicro');
       btn.disabled = true;
       btn.textContent = 'Importando...';
@@ -447,8 +439,8 @@ Router.register('encargos', async () => {
 
   function renderTabelaSicroAnalitica() {
     const fmt = v => (v === null || v === undefined || v === '') ? '<span class="text-3">&mdash;</span>' : `${Utils.num(v,2)}%`;
-    const vig = r => (r.vigencia_inicio || r.vigencia_fim)
-      ? `${r.vigencia_inicio || 'indeterminada'} a ${r.vigencia_fim || 'indeterminada'}`
+    const vig = r => (r.db_mes && r.db_ano)
+      ? `${String(r.db_mes).padStart(2, '0')}/${r.db_ano}`
       : (r.vigencia || '&mdash;');
     if (!sicroAnalitico.length) {
       return `
@@ -474,7 +466,7 @@ Router.register('encargos', async () => {
               <th>Unid.</th>
               <th>UF</th>
               <th>Categoria</th>
-              <th>Vigencia</th>
+              <th>Data-base</th>
               <th style="text-align:right;color:var(--c-primary)">Onerado Total%</th>
               <th style="text-align:right">A</th>
               <th style="text-align:right">B</th>

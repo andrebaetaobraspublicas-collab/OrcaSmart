@@ -90,6 +90,10 @@ async function useTenantCatalogRead(db) {
   return (await hasTenantEncargosOverrides(db)) && (await hasCatalogEncargos(db));
 }
 
+async function catalogSchema(db) {
+  return (await hasCatalogEncargos(db)) ? 'catalog.' : '';
+}
+
 function visibleCatalogPerfilClause(alias = 'pe') {
   return `
     NOT EXISTS (
@@ -723,16 +727,16 @@ async function findPerfil(db, data = {}) {
 async function findTenantPerfil(db, data = {}) {
   if (!(await hasTenantEncargosOverrides(db))) return null;
   return one(db, `
-    SELECT rowid, *, 'tenant:' || rowid AS id_perfil
-    FROM tenant_perfis_encargos
-    WHERE fonte_referencia = ?
-      AND COALESCE(uf_referencia, '') = COALESCE(?, '')
-      AND categoria = ?
-      AND regime = ?
-      AND COALESCE(vigencia_inicio, '') = COALESCE(?, '')
-      AND COALESCE(vigencia_fim, '') = COALESCE(?, '')
-      AND COALESCE(tenant_override_status,'active')='active'
-    ORDER BY rowid DESC
+    SELECT pe.rowid AS rowid, pe.*, pe.rowid AS tenant_rowid, 'tenant:' || pe.rowid AS id_perfil
+    FROM tenant_perfis_encargos pe
+    WHERE pe.fonte_referencia = ?
+      AND COALESCE(pe.uf_referencia, '') = COALESCE(?, '')
+      AND pe.categoria = ?
+      AND pe.regime = ?
+      AND COALESCE(pe.vigencia_inicio, '') = COALESCE(?, '')
+      AND COALESCE(pe.vigencia_fim, '') = COALESCE(?, '')
+      AND COALESCE(pe.tenant_override_status,'active')='active'
+    ORDER BY pe.rowid DESC
     LIMIT 1`, [
     normFonte(data.fonte_referencia || 'SINAPI'),
     data.uf_referencia || null,
@@ -741,6 +745,242 @@ async function findTenantPerfil(db, data = {}) {
     data.vigencia_inicio || null,
     data.vigencia_fim || null,
   ]);
+}
+
+function parseMesReferencia(value) {
+  const raw = String(value || '').trim();
+  let match = raw.match(/^(\d{1,2})\/(\d{4})$/);
+  if (match) return { mes: Number(match[1]), ano: Number(match[2]), texto: `${String(Number(match[1])).padStart(2, '0')}/${match[2]}` };
+  match = raw.match(/^(\d{4})-(\d{1,2})$/);
+  if (match) return { mes: Number(match[2]), ano: Number(match[1]), texto: `${String(Number(match[2])).padStart(2, '0')}/${match[1]}` };
+  return null;
+}
+
+async function resolveCatalogDataBase(db, mesReferencia, descricao = null) {
+  const referencia = parseMesReferencia(mesReferencia);
+  if (!referencia || referencia.mes < 1 || referencia.mes > 12) {
+    const err = new Error('Mes de referencia invalido. Use MM/AAAA.');
+    err.status = 400;
+    throw err;
+  }
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  const existente = await one(db, `
+    SELECT id_data_base
+    FROM ${schema}datas_base
+    WHERE mes=? AND ano=?
+    ORDER BY id_data_base DESC
+    LIMIT 1`, [referencia.mes, referencia.ano]);
+  if (existente?.id_data_base) return existente.id_data_base;
+  const result = await run(db, `
+    INSERT INTO ${schema}datas_base (mes, ano, data_referencia, descricao)
+    VALUES (?, ?, ?, ?)`, [
+    referencia.mes,
+    referencia.ano,
+    `${referencia.ano}-${String(referencia.mes).padStart(2, '0')}-01`,
+    descricao || `Referencia ${referencia.texto}`,
+  ]);
+  return result.lastID;
+}
+
+async function upsertCatalogPerfilComTotais(db, data = {}, totais = {}) {
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  const fonte = normFonte(data.fonte_referencia || 'SICRO');
+  const existente = await one(db, `
+    SELECT id_perfil
+    FROM ${schema}perfis_encargos
+    WHERE fonte_referencia=?
+      AND COALESCE(uf_referencia,'')=COALESCE(?,'')
+      AND categoria=?
+      AND regime=?
+      AND COALESCE(id_data_base,0)=COALESCE(?,0)
+    ORDER BY id_perfil DESC
+    LIMIT 1`, [
+    fonte,
+    data.uf_referencia || null,
+    data.categoria || 'Horista',
+    data.regime || 'Normal',
+    data.id_data_base || null,
+  ]);
+  const totalA = toNum(totais.A);
+  const totalB = toNum(totais.B);
+  const totalC = toNum(totais.C);
+  const totalD = toNum(totais.D);
+  const total = Number((totalA + totalB + totalC + totalD).toFixed(8));
+  let idPerfil = existente?.id_perfil;
+  const params = [
+    String(data.nome_perfil || '').trim(),
+    data.categoria || 'Horista',
+    data.regime || 'Normal',
+    data.uf_referencia || null,
+    data.id_data_base || null,
+    data.descricao || null,
+    totalA,
+    totalB,
+    totalC,
+    totalD,
+    total,
+    data.observacoes || null,
+    data.situacao || 'Ativo',
+    data.vigencia || null,
+    fonte,
+    data.vigencia_inicio || null,
+    data.vigencia_fim || null,
+    data.encargo_original_percentual === undefined ? null : toNum(data.encargo_original_percentual, null),
+  ];
+  if (idPerfil) {
+    await run(db, `
+      UPDATE ${schema}perfis_encargos SET
+        nome_perfil=?, categoria=?, regime=?, uf_referencia=?, id_data_base=?, descricao=?,
+        total_grupo_a=?, total_grupo_b=?, total_grupo_c=?, total_grupo_d=?, encargo_total=?,
+        observacoes=?, situacao=?, vigencia=?, fonte_referencia=?, vigencia_inicio=?,
+        vigencia_fim=?, encargo_original_percentual=?
+      WHERE id_perfil=?`, [...params, idPerfil]);
+  } else {
+    const result = await run(db, `
+      INSERT INTO ${schema}perfis_encargos
+        (nome_perfil,categoria,regime,uf_referencia,id_data_base,descricao,
+         total_grupo_a,total_grupo_b,total_grupo_c,total_grupo_d,encargo_total,
+         observacoes,situacao,vigencia,fonte_referencia,vigencia_inicio,vigencia_fim,
+         encargo_original_percentual)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, params);
+    idPerfil = result.lastID;
+  }
+
+  const descricoes = {
+    A: 'Encargos Sociais',
+    B: 'Encargos Trabalhistas',
+    C: 'Verbas Rescisorias',
+    D: 'Reincidencias',
+  };
+  for (const letra of ['A', 'B', 'C', 'D']) {
+    let grupo = await one(db, `
+      SELECT id_grupo_enc
+      FROM ${schema}grupos_encargos
+      WHERE id_perfil=? AND letra=?
+      LIMIT 1`, [idPerfil, letra]);
+    if (!grupo) {
+      const criado = await run(db, `
+        INSERT INTO ${schema}grupos_encargos (id_perfil,letra,descricao,total_grupo)
+        VALUES (?,?,?,?)`, [idPerfil, letra, descricoes[letra], toNum(totais[letra])]);
+      grupo = { id_grupo_enc: criado.lastID };
+    } else {
+      await run(db, `UPDATE ${schema}grupos_encargos SET descricao=?,total_grupo=? WHERE id_grupo_enc=?`, [
+        descricoes[letra],
+        toNum(totais[letra]),
+        grupo.id_grupo_enc,
+      ]);
+    }
+    await run(db, `DELETE FROM ${schema}itens_encargo WHERE id_grupo_enc=?`, [grupo.id_grupo_enc]);
+    await run(db, `
+      INSERT INTO ${schema}itens_encargo
+        (id_grupo_enc,descricao,base_legal,percentual,observacoes,ordem)
+      VALUES (?,?,?,?,?,1)`, [
+      grupo.id_grupo_enc,
+      `${descricoes[letra]} - media informativa do conjunto`,
+      'Relatorio Analitico de Encargos Sociais e Trabalhistas SICRO',
+      toNum(totais[letra]),
+      'A aplicacao aos insumos usa o percentual individual de cada profissional.',
+    ]);
+  }
+  return one(db, `
+    SELECT pe.*, db2.mes AS db_mes, db2.ano AS db_ano
+    FROM ${schema}perfis_encargos pe
+    LEFT JOIN ${schema}datas_base db2 ON db2.id_data_base=pe.id_data_base
+    WHERE pe.id_perfil=?`, [idPerfil]);
+}
+
+async function replaceCatalogProfissionais(db, table, idPerfil, profissionais = []) {
+  if (!['encargos_sicro_profissionais', 'encargos_goinfra_profissionais'].includes(table)) {
+    throw new Error('Tabela analitica de encargos invalida.');
+  }
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  await run(db, `DELETE FROM ${schema}${table} WHERE id_perfil=?`, [idPerfil]);
+  let inseridos = 0;
+  for (const p of profissionais) {
+    const codigo = String(p.codigo_profissional || '').trim();
+    const descricao = String(p.descricao || '').trim();
+    if (!codigo || !descricao) continue;
+    const parcelas = {
+      itens: p.parcelas || [],
+      total_calculado: p.total_calculado ?? null,
+      divergencia_total: p.divergencia_total ?? null,
+    };
+    await run(db, `
+      INSERT INTO ${schema}${table}
+        (id_perfil,codigo_profissional,descricao,unidade,total_grupo_a,total_grupo_b,
+         total_grupo_c,total_grupo_d,encargo_total,parcelas_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`, [
+      idPerfil,
+      codigo,
+      descricao,
+      p.unidade || null,
+      toNum(p.total_grupo_a),
+      toNum(p.total_grupo_b),
+      toNum(p.total_grupo_c),
+      toNum(p.total_grupo_d),
+      toNum(p.encargo_total),
+      JSON.stringify(parcelas),
+    ]);
+    inseridos += 1;
+  }
+  return inseridos;
+}
+
+async function syncCatalogEncargosInsumosSicro(
+  db,
+  uf,
+  idDataBase,
+  regime,
+  profissionais = [],
+  perfilPorCategoria = {},
+) {
+  const schema = await catalogSchema(db);
+  const schemaName = schema ? 'catalog' : 'main';
+  if (!(await tableExists(db, 'precos_insumos', schemaName))
+      || !(await tableExists(db, 'insumos', schemaName))) return 0;
+  if (!schema) {
+    for (const [column, ddl] of [
+      ['encargos_sociais_onerado_percentual', 'encargos_sociais_onerado_percentual REAL'],
+      ['encargos_sociais_desonerado_percentual', 'encargos_sociais_desonerado_percentual REAL'],
+      ['id_perfil_encargo_onerado', 'id_perfil_encargo_onerado INTEGER'],
+      ['id_perfil_encargo_desonerado', 'id_perfil_encargo_desonerado INTEGER'],
+    ]) await addColumnIfMissing(db, 'precos_insumos', column, ddl);
+  }
+  const desonerado = regime === 'Desonerado';
+  const percentualColuna = desonerado
+    ? 'encargos_sociais_desonerado_percentual'
+    : 'encargos_sociais_onerado_percentual';
+  const perfilColuna = desonerado
+    ? 'id_perfil_encargo_desonerado'
+    : 'id_perfil_encargo_onerado';
+  let atualizados = 0;
+  for (const profissional of profissionais) {
+    const codigo = String(profissional.codigo_profissional || '').trim();
+    if (!codigo) continue;
+    const idPerfil = perfilPorCategoria[profissional.categoria] || null;
+    const result = await run(db, `
+      UPDATE ${schema}precos_insumos
+      SET ${percentualColuna}=?, ${perfilColuna}=?
+      WHERE id_data_base=?
+        AND UPPER(COALESCE(uf_referencia,''))=UPPER(?)
+        AND id_insumo IN (
+          SELECT id_insumo
+          FROM ${schema}insumos
+          WHERE UPPER(COALESCE(origem,''))='SICRO'
+            AND codigo_insumo=?
+        )`, [
+      toNum(profissional.encargo_total),
+      idPerfil,
+      idDataBase,
+      uf,
+      codigo,
+    ]);
+    atualizados += result.changes || 0;
+  }
+  return atualizados;
 }
 
 async function replacePerfilTotais(db, idPerfil, totais = {}) {
@@ -885,7 +1125,8 @@ async function syncEncargosInsumosMaoObra(db, fonte, uf, profissionais = []) {
 }
 
 async function listProfissionais(db, table, query = {}) {
-  await ensureSchema(db);
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
   const where = ['1=1'];
   const params = [];
   if (query.uf) {
@@ -908,14 +1149,35 @@ async function listProfissionais(db, table, query = {}) {
     where.push('(ep.codigo_profissional LIKE ? OR ep.descricao LIKE ?)');
     params.push(`%${query.q}%`, `%${query.q}%`);
   }
+  const mesFiltro = parseMesReferencia(query.mes_referencia || query.vigencia_inicio_mes);
+  if (mesFiltro) {
+    where.push('db2.mes=? AND db2.ano=?');
+    params.push(mesFiltro.mes, mesFiltro.ano);
+  }
   return all(db, `
-    SELECT ep.*, pe.nome_perfil, pe.categoria, pe.regime, pe.uf_referencia,
-           pe.fonte_referencia, pe.vigencia_inicio, pe.vigencia_fim
-    FROM ${table} ep
-    JOIN perfis_encargos pe ON pe.id_perfil = ep.id_perfil
+    SELECT ep.codigo_profissional, ep.descricao, ep.unidade,
+           pe.uf_referencia, pe.categoria, pe.id_data_base, pe.fonte_referencia,
+           pe.vigencia, pe.vigencia_inicio, pe.vigencia_fim,
+           db2.mes AS db_mes, db2.ano AS db_ano,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.encargo_total END) AS normal_total,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_a END) AS normal_a,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_b END) AS normal_b,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_c END) AS normal_c,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_d END) AS normal_d,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.encargo_total END) AS desonerado_total,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_a END) AS desonerado_a,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_b END) AS desonerado_b,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_c END) AS desonerado_c,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_d END) AS desonerado_d
+    FROM ${schema}${table} ep
+    JOIN ${schema}perfis_encargos pe ON pe.id_perfil = ep.id_perfil
+    LEFT JOIN ${schema}datas_base db2 ON db2.id_data_base=pe.id_data_base
     WHERE ${where.join(' AND ')}
-    ORDER BY pe.uf_referencia, pe.categoria, pe.regime, ep.codigo_profissional
-    LIMIT 1000`, params);
+    GROUP BY ep.codigo_profissional,ep.descricao,ep.unidade,pe.uf_referencia,
+             pe.categoria,pe.id_data_base,pe.fonte_referencia,pe.vigencia,
+             pe.vigencia_inicio,pe.vigencia_fim,db2.mes,db2.ano
+    ORDER BY pe.uf_referencia,db2.ano DESC,db2.mes DESC,pe.categoria,ep.codigo_profissional
+    LIMIT 5000`, params);
 }
 
 function perfilParams(data = {}) {
@@ -1301,6 +1563,10 @@ module.exports = {
   deleteItem,
   findPerfil,
   upsertPerfilComTotais,
+  resolveCatalogDataBase,
+  upsertCatalogPerfilComTotais,
+  replaceCatalogProfissionais,
+  syncCatalogEncargosInsumosSicro,
   replaceProfissionais,
   syncEncargosInsumosMaoObra,
   listProfissionais,
