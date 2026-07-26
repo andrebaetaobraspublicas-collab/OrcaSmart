@@ -212,9 +212,9 @@ function scoreMesRef(mesRef, contextoMesRef) {
 async function getDataBaseRef(db, idDataBase) {
   if (!idDataBase) return null;
   const sources = [
-    { schema: 'main', table: 'datas_base' },
     { schema: 'main', table: 'tenant_datas_base' },
     { schema: 'catalog', table: 'datas_base' },
+    { schema: 'main', table: 'datas_base' },
   ];
   for (const source of sources) {
     if (!(await tableExists(db, source.table, source.schema))) continue;
@@ -476,6 +476,15 @@ function pontuarIdentidadeVinculada(item, row) {
   return score;
 }
 
+function identidadeComposicaoEstruturalmenteCompativel(item, row) {
+  const fonteItem = normalizarFonte(item?.fonte);
+  const fonteRow = normalizarFonte(row?.fonte);
+  if (!fonteItem || !fonteRow || fonteItem !== fonteRow) return false;
+  const codigoItem = codigoCanonicoComposicao(item?.codigo, fonteItem);
+  const codigoRow = codigoCanonicoComposicao(row?.codigo, fonteRow);
+  return !!codigoItem && !!codigoRow && codigoItem === codigoRow;
+}
+
 async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
   const ids = [...new Set(itens.map(item => String(item.id_composicao || '').trim()).filter(Boolean))];
   const identidades = new Map();
@@ -558,6 +567,7 @@ async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
       porReferencia.get(`catalog:${id}`),
       porReferencia.get(`tenant:${id}`),
     ].filter(Boolean);
+    candidatos = candidatos.filter(row => identidadeComposicaoEstruturalmenteCompativel(item, row));
     candidatos.sort((a, b) => (
       pontuarIdentidadeVinculada(item, b) - pontuarIdentidadeVinculada(item, a)
       || ((a._tenant_scope === 'catalog' ? 0 : 1) - (b._tenant_scope === 'catalog' ? 0 : 1))
@@ -632,13 +642,6 @@ function candidatosParaItemNoCache(item, cache) {
     });
   };
   for (const key of keys) adicionarPorChave(key);
-  if (!candidatos.length) {
-    const descricao = descricaoCanonicaComposicao(item.descricao);
-    const unidade = String(item.unidade || '').trim().toUpperCase();
-    if (fonteItem && descricao) {
-      adicionarPorChave(`#${fonteItem}:${descricao}:${unidade}`);
-    }
-  }
   return candidatos;
 }
 
@@ -891,10 +894,9 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     {
       includeUsuario: true,
       contexto,
-      // A tela de Composições consulta o contexto completo. Fazer o mesmo aqui
-      // evita falsos negativos provocados por diferenças de prefixo/sufixo nos
-      // códigos persistidos nas linhas do orçamento.
-      buscarTodoContexto: true,
+      // Consultar somente os códigos canônicos vinculados preserva o índice do
+      // catálogo e impede correspondências por descrição ou por ID isolado.
+      buscarTodoContexto: false,
     },
   );
   const referenciasCandidatas = new Set();
@@ -918,6 +920,21 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     const itemBusca = vinculadasParaBusca[index];
     const composicao = escolherComposicaoEstritaParaItem(itemBusca, contexto, cache, camposAlterados);
     if (!composicao) {
+      // Se não existe equivalente no novo contexto, a regra é preservar a
+      // composição anterior. O custo copiado na linha também precisa voltar ao
+      // valor persistido dessa composição, mas somente quando código e fonte
+      // comprovam a identidade; um ID numérico isolado nunca é suficiente.
+      const identidadeAtual = identidades.get(String(item.id_item));
+      const custoPersistido = toNum(identidadeAtual?.custo_unitario, 0);
+      if (identidadeAtual && custoPersistido > 0
+          && Math.abs(custoPersistido - toNum(item.custo_unitario, 0)) > 0.00000001) {
+        await run(
+          db,
+          'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=? AND id_orcamento=?',
+          [custoPersistido, item.id_item, idOrcamento],
+        );
+        linhasModificadas += 1;
+      }
       semCorrespondencia += 1;
       const candidatasItem = candidatosParaItemNoCache(itemBusca, cache);
       const regimeAlvo = normalizarRegime(contexto?.regime);
@@ -1269,6 +1286,16 @@ async function sintetizarEncargosSociaisDoOrcamento(db, idOrcamento, orcamento) 
 
 async function getOrcamento(db, id, options = {}) {
   let orcamento = await one(db, `${selectBase} WHERE o.id_orcamento = ?`, [id]);
+  if (orcamento?.id_data_base) {
+    const dataBase = await getDataBaseRef(db, orcamento.id_data_base);
+    if (dataBase) {
+      orcamento = {
+        ...orcamento,
+        data_base_mes: dataBase.mes,
+        data_base_ano: dataBase.ano,
+      };
+    }
+  }
   if (orcamento?.id_obra) {
     const obra = await one(
       db,
@@ -2010,43 +2037,24 @@ async function recalcularCustos(db, idOrcamento) {
     // Antes de atualizar valores, restabelece os vínculos no contexto cadastral
     // atual. A busca é restrita à UF, data-base e regime do orçamento.
     const remapeamento = await remapearComposicoesVinculadas(db, idOrcamento, []);
-    const itens = await all(db, `
-      SELECT id_item, id_composicao, codigo, fonte, descricao, unidade, custo_unitario
-      FROM orcamento_sintetico
-      WHERE id_orcamento=? AND tipo_linha='item'
-        AND id_composicao IS NOT NULL
-        AND TRIM(CAST(id_composicao AS TEXT)) <> ''`, [idOrcamento]);
-    const identidades = await buscarIdentidadesComposicoesVinculadas(db, itens);
-
-    let custosAtualizados = 0;
-    let semReferencia = 0;
-    for (const item of itens) {
-      const comp = identidades.get(String(item.id_item));
-      const custo = toNum(comp?.custo_unitario, 0);
-      if (!comp || custo <= 0) {
-        semReferencia += 1;
-        continue;
-      }
-      if (Math.abs(custo - toNum(item.custo_unitario, 0)) <= 0.00000001) continue;
-      await run(
-        db,
-        'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=? AND id_orcamento=?',
-        [custo, item.id_item, idOrcamento],
-      );
-      custosAtualizados += 1;
-    }
-
     const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    if (![totais.custo_direto, totais.valor_bdi, totais.total].every(Number.isFinite)
+        || totais.custo_direto < 0 || totais.valor_bdi < 0 || totais.total < 0) {
+      const err = new Error('O recalculo foi cancelado porque produziu valores financeiros invalidos.');
+      err.status = 409;
+      err.codigo = 'RECALCULO_FINANCEIRO_INVALIDO';
+      throw err;
+    }
     const derivados = await atualizarEventogramasDoOrcamento(db, idOrcamento, totais.total);
-    const atualizados = Number(remapeamento.linhas_modificadas || 0) + custosAtualizados;
+    const atualizados = Number(remapeamento.linhas_modificadas || 0);
     await run(db, 'COMMIT');
     return {
       atualizados,
-      custos_atualizados: custosAtualizados,
+      custos_atualizados: atualizados,
       composicoes_remapeadas: Number(remapeamento.composicoes_atualizadas || 0),
       composicoes_ja_compativeis: Number(remapeamento.composicoes_ja_compativeis || 0),
       sem_correspondencia: Number(remapeamento.sem_correspondencia || 0),
-      linhas_sem_referencia: semReferencia,
+      linhas_sem_referencia: Number(remapeamento.sem_correspondencia || 0),
       totais,
       ...derivados,
       mensagem: atualizados
@@ -2625,8 +2633,134 @@ async function buildItensSecaoComposicaoCacheForAbc(db, idsComposicoes = []) {
   return cache;
 }
 
-async function buildInsumoPriceCacheForAbc(db, contexto) {
+function mesclarCachesDeListas(destino, origem) {
+  origem.forEach((rows, key) => {
+    if (!destino.has(key)) destino.set(key, []);
+    const atuais = destino.get(key);
+    const ids = new Set(atuais.map(row => (
+      `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || row.sort_id || '')}`
+    )));
+    rows.forEach((row) => {
+      const id = `${row._tenant_scope || row.scope || ''}:${String(row.id_composicao || row.sort_id || '')}`;
+      if (!ids.has(id)) {
+        atuais.push(row);
+        ids.add(id);
+      }
+    });
+  });
+  return destino;
+}
+
+function adicionarComposicaoAoCache(cache, row) {
+  if (!row) return;
+  row.scope = row._tenant_scope || row.scope || '';
+  const fonte = normalizarFonte(row.fonte);
+  const chaves = new Set(
+    codigoVariantesComposicao(row.codigo, row.fonte)
+      .map(codigo => String(codigo || '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const canonico = codigoCanonicoComposicao(row.codigo, fonte);
+  if (fonte && canonico) chaves.add(`@${fonte}:${canonico}`);
+  chaves.forEach((key) => {
+    if (!cache.has(key)) cache.set(key, []);
+    const rows = cache.get(key);
+    const ref = referenciaComposicao(row.id_composicao, row.scope || 'catalog').key;
+    if (!rows.some(item => (
+      referenciaComposicao(item.id_composicao, item._tenant_scope || item.scope || 'catalog').key === ref
+    ))) rows.push(row);
+  });
+}
+
+async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
+  const composicoes = new Map();
+  const itens = new Map();
+  const secoes = new Map();
+  const raizPorItem = new Map();
+  const identidades = await buscarIdentidadesComposicoesVinculadas(db, servicos);
+  const cache = await buildComposicaoCandidatesForAutoLink(db, servicos, {
+    includeUsuario: true,
+    contexto,
+  });
+  let fronteira = [];
+
+  for (const servico of servicos) {
+    const alvo = escolherComposicaoEstritaParaItem(servico, contexto, cache, []);
+    const atual = identidades.get(String(servico.id_item));
+    const escolhida = alvo || atual || null;
+    if (!escolhida) continue;
+    const id = String(escolhida.id_composicao || '').trim();
+    if (!id) continue;
+    adicionarComposicaoAoCache(cache, escolhida);
+    composicoes.set(id, escolhida);
+    raizPorItem.set(String(servico.id_item), id);
+    fronteira.push(id);
+  }
+
+  for (let nivel = 0; nivel < 24 && fronteira.length; nivel += 1) {
+    const idsNivel = [...new Set(fronteira)].filter(id => !itens.has(id) && !secoes.has(id));
+    if (!idsNivel.length) break;
+    const itensNivel = await buildItensComposicaoCacheForAbc(db, idsNivel);
+    const secoesNivel = await buildItensSecaoComposicaoCacheForAbc(db, idsNivel);
+    mesclarCachesDeListas(itens, itensNivel);
+    mesclarCachesDeListas(secoes, secoesNivel);
+
+    const auxiliares = [];
+    for (const id of idsNivel) {
+      const pai = composicoes.get(id);
+      const linhas = (itensNivel.get(id) || []).length
+        ? (itensNivel.get(id) || [])
+        : (secoesNivel.get(id) || []);
+      linhas.forEach((linha) => {
+        linha._fonte_pai = pai?.fonte || '';
+        if (!isComposicaoItemRobusto(linha)) return;
+        auxiliares.push({
+          codigo: linha.codigo_item,
+          fonte: linha.fonte || pai?.fonte || '',
+          descricao: linha.descricao,
+          unidade: linha.unidade,
+        });
+      });
+    }
+    if (!auxiliares.length) {
+      fronteira = [];
+      continue;
+    }
+
+    const candidatas = await buildComposicaoCandidatesForAutoLink(db, auxiliares, {
+      includeUsuario: true,
+      contexto,
+    });
+    mesclarCachesDeListas(cache, candidatas);
+    const proxima = [];
+    auxiliares.forEach((auxiliar) => {
+      const escolhida = escolherComposicaoEstritaParaItem(auxiliar, contexto, cache, []);
+      const id = String(escolhida?.id_composicao || '').trim();
+      if (!id || composicoes.has(id)) return;
+      adicionarComposicaoAoCache(cache, escolhida);
+      composicoes.set(id, escolhida);
+      proxima.push(id);
+    });
+    fronteira = proxima;
+  }
+
+  return {
+    composicoes,
+    compCache: cache,
+    itensCompCache: itens,
+    itensSecaoCompCache: secoes,
+    raizPorItem,
+  };
+}
+
+async function buildInsumoPriceCacheForAbc(db, contexto, codigos = []) {
   const consultas = [];
+  const variantes = [...new Set(
+    (codigos || []).flatMap(codigo => codigoVariantesInsumo(codigo))
+      .map(codigo => String(codigo || '').trim())
+      .filter(Boolean),
+  )];
+  if (!variantes.length) return new Map();
   const uf = String(contexto?.uf || '').trim().toUpperCase();
   const data = parseMesRef(contexto?.mes_ref);
   const filtroPreco = (precoAlias = 'p', dataAlias = 'db2') => {
@@ -2685,7 +2819,17 @@ async function buildInsumoPriceCacheForAbc(db, contexto) {
   if (!consultas.length) return cache;
   const rows = [];
   for (const consulta of consultas) {
-    rows.push(...await all(db, consulta.sql, consulta.params).catch(() => []));
+    const chunks = variantes.length ? chunkArray(variantes, 300) : [[]];
+    for (const chunk of chunks) {
+      const filtroCodigo = chunk.length
+        ? ` AND i.codigo_insumo IN (${chunk.map(() => '?').join(',')})`
+        : '';
+      rows.push(...await all(
+        db,
+        `${consulta.sql}${filtroCodigo}`,
+        [...consulta.params, ...chunk],
+      ).catch(() => []));
+    }
   }
   rows.forEach((row) => {
     row.preco_escolhido = escolherPrecoPorRegime(row, contexto?.regime);
@@ -2855,19 +2999,27 @@ async function curvaAbcInsumos(db, idOrcamento) {
     FROM orcamento_sintetico
     WHERE id_orcamento = ? AND tipo_linha = 'item'
     ORDER BY ordem`, [idOrcamento]);
-  // A Curva ABC deve percorrer apenas o grafo de composições pertinente ao
-  // orçamento e ao seu contexto. A implementação anterior carregava o catálogo
-  // inteiro (mais de um milhão de composições) para cada requisição.
-  const compCache = await buildComposicaoCacheForAbc(db, contexto);
-  const idsComposicoes = new Set(
-    servicos.map(row => String(row.id_composicao || '').trim()).filter(Boolean),
-  );
-  compCache.forEach(rows => rows.forEach((row) => {
-    if (row?.id_composicao) idsComposicoes.add(String(row.id_composicao));
+  // Percorre somente o grafo alcançável pelas linhas deste orçamento.
+  const grafo = await buildGrafoComposicoesForAbc(db, servicos, contexto);
+  const {
+    composicoes: composicoesPorId,
+    compCache,
+    itensCompCache,
+    itensSecaoCompCache,
+    raizPorItem,
+  } = grafo;
+  const codigosInsumos = new Set();
+  const coletarCodigos = (cache) => cache.forEach((rows) => rows.forEach((row) => {
+    if (!isComposicaoItemRobusto(row)) codigosInsumos.add(row.codigo_item);
   }));
-  const itensCompCache = await buildItensComposicaoCacheForAbc(db, [...idsComposicoes]);
-  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db, [...idsComposicoes]);
-  const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
+  coletarCodigos(itensCompCache);
+  coletarCodigos(itensSecaoCompCache);
+  servicos.forEach(row => codigosInsumos.add(row.codigo));
+  const insumoPriceCache = await buildInsumoPriceCacheForAbc(
+    db,
+    contexto,
+    [...codigosInsumos].filter(Boolean),
+  );
 
   const grouped = new Map();
   const addInsumoAgrupado = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
@@ -2951,17 +3103,18 @@ async function curvaAbcInsumos(db, idOrcamento) {
     let itens = await getItensComposicaoForAbc(db, id, itensCompCache);
     if (!itens.length) itens = itensSecaoCompCache.get(id) || [];
     if (!itens.length) return false;
+    const composicaoPai = composicoesPorId.get(id);
     for (const item of itens) {
       const coef = toNum(item.coeficiente, 0);
       const qtd = fator * coef;
       if (!qtd) continue;
       if (isComposicaoItemRobusto(item)) {
-        const codigos = codigoVariantesComposicao(item.codigo_item, item.fonte);
-        let sub = null;
-        for (const codigo of codigos) {
-          sub = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
-          if (sub) break;
-        }
+        const sub = escolherComposicaoEstritaParaItem({
+          codigo: item.codigo_item,
+          fonte: item.fonte || item._fonte_pai || composicaoPai?.fonte || '',
+          descricao: item.descricao,
+          unidade: item.unidade,
+        }, contexto, compCache, []);
         if (sub && await expandirComposicao(sub.id_composicao, qtd, servico, new Set(visitados))) continue;
         const resolvidoInsumo = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
         if (toNum(resolvidoInsumo.preco, 0) > 0) {
@@ -2988,16 +3141,12 @@ async function curvaAbcInsumos(db, idOrcamento) {
     const entradasServico = [];
     const servicoColetor = { ...servico, __abcCollector: entradasServico };
     let expanded = false;
-    if (servico.id_composicao) {
-      expanded = await expandirComposicao(servico.id_composicao, qtdServico, servicoColetor);
+    const idRaiz = raizPorItem.get(String(servico.id_item));
+    if (idRaiz) {
+      expanded = await expandirComposicao(idRaiz, qtdServico, servicoColetor);
     }
     if (!expanded) {
-      const codigos = codigoVariantesComposicao(servico.codigo, servico.fonte);
-      let comp = null;
-      for (const codigo of codigos) {
-        comp = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
-        if (comp) break;
-      }
+      const comp = escolherComposicaoEstritaParaItem(servico, contexto, compCache, []);
       if (comp) expanded = await expandirComposicao(comp.id_composicao, qtdServico, servicoColetor);
     }
     if (expanded && agregarServicoReconciliado(servico, entradasServico)) continue;

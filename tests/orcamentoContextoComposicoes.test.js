@@ -109,7 +109,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         1, 1, '1.1', 'item', 1, 1, 'composicao', '1', NULL,
-        'SERVICO-100-V1', 'REFERENCIAL SINAPI', 'Serviço onerado DF', 'm²', 2, 100, NULL
+        'SINAPI.100', 'REFERENCIAL SINAPI', 'Serviço onerado DF', 'm²', 2, 100, NULL
       );
       INSERT INTO orcamento_sintetico VALUES (
         2, 1, '1.2', 'item', 1, 2, 'composicao', NULL, NULL,
@@ -130,7 +130,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         10, 2, '1.1', 'item', 1, 1, 'composicao', '6', NULL,
-        'ITEM-ORCAMENTO-93358', 'CAIXA / SINAPI', 'Escavação DF', 'm³', 1, 100, NULL
+        'SINAPI.93358', 'CAIXA / SINAPI', 'Escavação DF', 'm³', 1, 100, NULL
       );
     `);
 
@@ -267,7 +267,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         11, 3, '1.1', 'item', 1, 1, 'composicao', 'catalog:1', NULL,
-        'CODIGO VISUAL DIFERENTE', 'CAIXA ECONOMICA / SINAPI',
+        'SINAPI.100', 'CAIXA ECONOMICA / SINAPI',
         'Serviço onerado DF', 'm²', 2, 100, NULL
       );
       INSERT INTO orcamentos VALUES (
@@ -276,7 +276,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         12, 4, '1.1', 'item', 1, 1, 'composicao', 'catalog:999999', NULL,
-        'CODIGO LEGADO SEM EQUIVALENCIA TEXTUAL', 'REFERENCIAL SINAPI',
+        'SINAPI.777', 'REFERENCIAL SINAPI',
         'Serviço equivalente', 'm²', 1, 110, NULL
       );
     `);
@@ -302,7 +302,7 @@ async function main() {
       );
       INSERT INTO orcamento_sintetico VALUES (
         13,5,'1.1','item',1,1,'composicao','20',NULL,
-        'CODIGO VISUAL ANTIGO','SINAPI','Composicao privada DF','m2',1,120,NULL
+        'SINAPI.888','SINAPI','Composicao privada DF','m2',1,120,NULL
       );
     `);
 
@@ -362,6 +362,23 @@ async function main() {
     assert.strictEqual(escopoPrivadoResolvido.atualizacao_composicoes.composicoes_atualizadas, 1);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=13')).id_composicao, 'tenant:21');
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=13')).custo_unitario, 115);
+
+    // Regressão crítica: um ID numérico pode existir simultaneamente no
+    // catálogo e no tenant. O recálculo deve usar código + fonte para escolher
+    // a composição privada correta e nunca copiar o custo 999 do catálogo.
+    await exec(db, `
+      UPDATE orcamentos
+      SET uf_referencia='DF', regime_previdenciario='Onerado'
+      WHERE id_orcamento=5;
+      UPDATE orcamento_sintetico
+      SET id_composicao='20', codigo='SINAPI.888', fonte='SINAPI',
+          custo_unitario=7138340023.83
+      WHERE id_item=13;
+    `);
+    const colisaoReparada = await repo.recalcularCustos(db, 5);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=13')).id_composicao, 'tenant:20');
+    assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=13')).custo_unitario, 120);
+    assert.strictEqual(colisaoReparada.totais.total, 144);
 
     await exec(db, `
       ALTER TABLE obras ADD COLUMN descricao TEXT;

@@ -26,7 +26,8 @@ async function main() {
         unidade TEXT, quantidade REAL, custo_unitario REAL, id_composicao TEXT
       );
       CREATE TABLE catalog.composicoes (
-        id_composicao INTEGER PRIMARY KEY, codigo TEXT, fonte TEXT, uf_referencia TEXT,
+        id_composicao INTEGER PRIMARY KEY, codigo TEXT, fonte TEXT, formato TEXT,
+        descricao TEXT, unidade TEXT, uf_referencia TEXT,
         mes_referencia TEXT, situacao_ref TEXT, custo_unitario REAL
       );
       CREATE TABLE catalog.itens_composicao (
@@ -56,8 +57,8 @@ async function main() {
       INSERT INTO orcamento_sintetico VALUES
         (1,1,'1.1','item',1,'100','SINAPI','Servico','m2',2,50,'1');
       INSERT INTO catalog.composicoes VALUES
-        (1,'100','SINAPI','SP','04/2026','Onerado',50),
-        (2,'IGNORAR','SINAPI','RJ','05/2026','Onerado',999);
+        (1,'100','SINAPI','Unitário','Serviço','m2','SP','04/2026','Onerado',50),
+        (2,'IGNORAR','SINAPI','Unitário','Ignorar','m2','RJ','05/2026','Onerado',999);
       INSERT INTO catalog.itens_composicao VALUES
         (1,1,'MAT-1','Material','kg',2,'MATERIAL',25,50,1),
         (2,2,'MAT-X','Fora do contexto','kg',1,'MATERIAL',999,999,1);
