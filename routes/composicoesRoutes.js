@@ -6,6 +6,52 @@ const { ensureAdmin, ensureAdminOrTenantScoped } = require('../utils/accessPolic
 module.exports = function(db, options = {}) {
   const router = express.Router();
   const readDb = options.readDb || db;
+  const responseCache = new Map();
+  const inflight = new Map();
+  const MAX_CACHE_ENTRIES = 200;
+
+  function cacheKey(req, kind) {
+    const tenant = req.user?.tenant_id || req.user?.id_tenant || req.user?.id_user || 'anon';
+    const query = Object.entries(req.query || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${key}=${value}`)
+      .join('&');
+    return `${kind}|${tenant}|${query}`;
+  }
+
+  function cacheGet(key) {
+    const entry = responseCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      responseCache.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  function cacheSet(key, value, ttlMs) {
+    if (responseCache.size >= MAX_CACHE_ENTRIES) {
+      responseCache.delete(responseCache.keys().next().value);
+    }
+    responseCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+    return value;
+  }
+
+  async function cached(key, ttlMs, loader) {
+    const hit = cacheGet(key);
+    if (hit) return { value: hit, cache: 'hit' };
+    if (!inflight.has(key)) {
+      inflight.set(key, Promise.resolve()
+        .then(loader)
+        .then(value => cacheSet(key, value, ttlMs))
+        .finally(() => inflight.delete(key)));
+    }
+    return { value: await inflight.get(key), cache: 'miss' };
+  }
+
+  function clearReadCache() {
+    responseCache.clear();
+  }
 
   function asyncHandler(fn) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -22,16 +68,23 @@ module.exports = function(db, options = {}) {
     res.json(await repo.listGrupos(readDb, req.query));
   }));
 
-  router.get('/stats', asyncHandler(async (_req, res) => {
-    res.json(await repo.stats(readDb));
+  router.get('/stats', asyncHandler(async (req, res) => {
+    const started = Date.now();
+    const result = await cached(cacheKey(req, 'stats'), 5 * 60 * 1000, () => repo.stats(readDb));
+    res.set('Server-Timing', `composicoes;dur=${Date.now() - started}, cache;desc="${result.cache}"`);
+    res.json(result.value);
   }));
 
   router.get('/', asyncHandler(async (req, res) => {
-    res.json(await repo.listComposicoes(readDb, req.query));
+    const started = Date.now();
+    const result = await cached(cacheKey(req, 'list'), 20 * 1000, () => repo.listComposicoes(readDb, req.query));
+    res.set('Server-Timing', `composicoes;dur=${Date.now() - started}, cache;desc="${result.cache}"`);
+    res.json(result.value);
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
     const result = await withWriteConnection(writeDb => service.createComposicao(writeDb, req.body || {}));
+    clearReadCache();
     res.status(201).json(result);
   }));
 
@@ -40,7 +93,9 @@ module.exports = function(db, options = {}) {
       ...(req.body || {}),
       scope: req.user && req.user.role === 'admin' ? 'all' : 'tenant',
     };
-    res.json(await withWriteConnection(writeDb => repo.recalcularCustosReferenciais(writeDb, payload)));
+    const result = await withWriteConnection(writeDb => repo.recalcularCustosReferenciais(writeDb, payload));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.post('/excluir-lote', asyncHandler(async (req, res) => {
@@ -55,12 +110,15 @@ module.exports = function(db, options = {}) {
     if (!payload.dry_run && payload.confirmacao !== 'EXCLUIR_COMPOSICOES_EM_LOTE') {
       return res.status(400).json({ erro: 'Confirmacao explicita obrigatoria para exclusao em lote.' });
     }
-    res.json(await withWriteConnection(writeDb => repo.excluirEmLote(writeDb, payload)));
+    const result = await withWriteConnection(writeDb => repo.excluirEmLote(writeDb, payload));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.put('/itens/:id', asyncHandler(async (req, res) => {
     const item = await withWriteConnection(writeDb => repo.updateItem(writeDb, req.params.id, req.body || {}));
     if (!item) return res.status(404).json({ erro: 'Item nao encontrado.' });
+    clearReadCache();
     return res.json(item);
   }));
 
@@ -68,6 +126,7 @@ module.exports = function(db, options = {}) {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'item de composicao referencial');
     const result = await withWriteConnection(writeDb => repo.deleteItem(writeDb, req.params.id));
     if (!result.changes) return res.status(404).json({ erro: 'Item nao encontrado.' });
+    clearReadCache();
     return res.json({ mensagem: 'Item excluido.' });
   }));
 
@@ -76,16 +135,21 @@ module.exports = function(db, options = {}) {
   }));
 
   router.put('/:id', asyncHandler(async (req, res) => {
-    res.json(await withWriteConnection(writeDb => service.updateComposicao(writeDb, req.params.id, req.body || {}, { readDb })));
+    const result = await withWriteConnection(writeDb => service.updateComposicao(writeDb, req.params.id, req.body || {}, { readDb }));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'composicao referencial');
-    res.json(await withWriteConnection(writeDb => service.deleteComposicao(writeDb, req.params.id, { readDb })));
+    const result = await withWriteConnection(writeDb => service.deleteComposicao(writeDb, req.params.id, { readDb }));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.post('/:id/itens', asyncHandler(async (req, res) => {
     const result = await withWriteConnection(writeDb => repo.createItem(writeDb, req.params.id, req.body || {}));
+    clearReadCache();
     res.status(201).json(result);
   }));
 
@@ -103,15 +167,21 @@ module.exports = function(db, options = {}) {
 
   router.post('/:id/excluir-com-vinculo', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'composicao referencial vinculada');
-    res.json(await withWriteConnection(writeDb => service.excluirComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
+    const result = await withWriteConnection(writeDb => service.excluirComVinculo(writeDb, req.params.id, req.body || {}, { readDb }));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.post('/:id/editar-com-vinculo', asyncHandler(async (req, res) => {
-    res.json(await withWriteConnection(writeDb => service.editarComVinculo(writeDb, req.params.id, req.body || {}, { readDb })));
+    const result = await withWriteConnection(writeDb => service.editarComVinculo(writeDb, req.params.id, req.body || {}, { readDb }));
+    clearReadCache();
+    res.json(result);
   }));
 
   router.post('/:id/converter-formato', asyncHandler(async (req, res) => {
-    res.json(await withWriteConnection(writeDb => service.converterFormato(writeDb, req.params.id, req.body || {}, { readDb })));
+    const result = await withWriteConnection(writeDb => service.converterFormato(writeDb, req.params.id, req.body || {}, { readDb }));
+    clearReadCache();
+    res.json(result);
   }));
 
   return router;

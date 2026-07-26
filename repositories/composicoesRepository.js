@@ -422,6 +422,39 @@ async function stats(db) {
   };
 }
 
+function appendRegimeAndSearchFilters(query, where, params) {
+  if (query.regime === 'Desonerado') {
+    where.push(`(
+      c.situacao_ref='Desonerado'
+      OR (
+        c.fonte='SINAPI'
+        AND (
+          TRIM(COALESCE(c.situacao_ref,''))=''
+          OR UPPER(COALESCE(c.situacao_ref,'')) IN ('COM CUSTO','SEM CUSTO')
+        )
+      )
+    )`);
+  } else if (query.regime === 'Onerado') {
+    where.push(`(
+      c.situacao_ref='Onerado'
+      OR (c.fonte='SICRO' AND TRIM(COALESCE(c.situacao_ref,''))='')
+    )`);
+  }
+  if (query.q) {
+    const termo = String(query.q || '').trim();
+    const pareceCodigo = /\d/.test(termo) && !/\s/.test(termo);
+    if (pareceCodigo) {
+      const variantes = codigoVariantes(termo);
+      const patterns = [...new Set([...variantes, termo].map(value => `${value}%`))];
+      where.push(`(${patterns.map(() => 'c.codigo LIKE ?').join(' OR ')})`);
+      params.push(...patterns);
+    } else {
+      where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
+      params.push(`%${termo}%`, `%${termo}%`);
+    }
+  }
+}
+
 function appendListFilters(query = {}) {
   const where = ['1=1'];
   const params = [];
@@ -445,15 +478,7 @@ function appendListFilters(query = {}) {
     where.push('c.mes_referencia = ?');
     params.push(query.mes_ref);
   }
-  if (query.regime === 'Desonerado') {
-    where.push(`(${regimePrevidenciarioSql('c')} = 'Desonerado')`);
-  } else if (query.regime === 'Onerado') {
-    where.push(`(${regimePrevidenciarioSql('c')} = 'Onerado')`);
-  }
-  if (query.q) {
-    where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
-    params.push(`%${query.q}%`, `%${query.q}%`);
-  }
+  appendRegimeAndSearchFilters(query, where, params);
   return { where, params };
 }
 
@@ -486,13 +511,9 @@ async function listComposicoes(db, query = {}) {
       if (items.length < limit && !hasMore) {
         const catalogOffset = Math.max(0, offset - tenantTotal);
         const remaining = limit - items.length;
-        let orderBy = 'c.id_composicao DESC';
-        if (query.fonte) orderBy = 'c.fonte, c.uf_referencia, c.mes_referencia';
-        else if (query.formato) orderBy = 'c.formato';
-        else if (query.id_grupo_comp) orderBy = 'c.id_grupo_comp';
         const catalogRows = await all(db, `
           ${catalog.sql}
-          ORDER BY ${orderBy}
+          ORDER BY c.id_composicao DESC
           LIMIT ? OFFSET ?`, [...catalog.params, remaining + 1, catalogOffset]);
         hasMore = catalogRows.length > remaining;
         items.push(...catalogRows.slice(0, remaining));
@@ -504,14 +525,13 @@ async function listComposicoes(db, query = {}) {
         hasMore = catalogRows.length > 0;
       }
 
-      // A listagem rapida usa o custo persistido. Reabrir e recalcular cada
-      // composicao aqui gerava um padrao N+1 (dezenas de consultas por pagina).
-      // Para demonstrativos SICRO do tenant, entretanto, a leitura pontual e
-      // necessaria para recuperar edicoes legadas que ficaram achatadas antes
-      // da materializacao das secoes A-F. O filtro mantem o custo limitado aos
-      // poucos registros de producao horaria presentes na pagina.
+      // Referenciais SICRO usam exclusivamente o custo persistido. Somente as
+      // raras composições USUARIO de produção horária podem precisar recuperar
+      // uma edição legada achatada; limitar a releitura a elas elimina o N+1
+      // que antes atingia até 50 referências SICRO oficiais por página.
       await aplicarPrecosResolvidosTenantLista(db, items.filter(row => (
         row?._tenant_scope === 'tenant'
+        && String(row.fonte || '').toUpperCase() === 'USUARIO'
         && String(row.formato || '').toUpperCase() === 'PRODUCAO_HORARIA'
       )));
       return { items, total: null, has_more: hasMore, limit, offset };
@@ -535,14 +555,10 @@ async function listComposicoes(db, query = {}) {
   const { where, params } = appendListFilters(query);
   const clause = where.join(' AND ');
   if (String(query.quick || '') === '1') {
-    let orderBy = 'c.id_composicao DESC';
-    if (query.fonte) orderBy = 'c.fonte, c.uf_referencia, c.mes_referencia';
-    else if (query.formato) orderBy = 'c.formato';
-    else if (query.id_grupo_comp) orderBy = 'c.id_grupo_comp';
     const rows = await all(db, `
       ${selectComp}
       WHERE ${clause}
-      ORDER BY ${orderBy}
+      ORDER BY c.id_composicao DESC
       LIMIT ? OFFSET ?`, [...params, limit + 1, offset]);
     return {
       items: rows.slice(0, limit),
@@ -1110,15 +1126,7 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
     where.push('c.mes_referencia = ?');
     params.push(query.mes_ref);
   }
-  if (query.regime === 'Desonerado') {
-    where.push(`(${regimePrevidenciarioSql('c')} = 'Desonerado')`);
-  } else if (query.regime === 'Onerado') {
-    where.push(`(${regimePrevidenciarioSql('c')} = 'Onerado')`);
-  }
-  if (query.q) {
-    where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
-    params.push(`%${query.q}%`, `%${query.q}%`);
-  }
+  appendRegimeAndSearchFilters(query, where, params);
 
   return {
     sql: `
@@ -2910,4 +2918,7 @@ module.exports = {
   createItem,
   updateItem,
   deleteItem,
+  __performance: {
+    appendListFilters,
+  },
 };

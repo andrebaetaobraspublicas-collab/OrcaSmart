@@ -151,6 +151,12 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   em regime incompatível não são utilizadas. O resumo diferencia ausência real
   de composição da rejeição por regime e informa o regime atual do orçamento;
   registros SINAPI legados `COM CUSTO` são tratados como `Desonerado`.
+- A listagem de composições usa paginação rápida com custo persistido para
+  referências oficiais, evitando a abertura N+1 de até 50 memórias SICRO por
+  página. Estatísticas e resultados recentes possuem cache curto por tenant;
+  a abertura inicia metadados e listagem em paralelo. Índices MySQL específicos
+  atendem regime, fonte, UF e data-base, e buscas por código usam prefixos
+  indexáveis em vez de curingas iniciais.
 
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.

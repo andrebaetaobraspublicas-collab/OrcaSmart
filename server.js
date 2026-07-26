@@ -46,6 +46,7 @@ const {
 const { ensureMysqlBdiSchema, recalcularMysqlBdiValores } = require('./utils/bdiMysqlSchema');
 const { ensureMysqlRiscosSchema } = require('./utils/riscosMysqlSchema');
 const { normalizarMysqlRegimesComposicoes } = require('./utils/composicoesRegimeMysql');
+const { ensureMysqlComposicoesPerformance } = require('./utils/composicoesPerformanceMysql');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1160,6 +1161,11 @@ async function initializeMysqlPilot() {
       await ensureMysqlRiscosSchema(mysqlConfig());
       const regimesComposicoes = await normalizarMysqlRegimesComposicoes(mysqlConfig());
       console.log('[composicoes] Regimes SICRO normalizados:', JSON.stringify(regimesComposicoes));
+      setTimeout(() => {
+        ensureMysqlComposicoesPerformance(mysqlConfig())
+          .then(created => console.log('[composicoes] Índices de desempenho:', JSON.stringify(created)))
+          .catch(err => console.warn('[composicoes] Falha ao preparar índices de desempenho:', err.message || err));
+      }, 1000);
       setTimeout(() => {
         recalcularMysqlBdiValores(mysqlConfig())
           .then((bdiRecalc) => {

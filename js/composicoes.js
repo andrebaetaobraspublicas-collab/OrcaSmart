@@ -134,8 +134,9 @@ Router.register('composicoes', async () => {
           throw error;
         });
       }
+      const listaPromise = solicitarLista();
       [grupos, _undList, _me] = await metadataPromise;
-      await buscar();
+      aplicarResultadoLista(await listaPromise);
       abrirEdicaoPendenteDoOrcamento();
 
       if (!statsPromise) {
@@ -173,22 +174,36 @@ Router.register('composicoes', async () => {
     return true;
   }
 
-  async function buscar() {
+  function parametrosLista() {
+    const params = { ...filtros, quick: 1 };
+    if (!params.fonte) delete params.fonte;
+    if (!params.formato) delete params.formato;
+    if (!params.id_grupo_comp) delete params.id_grupo_comp;
+    if (!params.uf) delete params.uf;
+    if (!params.mes_ref) delete params.mes_ref;
+    if (!params.regime) delete params.regime;
+    if (!params.q) delete params.q;
+    return params;
+  }
+
+  async function solicitarLista() {
     const requestSequence = ++loadSequence;
+    const res = await API.composicoes.list(parametrosLista());
+    return { res, requestSequence };
+  }
+
+  function aplicarResultadoLista(resultado) {
+    if (!resultado || resultado.requestSequence !== loadSequence) return;
+    const res = resultado.res || {};
+    totalRegistros = Number.isFinite(Number(res.total)) && res.total !== null ? Number(res.total) : null;
+    temMaisRegistros = !!res.has_more;
+    renderLista(res.items || []);
+  }
+
+  async function buscar() {
+    const requestSequence = loadSequence + 1;
     try {
-      const params = { ...filtros, quick: 1 };
-      if (!params.fonte) delete params.fonte;
-      if (!params.formato) delete params.formato;
-      if (!params.id_grupo_comp) delete params.id_grupo_comp;
-      if (!params.uf) delete params.uf;
-      if (!params.mes_ref) delete params.mes_ref;
-      if (!params.regime) delete params.regime;
-      if (!params.q) delete params.q;
-      const res = await API.composicoes.list(params);
-      if (requestSequence !== loadSequence) return;
-      totalRegistros = Number.isFinite(Number(res.total)) && res.total !== null ? Number(res.total) : null;
-      temMaisRegistros = !!res.has_more;
-      renderLista(res.items);
+      aplicarResultadoLista(await solicitarLista());
     } catch(e) {
       if (requestSequence === loadSequence) Toast.error(e.message);
     }
