@@ -65,11 +65,17 @@ module.exports = function(db) {
   }));
 
   router.get('/:id/sintetico', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.listSintetico(db, req.params.id));
+    const itens = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(readConnection => orcamentosService.listSintetico(readConnection, req.params.id))
+      : await orcamentosService.listSintetico(db, req.params.id);
+    res.json(itens);
   }));
 
   router.get('/:id/sintetico/duplicatas', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.diagnosticarDuplicatasSintetico(db, req.params.id));
+    const diagnostico = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(readConnection => orcamentosService.diagnosticarDuplicatasSintetico(readConnection, req.params.id))
+      : await orcamentosService.diagnosticarDuplicatasSintetico(db, req.params.id);
+    res.json(diagnostico);
   }));
 
   router.post('/:id/sintetico/reparar-duplicatas', asyncHandler(async (req, res) => {

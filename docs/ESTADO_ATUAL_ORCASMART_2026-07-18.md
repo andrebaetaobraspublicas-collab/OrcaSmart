@@ -85,10 +85,15 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Somente linhas vinculadas são remapeadas, com correspondência estrita por
   código/fonte, UF, mês/ano e regime. Sem correspondência exata, o vínculo e o
   custo existentes são preservados.
+- Referências oficiais antigas que registram `COM CUSTO` em vez do regime podem
+  ser remapeadas por UF ou data-base quando o regime não foi alterado. Uma troca
+  explícita de regime continua exigindo uma referência com regime identificável.
 - Linhas sem composição vinculada não são modificadas automaticamente.
 - Após o remapeamento, custo direto, BDI e total são recalculados na mesma
   transação. Mudanças de regime geram aviso para seleção de um novo perfil de
   BDI compatível.
+- Se nenhuma linha for efetivamente modificada, os totais anteriores são
+  preservados; uma simples mudança cadastral não pode alterar o valor global.
 - A atualização nunca insere nem remove linhas e valida essa invariável antes do
   commit. Se houver duplicatas estruturais exatas preexistentes, o recálculo é
   bloqueado para impedir a consolidação de um total incorreto.
@@ -112,6 +117,13 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   BDI padronizado.
 
 ### Orçamento sintético e insumos
+
+- A abertura do sintético é somente leitura e não recalcula nem sobrescreve
+  custos silenciosamente. Foi removido o padrão N+1 que consultava cada
+  composição individualmente, reduzindo substancialmente o tempo de abertura.
+- O total exibido inicialmente é o mesmo total persistido e apresentado na lista
+  de orçamentos. Edições explícitas de linhas ou BDI recalculam e persistem o
+  novo total.
 
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.

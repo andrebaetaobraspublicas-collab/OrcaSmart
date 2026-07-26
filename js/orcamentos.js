@@ -146,6 +146,15 @@ Router.register('orcamentos', async () => {
       title: id ? 'Editar Orçamento' : 'Novo Orçamento',
       size: 'modal-lg',
       body: `
+        <div id="orcamentoProcessando" style="display:none;margin-bottom:14px;padding:12px 14px;border:1px solid #93c5fd;background:#eff6ff;border-radius:8px;color:#1e40af">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="spinner" style="width:20px;height:20px;flex:0 0 auto"></span>
+            <div>
+              <strong>Aguarde enquanto o orçamento é atualizado.</strong>
+              <div class="text-xs" style="margin-top:2px">Verificando as composições correspondentes e recalculando os valores…</div>
+            </div>
+          </div>
+        </div>
         <div class="form-grid form-grid-2">
           <div class="form-group span-2">
             <label class="form-label">Obra <span class="req">*</span></label>
@@ -236,6 +245,7 @@ Router.register('orcamentos', async () => {
     const semVinculo = Number(resumo.linhas_sem_vinculo || 0);
     const atualizadas = Number(resumo.composicoes_atualizadas || 0);
     const jaCompativeis = Number(resumo.composicoes_ja_compativeis || 0);
+    const recalculado = resumo.recalculado === true;
     const totais = resumo.totais || {};
     const avisoBdi = resumo.selecionar_novo_bdi
       ? `<div style="margin-top:14px;padding:12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412">
@@ -251,13 +261,13 @@ Router.register('orcamentos', async () => {
       : '';
 
     Modal.open({
-      title: 'Orçamento atualizado e recalculado',
+      title: recalculado ? 'Orçamento atualizado e recalculado' : 'Orçamento atualizado',
       body: `
         <div style="line-height:1.6">
           <p><strong>${atualizadas}</strong> composição(ões) substituída(s) pela referência correspondente.</p>
           <p><strong>${jaCompativeis}</strong> composição(ões) já estavam compatíveis com a nova seleção.</p>
           <p><strong>${semVinculo}</strong> linha(s) sem vínculo não foram modificadas automaticamente.</p>
-          <p style="margin-top:10px"><strong>Novo total:</strong> ${Utils.moeda(totais.total || 0)}</p>
+          <p style="margin-top:10px"><strong>${recalculado ? 'Novo total' : 'Total preservado'}:</strong> ${Utils.moeda(totais.total || 0)}</p>
           ${avisoPendencias}
           ${avisoBdi}
         </div>`,
@@ -300,15 +310,33 @@ Router.register('orcamentos', async () => {
       if (!confirmou) return;
       payload.confirmar_atualizacao_composicoes = true;
     }
+    const btnSalvar = document.getElementById('btnSalvarOrc');
+    const btnCancelar = document.getElementById('btnCancelarOrc');
+    const avisoProcessando = document.getElementById('orcamentoProcessando');
+    const textoOriginalSalvar = btnSalvar?.textContent || 'Salvar';
+    const setProcessando = (ativo) => {
+      if (avisoProcessando) avisoProcessando.style.display = ativo ? 'block' : 'none';
+      if (btnSalvar) {
+        btnSalvar.disabled = ativo;
+        btnSalvar.innerHTML = ativo
+          ? '<span class="spinner" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Processando…'
+          : textoOriginalSalvar;
+      }
+      if (btnCancelar) btnCancelar.disabled = ativo;
+    };
     try {
+      setProcessando(true);
       let resposta = null;
       if (id) { resposta = await API.orcamentos.update(id, payload); }
       else     { await API.orcamentos.create(payload);    Toast.success('Orçamento criado!'); }
-      Modal.close();
       await carregar();
+      Modal.close();
       if (resposta?.atualizacao_composicoes) mostrarResumoAtualizacao(resposta.atualizacao_composicoes);
       else if (id) Toast.success('Orçamento atualizado!');
-    } catch(e) { Toast.error(e.message); }
+    } catch(e) {
+      setProcessando(false);
+      Toast.error(e.message);
+    }
   }
 
   async function excluir(id) {

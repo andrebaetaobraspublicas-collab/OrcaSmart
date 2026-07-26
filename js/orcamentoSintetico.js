@@ -195,6 +195,10 @@ Router.register('orcamento-sintetico', async () => {
   function totalGeral() {
     return itens.filter(i => i.tipo_linha === 'item').reduce((s, i) => s + valorItem(i), 0);
   }
+  function totalPersistido() {
+    const total = Number(orc?.valor_total);
+    return Number.isFinite(total) ? total : totalGeral();
+  }
 
   function cloneItensParaUndo() {
     return itens.map((it, idx) => ({
@@ -273,7 +277,7 @@ Router.register('orcamento-sintetico', async () => {
       bdiPct = pctPerfilSelecionado;
       orc.bdi_percentual = pctPerfilSelecionado;
     }
-    const gt = totalGeral();
+    const gt = totalPersistido();
     const bdiOpts = bdis.map(b =>
       `<option value="${b.id_perfil_bdi}" ${orc.id_bdi_perfil == b.id_perfil_bdi ? 'selected' : ''}>` +
       `${Utils.esc(b.nome_perfil)} — ${Utils.num(b.bdi_percentual, 4)}%</option>`
@@ -2379,6 +2383,13 @@ Router.register('orcamento-sintetico', async () => {
       .reduce((s, i) => s + (i.custo_unitario || 0) * (i.quantidade || 0), 0);
     try {
       await API.osSint.totais(id_orc, { custo_direto: cd, valor_bdi: gt - cd, total: gt });
+      orc.valor_custo_direto = cd;
+      orc.valor_bdi = gt - cd;
+      orc.valor_total = gt;
+      const disp = document.getElementById('totalGeralDisplay');
+      const foot = document.getElementById('tfTotal');
+      if (disp) disp.textContent = Utils.moeda(gt);
+      if (foot) foot.textContent = Utils.moeda(gt);
     } catch(_) { /* não crítico */ }
   }
 

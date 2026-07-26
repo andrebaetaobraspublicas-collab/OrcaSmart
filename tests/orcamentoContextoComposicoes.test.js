@@ -119,6 +119,17 @@ async function main() {
       INSERT INTO composicoes VALUES (3, 'SINAPI.100', 'SINAPI', 'UNITARIO', 'Serviço desonerado GO', 'm²', '04/2026', 'GO', 'Desonerado', 70);
       INSERT INTO composicoes VALUES (4, 'SINAPI.100', 'SINAPI', 'UNITARIO', 'Serviço desonerado GO maio', 'm²', '05/2026', 'GO', 'Desonerado', 60);
       INSERT INTO composicoes VALUES (5, 'SINAPI.100', 'SINAPI', 'UNITARIO', 'Serviço onerado DF maio', 'm²', '05/2026', 'DF', 'Onerado', 90);
+      INSERT INTO composicoes VALUES (6, 'SINAPI.93358', 'SINAPI', 'UNITARIO', 'Escavação DF', 'm³', '04/2026', 'DF', 'COM CUSTO', 100);
+      INSERT INTO composicoes VALUES (7, '93358', 'SINAPI', 'UNITARIO', 'Escavação CE', 'm³', '04/2026', 'CE', 'COM CUSTO', 95);
+
+      INSERT INTO orcamentos VALUES (
+        2, 1, 'Orçamento com referência neutra', '', 1, 'DF', '1.0', 'Em elaboração',
+        'Onerado', 100, 20, 120, '2026-07-26', '', NULL, 20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        10, 2, '1.1', 'item', 1, 1, 'composicao', '6', NULL,
+        'SINAPI.93358', 'SINAPI', 'Escavação DF', 'm³', 1, 100, NULL
+      );
     `);
 
     await assert.rejects(
@@ -171,6 +182,40 @@ async function main() {
     assert.strictEqual(semEquivalente.atualizacao_composicoes.selecionar_novo_bdi, true);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '4');
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=1')).custo_unitario, 60);
+
+    await exec(db, 'UPDATE composicoes SET custo_unitario=999 WHERE id_composicao=4');
+    const leituraSemEfeitoColateral = await repo.listSintetico(db, 1);
+    assert.strictEqual(leituraSemEfeitoColateral.find(item => item.id_item === 1).custo_unitario, 60);
+    assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=1')).custo_unitario, 60);
+    await exec(db, 'UPDATE composicoes SET custo_unitario=60 WHERE id_composicao=4');
+
+    const alteradoParaCe = await repo.updateOrcamento(db, 2, payload({
+      nome_orcamento: 'Orçamento com referência neutra',
+      uf_referencia: 'CE',
+      valor_custo_direto: 100,
+      valor_bdi: 20,
+      valor_total: 120,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(alteradoParaCe.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual(alteradoParaCe.atualizacao_composicoes.linhas_modificadas, 1);
+    assert.strictEqual(alteradoParaCe.atualizacao_composicoes.recalculado, true);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=10')).id_composicao, '7');
+    assert.strictEqual(alteradoParaCe.valor_total, 114);
+
+    const regimeSemReferencia = await repo.updateOrcamento(db, 2, payload({
+      nome_orcamento: 'Orçamento com referência neutra',
+      uf_referencia: 'CE',
+      regime_previdenciario: 'Desonerado',
+      valor_custo_direto: 95,
+      valor_bdi: 19,
+      valor_total: 114,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.composicoes_atualizadas, 0);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.linhas_modificadas, 0);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.recalculado, false);
+    assert.strictEqual(regimeSemReferencia.valor_total, 114);
 
     await exec(db, `
       INSERT INTO orcamento_sintetico

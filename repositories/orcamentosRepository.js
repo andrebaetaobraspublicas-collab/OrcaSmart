@@ -366,7 +366,7 @@ function escolherComposicaoParaItemNoCache(item, contexto, cache) {
   return escolherComposicaoCandidata(candidatos, contexto);
 }
 
-function composicaoCompativelEstrita(candidato, contexto) {
+function composicaoCompativelEstrita(candidato, contexto, options = {}) {
   const ufAlvo = String(contexto?.uf || '').trim().toUpperCase();
   const ufCandidato = String(candidato?.uf_referencia || '').trim().toUpperCase();
   if (!ufAlvo || ufCandidato !== ufAlvo) return false;
@@ -377,17 +377,28 @@ function composicaoCompativelEstrita(candidato, contexto) {
 
   const regimeAlvo = normalizarRegime(contexto?.regime);
   const regimeCandidato = normalizarRegime(candidato?.situacao_ref);
-  return !!regimeAlvo && regimeCandidato === regimeAlvo;
+  if (regimeCandidato) return !!regimeAlvo && regimeCandidato === regimeAlvo;
+  return options.permitirRegimeNeutro === true;
 }
 
-function escolherComposicaoEstritaParaItem(item, contexto, cache) {
+function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados = []) {
   const fontes = new Set(fonteAliases(item.fonte).map(f => String(f || '').trim().toUpperCase()));
   const candidatos = [];
+  let composicaoAtual = null;
+  for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
+    const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
+    rows.forEach((row) => {
+      if (!fontes.has(String(row.fonte || '').trim().toUpperCase())) return;
+      if (String(row.id_composicao) === String(item.id_composicao)) composicaoAtual = row;
+    });
+  }
+  const regimeAtual = normalizarRegime(composicaoAtual?.situacao_ref);
+  const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario') && !regimeAtual;
   for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
     const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
     rows.forEach((row) => {
       if (fontes.has(String(row.fonte || '').trim().toUpperCase())
-          && composicaoCompativelEstrita(row, contexto)) {
+          && composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) {
         candidatos.push(row);
       }
     });
@@ -605,10 +616,11 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
 
   let atualizadas = 0;
   let jaCompativeis = 0;
+  let linhasModificadas = 0;
   let semCorrespondencia = 0;
   const detalhes = [];
   for (const item of vinculadas) {
-    const composicao = escolherComposicaoEstritaParaItem(item, contexto, cache);
+    const composicao = escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados);
     if (!composicao) {
       semCorrespondencia += 1;
       if (detalhes.length < 100) {
@@ -627,6 +639,16 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     const custo = toNum(composicao.custo_unitario, 0) > 0
       ? composicao.custo_unitario
       : item.custo_unitario;
+    const camposDiferentes = !mesmoVinculo
+      || String(composicao.codigo || item.codigo) !== String(item.codigo || '')
+      || String(composicao.fonte || item.fonte) !== String(item.fonte || '')
+      || String(composicao.descricao || item.descricao) !== String(item.descricao || '')
+      || String(composicao.unidade || item.unidade) !== String(item.unidade || '')
+      || Math.abs(toNum(custo, 0) - toNum(item.custo_unitario, 0)) > 0.00000001;
+    if (!camposDiferentes) {
+      jaCompativeis += 1;
+      continue;
+    }
     await run(db, `
       UPDATE orcamento_sintetico
       SET tipo_item='composicao', id_composicao=?, id_insumo=NULL,
@@ -641,6 +663,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       item.id_item,
       idOrcamento,
     ]);
+    linhasModificadas += 1;
     if (mesmoVinculo) jaCompativeis += 1;
     else atualizadas += 1;
   }
@@ -650,6 +673,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     vinculadas_verificadas: vinculadas.length,
     composicoes_atualizadas: atualizadas,
     composicoes_ja_compativeis: jaCompativeis,
+    linhas_modificadas: linhasModificadas,
     sem_correspondencia: semCorrespondencia,
     linhas_sem_vinculo: Number(semVinculo?.total || 0),
     detalhes,
@@ -769,7 +793,21 @@ async function updateOrcamento(db, id, data = {}) {
       if (totalLinhasDepois !== totalLinhasAntes) {
         throw new Error('A atualização foi cancelada porque alterou indevidamente a quantidade de linhas do orçamento.');
       }
-      atualizacaoComposicoes.totais = await recalcularTotaisDoOrcamento(db, id);
+      if (atualizacaoComposicoes.linhas_modificadas > 0) {
+        atualizacaoComposicoes.totais = await recalcularTotaisDoOrcamento(db, id);
+        atualizacaoComposicoes.recalculado = true;
+      } else {
+        const totaisPreservados = await one(db, `
+          SELECT valor_custo_direto, valor_bdi, valor_total
+          FROM orcamentos
+          WHERE id_orcamento=?`, [id]);
+        atualizacaoComposicoes.totais = {
+          custo_direto: toNum(totaisPreservados?.valor_custo_direto, 0),
+          valor_bdi: toNum(totaisPreservados?.valor_bdi, 0),
+          total: toNum(totaisPreservados?.valor_total, 0),
+        };
+        atualizacaoComposicoes.recalculado = false;
+      }
       atualizacaoComposicoes.selecionar_novo_bdi = alteracoesContexto.includes('regime_previdenciario');
     }
 
@@ -1008,29 +1046,13 @@ async function ensureBdiLinha(db) {
   if (!has) await run(db, 'ALTER TABLE orcamento_sintetico ADD COLUMN bdi_percentual_linha REAL');
 }
 
-async function sincronizarCustosSinteticoComComposicoes(db, rows = []) {
-  for (const row of rows || []) {
-    if (!row || row.tipo_linha !== 'item' || !row.id_composicao) continue;
-    const custo = await custoComposicaoDiretoPorId(db, row.id_composicao);
-    if (!Number.isFinite(custo) || custo <= 0) continue;
-    if (Math.abs(custo - toNum(row.custo_unitario, 0)) <= 0.0001) continue;
-    row.custo_unitario = Number(custo.toFixed(4));
-    await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [
-      row.custo_unitario,
-      row.id_item,
-    ]).catch(() => {});
-  }
-  return rows;
-}
-
 async function listSintetico(db, idOrcamento) {
   await ensureBdiLinha(db);
-  const rows = await all(db, `
+  return all(db, `
     SELECT *
     FROM orcamento_sintetico
     WHERE id_orcamento = ?
     ORDER BY ordem, id_item`, [idOrcamento]);
-  return sincronizarCustosSinteticoComComposicoes(db, rows);
 }
 
 async function maxOrdemSintetico(db, idOrcamento) {
