@@ -296,6 +296,7 @@ function chunkArray(items, size) {
 
 async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   const includeUsuario = options.includeUsuario === true;
+  const contexto = options.contexto || null;
   const codigosSet = new Set();
   const fontesSet = new Set();
 
@@ -332,13 +333,37 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   const qFonte = fontes.map(() => '?').join(',');
   for (const chunk of chunkArray(codigos, 500)) {
     const qCod = chunk.map(() => '?').join(',');
-    const rows = await all(db, `
-      SELECT *
-      FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
-      WHERE codigo IN (${qCod}) AND UPPER(COALESCE(fonte,'')) IN (${qFonte})`, [
-      ...chunk,
-      ...fontes,
-    ]).catch(() => []);
+    const where = [
+      `codigo IN (${qCod})`,
+      `UPPER(COALESCE(fonte,'')) IN (${qFonte})`,
+    ];
+    const params = [...chunk, ...fontes];
+    const uf = String(contexto?.uf || '').trim().toUpperCase();
+    const mesRef = String(contexto?.mes_ref || '').trim();
+    if (uf) {
+      where.push("UPPER(COALESCE(uf_referencia,''))=?");
+      params.push(uf);
+    }
+    if (mesRef) {
+      where.push("COALESCE(mes_referencia,'')=?");
+      params.push(mesRef);
+    }
+    let rows = [];
+    try {
+      rows = await all(db, `
+        SELECT *
+        FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
+        WHERE ${where.join(' AND ')}`, params);
+    } catch (error) {
+      if (contexto) {
+        const err = new Error(
+          `Não foi possível consultar as composições de ${uf || 'UF não informada'}`
+          + `${mesRef ? ` na data-base ${mesRef}` : ''}: ${error.message}`,
+        );
+        err.cause = error;
+        throw err;
+      }
+    }
 
     for (const row of rows) {
       row.scope = row._tenant_scope || row.scope || '';
@@ -611,8 +636,10 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
   const cache = await buildComposicaoCandidatesForAutoLink(
     db,
     vinculadas,
-    { includeUsuario: true },
+    { includeUsuario: true, contexto },
   );
+  const referenciasCandidatas = [...cache.values()]
+    .reduce((total, rows) => total + rows.length, 0);
 
   let atualizadas = 0;
   let jaCompativeis = 0;
@@ -676,6 +703,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     linhas_modificadas: linhasModificadas,
     sem_correspondencia: semCorrespondencia,
     linhas_sem_vinculo: Number(semVinculo?.total || 0),
+    referencias_candidatas: referenciasCandidatas,
     detalhes,
   };
 }

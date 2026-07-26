@@ -189,6 +189,10 @@ async function main() {
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=1')).custo_unitario, 60);
     await exec(db, 'UPDATE composicoes SET custo_unitario=60 WHERE id_composicao=4');
 
+    const consultasCandidatas = [];
+    db.on('trace', (sql) => {
+      if (sql.includes('composicoes_candidatas')) consultasCandidatas.push(sql);
+    });
     const alteradoParaCe = await repo.updateOrcamento(db, 2, payload({
       nome_orcamento: 'Orçamento com referência neutra',
       uf_referencia: 'CE',
@@ -199,9 +203,17 @@ async function main() {
     }));
     assert.strictEqual(alteradoParaCe.atualizacao_composicoes.composicoes_atualizadas, 1);
     assert.strictEqual(alteradoParaCe.atualizacao_composicoes.linhas_modificadas, 1);
+    assert.strictEqual(alteradoParaCe.atualizacao_composicoes.referencias_candidatas, 1);
     assert.strictEqual(alteradoParaCe.atualizacao_composicoes.recalculado, true);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=10')).id_composicao, '7');
     assert.strictEqual(alteradoParaCe.valor_total, 114);
+    assert(
+      consultasCandidatas.some(sql => (
+        /UPPER\(COALESCE\(uf_referencia,''\)\)='CE'/.test(sql)
+        && /COALESCE\(mes_referencia,''\)='04\/2026'/.test(sql)
+      )),
+      'a consulta de substituição deve filtrar UF e data-base no banco',
+    );
 
     const regimeSemReferencia = await repo.updateOrcamento(db, 2, payload({
       nome_orcamento: 'Orçamento com referência neutra',

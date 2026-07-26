@@ -94,6 +94,12 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   BDI compatível.
 - Se nenhuma linha for efetivamente modificada, os totais anteriores são
   preservados; uma simples mudança cadastral não pode alterar o valor global.
+- A busca de substituições filtra UF e data-base diretamente no banco. Ela não
+  carrega mais todas as referências de todas as UFs para depois filtrar em
+  memória; isso evitava timeouts que eram anteriormente interpretados, de forma
+  incorreta, como ausência de composição.
+- Falhas reais na consulta de referências cancelam a transação e são exibidas ao
+  usuário; não são mais convertidas silenciosamente em zero correspondências.
 - A atualização nunca insere nem remove linhas e valida essa invariável antes do
   commit. Se houver duplicatas estruturais exatas preexistentes, o recálculo é
   bloqueado para impedir a consolidação de um total incorreto.

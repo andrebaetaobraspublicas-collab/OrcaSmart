@@ -245,6 +245,7 @@ Router.register('orcamentos', async () => {
     const semVinculo = Number(resumo.linhas_sem_vinculo || 0);
     const atualizadas = Number(resumo.composicoes_atualizadas || 0);
     const jaCompativeis = Number(resumo.composicoes_ja_compativeis || 0);
+    const referenciasCandidatas = Number(resumo.referencias_candidatas || 0);
     const recalculado = resumo.recalculado === true;
     const totais = resumo.totais || {};
     const avisoBdi = resumo.selecionar_novo_bdi
@@ -266,6 +267,7 @@ Router.register('orcamentos', async () => {
         <div style="line-height:1.6">
           <p><strong>${atualizadas}</strong> composição(ões) substituída(s) pela referência correspondente.</p>
           <p><strong>${jaCompativeis}</strong> composição(ões) já estavam compatíveis com a nova seleção.</p>
+          <p><strong>${referenciasCandidatas}</strong> referência(s) candidata(s) localizada(s) na UF e data-base selecionadas.</p>
           <p><strong>${semVinculo}</strong> linha(s) sem vínculo não foram modificadas automaticamente.</p>
           <p style="margin-top:10px"><strong>${recalculado ? 'Novo total' : 'Total preservado'}:</strong> ${Utils.moeda(totais.total || 0)}</p>
           ${avisoPendencias}
