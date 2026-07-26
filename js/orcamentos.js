@@ -138,7 +138,17 @@ Router.register('orcamentos', async () => {
     const obrasOpts = obras.map(o =>
       `<option value="${o.id_obra}" ${orc.id_obra == o.id_obra ? 'selected':''}>${Utils.esc(o.nome_obra)}</option>`
     ).join('');
-    const dbOpts = datasBase.map(d =>
+    const dataBaseAtualDisponivel = datasBase.some(
+      d => String(d.id_data_base) === String(orc.id_data_base ?? '')
+    );
+    const dataBaseAtualLegada = orc.id_data_base && !dataBaseAtualDisponivel
+      ? `<option value="${Utils.esc(orc.id_data_base)}" selected>`
+        + `${orc.data_base_mes && orc.data_base_ano
+          ? `${Utils.nomeMes(orc.data_base_mes)}/${orc.data_base_ano}`
+          : 'Data-base atual'}`
+        + '</option>'
+      : '';
+    const dbOpts = dataBaseAtualLegada + datasBase.map(d =>
       `<option value="${d.id_data_base}" ${orc.id_data_base == d.id_data_base ? 'selected':''}>${Utils.nomeMes(d.mes)}/${d.ano}</option>`
     ).join('');
 
@@ -319,7 +329,7 @@ Router.register('orcamentos', async () => {
       id_obra:           document.getElementById('f_obra').value,
       nome_orcamento:    document.getElementById('f_nome').value.trim(),
       descricao:         document.getElementById('f_desc').value.trim(),
-      id_data_base:      document.getElementById('f_db').value || null,
+      id_data_base:      document.getElementById('f_db').value || orcOriginal.id_data_base || null,
       uf_referencia:     document.getElementById('f_uf').value,
       regime_previdenciario: document.getElementById('f_regime_prev').value,
       versao:            document.getElementById('f_versao').value.trim() || '1.0',

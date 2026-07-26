@@ -165,6 +165,7 @@ async function main() {
     assert.strictEqual(desonerado.valor_total, 312);
 
     const go = await repo.updateOrcamento(db, 1, payload({
+      id_data_base: null,
       uf_referencia: 'GO',
       regime_previdenciario: 'Desonerado',
       confirmar_atualizacao_composicoes: true,
@@ -172,6 +173,7 @@ async function main() {
     assert.strictEqual(go.atualizacao_composicoes.composicoes_atualizadas, 1);
     assert.strictEqual(go.atualizacao_composicoes.selecionar_novo_bdi, false);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '3');
+    assert.strictEqual((await one(db, 'SELECT id_data_base FROM orcamentos WHERE id_orcamento=1')).id_data_base, 1);
 
     const maio = await repo.updateOrcamento(db, 1, payload({
       id_data_base: 2,
@@ -311,7 +313,7 @@ async function main() {
         (30001,'SINAPI.445566','SINAPI','UNITARIO','Legada BA','UN','04/2026','BA','COM CUSTO',35),
         (30002,'SINAPI.445566','SINAPI','UNITARIO','Onerada BA','UN','04/2026','BA','Onerado',45);
       INSERT INTO orcamentos VALUES (
-        8,1,'Orcamento legado inconsistente','',1,'DF','1.0','Em elaboracao',
+        8,1,'Orcamento legado inconsistente','',NULL,'DF','1.0','Em elaboracao',
         'Onerado',40,8,48,'2026-07-26','',NULL,20
       );
       INSERT INTO orcamento_sintetico VALUES (
@@ -321,6 +323,7 @@ async function main() {
     `);
     const legadoParaBahia = await repo.updateOrcamento(db, 8, payload({
       nome_orcamento: 'Orcamento legado inconsistente',
+      id_data_base: null,
       uf_referencia: 'BA',
       regime_previdenciario: 'Onerado',
       valor_custo_direto: 40,
@@ -332,6 +335,16 @@ async function main() {
     assert.strictEqual(
       (await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=30000')).id_composicao,
       '30001',
+    );
+    assert.deepStrictEqual(legadoParaBahia.atualizacao_composicoes.contexto_aplicado, {
+      uf: 'BA',
+      data_base: '04/2026',
+      data_base_inferida: '04/2026',
+      regime: 'Onerado',
+    });
+    assert.strictEqual(
+      (await one(db, 'SELECT id_data_base FROM orcamentos WHERE id_orcamento=8')).id_data_base,
+      1,
     );
 
     const legadoAlterandoRegime = await repo.updateOrcamento(db, 8, payload({

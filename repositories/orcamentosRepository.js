@@ -224,6 +224,30 @@ async function getDataBaseRef(db, idDataBase) {
   return null;
 }
 
+async function buscarIdDataBasePorMesReferencia(db, mesRef) {
+  const ref = parseMesRef(mesRef);
+  if (!ref) return null;
+  const sources = [
+    { schema: 'main', table: 'tenant_datas_base' },
+    { schema: 'catalog', table: 'datas_base' },
+    { schema: 'main', table: 'datas_base' },
+  ];
+  for (const source of sources) {
+    if (!(await tableExists(db, source.table, source.schema))) continue;
+    const row = await one(
+      db,
+      `SELECT id_data_base
+       FROM ${quoteIdent(source.schema)}.${quoteIdent(source.table)}
+       WHERE mes=? AND ano=?
+       ORDER BY id_data_base
+       LIMIT 1`,
+      [ref.mes, ref.ano],
+    ).catch(() => null);
+    if (row?.id_data_base) return row.id_data_base;
+  }
+  return null;
+}
+
 async function getOrcamentoContexto(db, idOrcamento) {
   const orcamento = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento=?', [idOrcamento]);
   if (!orcamento) return null;
@@ -919,6 +943,46 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       buscarTodoContexto: false,
     },
   );
+  let dataBaseInferida = null;
+  if (!parseMesRef(contexto?.mes_ref)) {
+    const referenciasVinculadas = new Set(
+      [...identidades.values()]
+        .map(row => parseMesRef(row?.mes_referencia))
+        .filter(Boolean)
+        .map(ref => `${String(ref.mes).padStart(2, '0')}/${ref.ano}`),
+    );
+    const referenciasEncontradas = new Set();
+    vinculadasParaBusca.forEach((item) => {
+      candidatosParaItemNoCache(item, cache).forEach((row) => {
+        const ref = parseMesRef(row?.mes_referencia);
+        if (ref) referenciasEncontradas.add(`${String(ref.mes).padStart(2, '0')}/${ref.ano}`);
+      });
+    });
+    if (referenciasVinculadas.size === 1) {
+      [dataBaseInferida] = referenciasVinculadas;
+    } else if (referenciasVinculadas.size === 0 && referenciasEncontradas.size === 1) {
+      [dataBaseInferida] = referenciasEncontradas;
+    }
+    if (!dataBaseInferida) {
+      const err = new Error(
+        'A atualização foi cancelada porque a data-base do orçamento não pôde ser determinada com segurança. '
+        + 'Selecione novamente a data-base no formulário e tente outra vez.',
+      );
+      err.status = 422;
+      err.codigo = 'DATA_BASE_ORCAMENTO_NAO_RESOLVIDA';
+      throw err;
+    }
+    contexto.mes_ref = dataBaseInferida;
+    const idDataBase = await buscarIdDataBasePorMesReferencia(db, dataBaseInferida);
+    if (idDataBase) {
+      contexto.id_data_base = idDataBase;
+      await run(
+        db,
+        'UPDATE orcamentos SET id_data_base=? WHERE id_orcamento=?',
+        [idDataBase, idOrcamento],
+      );
+    }
+  }
   const referenciasCandidatas = new Set();
   vinculadasParaBusca.forEach((item) => {
     candidatosParaItemNoCache(item, cache).forEach((row) => {
@@ -1025,6 +1089,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     contexto_aplicado: {
       uf: String(contexto?.uf || '').trim().toUpperCase() || null,
       data_base: String(contexto?.mes_ref || '').trim() || null,
+      ...(dataBaseInferida ? { data_base_inferida: dataBaseInferida } : {}),
       regime: normalizarRegime(contexto?.regime) || null,
     },
     vinculadas_verificadas: vinculadas.length,
@@ -1405,8 +1470,15 @@ async function updateOrcamento(db, id, data = {}) {
       return null;
     }
 
-    const alteracoesContexto = camposContextoAlterados(anterior, data);
-    if (alteracoesContexto.length && data.confirmar_atualizacao_composicoes !== true) {
+    // Uma edição de UF ou regime não pode apagar silenciosamente a data-base.
+    // O formulário pode não listar um ID legado, mas o registro persistido
+    // continua sendo a fonte de verdade até o usuário escolher outra referência.
+    const dadosEfetivos = {
+      ...data,
+      id_data_base: data.id_data_base || anterior.id_data_base || null,
+    };
+    const alteracoesContexto = camposContextoAlterados(anterior, dadosEfetivos);
+    if (alteracoesContexto.length && dadosEfetivos.confirmar_atualizacao_composicoes !== true) {
       const err = new Error('Confirme a atualização das composições vinculadas antes de alterar regime previdenciário, UF ou data-base.');
       err.status = 409;
       err.codigo = 'CONFIRMACAO_COMPOSICOES_OBRIGATORIA';
@@ -1419,20 +1491,20 @@ async function updateOrcamento(db, id, data = {}) {
         uf_referencia=?, regime_previdenciario=?, versao=?, status=?,
         valor_custo_direto=?, valor_bdi=?, valor_total=?, observacoes=?
       WHERE id_orcamento=?`, [
-      data.id_obra,
-      String(data.nome_orcamento || '').trim(),
-      data.descricao || null,
-      data.id_data_base || null,
-      data.uf_referencia || null,
-      normalizarRegime(data.regime_previdenciario) || 'Onerado',
-      data.versao || '1.0',
-      data.status || 'Em elaboração',
+      dadosEfetivos.id_obra,
+      String(dadosEfetivos.nome_orcamento || '').trim(),
+      dadosEfetivos.descricao || null,
+      dadosEfetivos.id_data_base,
+      dadosEfetivos.uf_referencia || null,
+      normalizarRegime(dadosEfetivos.regime_previdenciario) || 'Onerado',
+      dadosEfetivos.versao || '1.0',
+      dadosEfetivos.status || 'Em elaboração',
       // Estes valores são derivados exclusivamente do orçamento sintético.
       // Uma edição cadastral nunca deve aceitar totais enviados pelo cliente.
       anterior.valor_custo_direto ?? 0,
       anterior.valor_bdi ?? 0,
       anterior.valor_total ?? 0,
-      data.observacoes || null,
+      dadosEfetivos.observacoes || null,
       id,
     ]);
 
