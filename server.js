@@ -47,6 +47,7 @@ const { ensureMysqlBdiSchema, recalcularMysqlBdiValores } = require('./utils/bdi
 const { ensureMysqlRiscosSchema } = require('./utils/riscosMysqlSchema');
 const { normalizarMysqlRegimesComposicoes } = require('./utils/composicoesRegimeMysql');
 const { ensureMysqlComposicoesPerformance } = require('./utils/composicoesPerformanceMysql');
+const { normalizarMysqlTributosInsumos2026 } = require('./utils/insumosTributos2026');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1170,6 +1171,13 @@ async function initializeMysqlPilot() {
       await ensureMysqlRiscosSchema(mysqlConfig());
       const regimesComposicoes = await normalizarMysqlRegimesComposicoes(mysqlConfig());
       console.log('[composicoes] Regimes SICRO normalizados:', JSON.stringify(regimesComposicoes));
+      setTimeout(() => {
+        normalizarMysqlTributosInsumos2026(mysqlConfig(), {
+          onProgress: (progress) => console.log('[insumos] Tributos 2026:', JSON.stringify(progress)),
+        })
+          .then(resultados => console.log('[insumos] Tributos 2026 normalizados:', JSON.stringify(resultados)))
+          .catch(err => console.warn('[insumos] Falha ao normalizar tributos 2026:', err.message || err));
+      }, 1000).unref?.();
       setTimeout(() => {
         ensureMysqlComposicoesPerformance(mysqlConfig())
           .then(created => console.log('[composicoes] Índices de desempenho:', JSON.stringify(created)))

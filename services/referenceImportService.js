@@ -2,6 +2,7 @@ const pdfParse = require('pdf-parse');
 const XLSX = require('xlsx');
 const { parseXlsxBuffer, parseXlsxSheets, forEachXlsxSheetRow } = require('../utils/spreadsheetUpload');
 const { materializarComposicoesSicroDesoneradas } = require('./sicroService');
+const { calcularTributosInsumo2026 } = require('../utils/insumosTributos2026');
 
 function text(value) { return String(value ?? '').trim(); }
 function ascii(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
@@ -530,7 +531,10 @@ async function persistInsumos(conn, records, options) {
   }
   await insertMany(conn, 'tenant_insumos', ['tenant_id','id_insumo','codigo_insumo','descricao','tipo_insumo','id_unidade','id_grupo','origem','encargos_aplicaveis','situacao','observacoes','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at'], inserts);
 
-  const existingPrices = await dbAll(conn, `SELECT p.id_preco,p.id_insumo,p.preco_desonerado,p.preco_nao_desonerado
+  const dataBase = await dbGet(conn, 'SELECT ano FROM catalog.datas_base WHERE id_data_base=?', [options.idDataBase]);
+  const anoDataBase = Number(dataBase?.ano);
+  const existingPrices = await dbAll(conn, `SELECT p.id_preco,p.id_insumo,p.preco_desonerado,p.preco_nao_desonerado,
+      p.cbs_percentual,p.ibs_percentual,p.is_percentual,p.iva_equivalente,p.preco_sem_tributos
     FROM tenant_precos_insumos p JOIN tenant_insumos i ON i.id_insumo=p.id_insumo
     WHERE i.origem=? AND p.id_data_base=? AND p.uf_referencia=? AND COALESCE(p.tenant_override_status,'active')='active'`, [options.origem, options.idDataBase, options.uf]);
   const prices = new Map(existingPrices.map(row => [Number(row.id_insumo), row]));
@@ -549,10 +553,28 @@ async function persistInsumos(conn, records, options) {
     const on = item.precoNaoDesonerado ?? old?.preco_nao_desonerado ?? null;
     const ref = on ?? des;
     if (ref == null) continue;
-    priceRows.push([options.tenantId,nextPrice++,id,options.idDataBase,options.idFonte,options.uf,des,on,ref,item.observacoes || null,'create','active',now,now]);
+    const tributosPadrao = calcularTributosInsumo2026(item.tipo, anoDataBase, ref, old?.is_percentual);
+    const tributos = tributosPadrao || {
+      cbs_percentual: old?.cbs_percentual ?? null,
+      ibs_percentual: old?.ibs_percentual ?? null,
+      is_percentual: old?.is_percentual ?? null,
+      iva_equivalente: old?.iva_equivalente ?? null,
+      preco_sem_tributos: old?.preco_sem_tributos ?? null,
+    };
+    priceRows.push([
+      options.tenantId,nextPrice++,id,options.idDataBase,options.idFonte,options.uf,des,on,ref,
+      tributos.cbs_percentual,tributos.ibs_percentual,tributos.is_percentual,
+      tributos.iva_equivalente,tributos.preco_sem_tributos,
+      item.observacoes || null,'create','active',now,now,
+    ]);
   }
   for (const batch of chunks(deleteIds, 500)) await dbRun(conn, `DELETE FROM tenant_precos_insumos WHERE id_preco IN (${batch.map(() => '?').join(',')})`, batch);
-  await insertMany(conn, 'tenant_precos_insumos', ['tenant_id','id_preco','id_insumo','id_data_base','id_fonte','uf_referencia','preco_desonerado','preco_nao_desonerado','preco_referencia','observacoes','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at'], priceRows);
+  await insertMany(conn, 'tenant_precos_insumos', [
+    'tenant_id','id_preco','id_insumo','id_data_base','id_fonte','uf_referencia',
+    'preco_desonerado','preco_nao_desonerado','preco_referencia',
+    'cbs_percentual','ibs_percentual','is_percentual','iva_equivalente','preco_sem_tributos',
+    'observacoes','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at',
+  ], priceRows);
   return { ids, insumos_inseridos: inserts.length, insumos_atualizados: options.sobrepor ? records.length - inserts.length : 0, precos_inseridos: priceRows.length - updated, precos_atualizados: updated, precos_ignorados: ignored };
 }
 

@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { createMysqlConnection, databaseEngine } = require('../utils/mysqlRuntime');
+const { calcularTributosInsumo2026 } = require('../utils/insumosTributos2026');
 
 const SINAPI_IMPORT_JOBS = new Map();
 const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
@@ -1289,7 +1290,7 @@ module.exports = function sinapiRoutes(db) {
               if (idPreco) {
                 continue;
               } else {
-                inserirPrecos.push({ idInsumo, uf, preco, key });
+                inserirPrecos.push({ idInsumo, uf, preco, key, tipo: ins.tipo });
               }
             }
             registrosPreparados += 1;
@@ -1308,8 +1309,10 @@ module.exports = function sinapiRoutes(db) {
             }
             const insertSql = `
               INSERT INTO ${useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable}
-                (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia)
-              VALUES (?,?,?,?,?,?)`;
+                (id_insumo,id_data_base,id_fonte,uf_referencia,${colPreco},preco_referencia,
+                 cbs_percentual,ibs_percentual,is_percentual,iva_equivalente,preco_sem_tributos)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)`;
+            const tributos = calcularTributosInsumo2026(row.tipo, ano, row.preco);
             const insertParams = [
               row.idInsumo,
               idDataBase,
@@ -1317,6 +1320,11 @@ module.exports = function sinapiRoutes(db) {
               row.uf,
               row.preco,
               row.preco,
+              tributos?.cbs_percentual ?? null,
+              tributos?.ibs_percentual ?? null,
+              tributos?.is_percentual ?? null,
+              tributos?.iva_equivalente ?? null,
+              tributos?.preco_sem_tributos ?? null,
             ];
             let r = {};
             try {
@@ -1528,11 +1536,26 @@ module.exports = function sinapiRoutes(db) {
               const precoRef = precoDes ?? precoNao ?? 0;
               if (idPreco) {
                 if (forceReferentialUpdate && precoMudou(precoInfoMap.get(key), precoDes || 0, precoNao || 0, precoRef || 0)) {
-                  atualizarPrecos.push({ idPreco, precoDes, precoNao, precoRef, key });
+                  atualizarPrecos.push({
+                    idPreco,
+                    precoDes,
+                    precoNao,
+                    precoRef,
+                    key,
+                    tributos: calcularTributosInsumo2026(ins.tipo, ano, precoRef),
+                  });
                 }
                 continue;
               } else {
-                inserirPrecos.push({ idInsumo, uf, precoDes, precoNao, precoRef, key });
+                inserirPrecos.push({
+                  idInsumo,
+                  uf,
+                  precoDes,
+                  precoNao,
+                  precoRef,
+                  key,
+                  tributos: calcularTributosInsumo2026(ins.tipo, ano, precoRef),
+                });
               }
             }
             varridos += 1;
@@ -1544,14 +1567,24 @@ module.exports = function sinapiRoutes(db) {
           const insertPrecoBatch = async (rows, baseIndex) => {
             if (!rows.length) return 0;
             const tableName = useDirectPrecoInsert ? directMysqlTable(precoTable) : precoTable;
-            const values = rows.map(() => '(?,?,?,?,?,?,?)').join(',');
+            const values = rows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
             const params = [];
             for (const row of rows) {
-              params.push(row.idInsumo, idDataBase, idFonte, row.uf, row.precoDes ?? 0, row.precoNao ?? 0, row.precoRef ?? 0);
+              params.push(
+                row.idInsumo,idDataBase,idFonte,row.uf,
+                row.precoDes ?? 0,row.precoNao ?? 0,row.precoRef ?? 0,
+                row.tributos?.cbs_percentual ?? null,
+                row.tributos?.ibs_percentual ?? null,
+                row.tributos?.is_percentual ?? null,
+                row.tributos?.iva_equivalente ?? null,
+                row.tributos?.preco_sem_tributos ?? null,
+              );
             }
             const sql = `
               INSERT INTO ${tableName}
-                (id_insumo,id_data_base,id_fonte,uf_referencia,preco_desonerado,preco_nao_desonerado,preco_referencia)
+                (id_insumo,id_data_base,id_fonte,uf_referencia,
+                 preco_desonerado,preco_nao_desonerado,preco_referencia,
+                 cbs_percentual,ibs_percentual,is_percentual,iva_equivalente,preco_sem_tributos)
               VALUES ${values}`;
             const labelBatch = `Gravacao de precos SINAPI ${baseIndex + 1}-${baseIndex + rows.length}/${inserirPrecos.length}`;
             try {
@@ -1611,6 +1644,27 @@ module.exports = function sinapiRoutes(db) {
                     preco_nao_desonerado=CASE id_preco ${naoCase.join(' ')} ELSE preco_nao_desonerado END,
                     preco_referencia=CASE id_preco ${refCase.join(' ')} ELSE preco_referencia END
                 WHERE id_preco IN (${ids.join(',')})`, params);
+              const tributosRows = batch.filter(row => row.tributos);
+              if (tributosRows.length) {
+                const cbsCase = [];
+                const ibsCase = [];
+                const ivaCase = [];
+                const semTributosCase = [];
+                const taxIds = [];
+                const taxParams = [];
+                for (const row of tributosRows) { cbsCase.push('WHEN ? THEN ?'); taxParams.push(row.idPreco, row.tributos.cbs_percentual); }
+                for (const row of tributosRows) { ibsCase.push('WHEN ? THEN ?'); taxParams.push(row.idPreco, row.tributos.ibs_percentual); }
+                for (const row of tributosRows) { ivaCase.push('WHEN ? THEN ?'); taxParams.push(row.idPreco, row.tributos.iva_equivalente); }
+                for (const row of tributosRows) { semTributosCase.push('WHEN ? THEN ?'); taxParams.push(row.idPreco, row.tributos.preco_sem_tributos); }
+                for (const row of tributosRows) { taxIds.push('?'); taxParams.push(row.idPreco); }
+                await runC(`
+                  UPDATE ${precoTable}
+                  SET cbs_percentual=CASE id_preco ${cbsCase.join(' ')} ELSE cbs_percentual END,
+                      ibs_percentual=CASE id_preco ${ibsCase.join(' ')} ELSE ibs_percentual END,
+                      iva_equivalente=CASE id_preco ${ivaCase.join(' ')} ELSE iva_equivalente END,
+                      preco_sem_tributos=CASE id_preco ${semTributosCase.join(' ')} ELSE preco_sem_tributos END
+                  WHERE id_preco IN (${taxIds.join(',')})`, taxParams);
+              }
               out.precos_atualizados += batch.length;
               const done = Math.min(offset + batch.length, atualizarPrecos.length);
               reportProgress(40, label, `${done}/${atualizarPrecos.length} precos existentes atualizados em lote.`);
