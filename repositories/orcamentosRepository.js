@@ -617,6 +617,25 @@ function composicaoCompativelEstrita(candidato, contexto, options = {}) {
   return options.permitirRegimeNeutro === true;
 }
 
+function regimeDesejadoParaItem(item, contexto, camposAlterados = [], composicaoAtual = null) {
+  const regimeOrcamento = normalizarRegime(contexto?.regime);
+  if (camposAlterados.includes('regime_previdenciario')) return regimeOrcamento;
+  const alterouApenasReferencia = camposAlterados.includes('uf_referencia')
+    || camposAlterados.includes('id_data_base');
+  if (!alterouApenasReferencia) return regimeOrcamento;
+  const regimeVinculado = regimePrevidenciarioComposicao({
+    situacao_ref: item?._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
+    fonte: item?.fonte || composicaoAtual?.fonte,
+  });
+  // Orçamentos antigos podem ter o cabeçalho marcado como onerado e, ao mesmo
+  // tempo, linhas efetivamente vinculadas a composições desoneradas (ou o
+  // inverso). Em uma troca apenas de UF/data-base, preservar o regime real da
+  // composição evita descartar a referência equivalente e mantém a estrutura
+  // de custos da linha. O regime global só prevalece quando foi explicitamente
+  // alterado pelo usuário ou quando o vínculo anterior não informa o regime.
+  return regimeVinculado || regimeOrcamento;
+}
+
 function candidatosParaItemNoCache(item, cache) {
   const fonteItem = normalizarFonte(item.fonte);
   const candidatos = [];
@@ -648,13 +667,17 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterado
   candidatosItem.forEach((row) => {
     if (mesmaReferenciaComposicao(row.id_composicao, item.id_composicao)) composicaoAtual = row;
   });
-  const regimeAtual = regimePrevidenciarioComposicao({
-    situacao_ref: item._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
-    fonte: item.fonte || composicaoAtual?.fonte,
-  });
-  const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario') && !regimeAtual;
+  const regimeDesejado = regimeDesejadoParaItem(item, contexto, camposAlterados, composicaoAtual);
+  const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario')
+    && !regimeDesejado;
+  const contextoDaLinha = {
+    ...contexto,
+    regime: regimeDesejado,
+  };
   candidatosItem.forEach((row) => {
-    if (composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) candidatos.push(row);
+    if (composicaoCompativelEstrita(row, contextoDaLinha, { permitirRegimeNeutro })) {
+      candidatos.push(row);
+    }
   });
   candidatos.sort((a, b) => {
     const scopeA = (a._tenant_scope || a.scope) === 'tenant' ? 0 : 1;
@@ -934,7 +957,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       }
       semCorrespondencia += 1;
       const candidatasItem = candidatosParaItemNoCache(itemBusca, cache);
-      const regimeAlvo = normalizarRegime(contexto?.regime);
+      const regimeAlvo = regimeDesejadoParaItem(itemBusca, contexto, camposAlterados);
       const regimesCandidatos = new Set(
         candidatasItem.map(row => regimePrevidenciarioComposicao(row)).filter(Boolean),
       );
@@ -956,7 +979,8 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
           status: rejeitadaPorRegime
             ? 'mantida_regime_incompativel'
             : 'mantida_sem_correspondencia',
-          regime_orcamento: regimeAlvo || null,
+          regime_desejado_linha: regimeAlvo || null,
+          regime_orcamento: normalizarRegime(contexto?.regime) || null,
           regimes_encontrados: [...regimesCandidatos],
         });
       }

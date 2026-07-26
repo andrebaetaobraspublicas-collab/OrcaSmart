@@ -296,6 +296,92 @@ async function main() {
     assert.strictEqual(loteAlagoas.atualizacao_composicoes.linhas_modificadas, 234);
     assert.strictEqual(loteAlagoas.atualizacao_composicoes.sem_correspondencia, 0);
 
+    // Reproduz um orçamento legado cujo cabeçalho diz "Onerado", embora a
+    // composição vinculada seja efetivamente desonerada. Ao trocar somente a
+    // UF, deve ser preservado o regime real da linha. Se o usuário alterar o
+    // regime explicitamente, a seleção global volta a ser obrigatória.
+    await exec(db, `
+      INSERT INTO composicoes VALUES
+        (30000,'SINAPI.445566','SINAPI','UNITARIO','Legada DF','UN','04/2026','DF','COM CUSTO',40),
+        (30001,'SINAPI.445566','SINAPI','UNITARIO','Legada BA','UN','04/2026','BA','COM CUSTO',35),
+        (30002,'SINAPI.445566','SINAPI','UNITARIO','Onerada BA','UN','04/2026','BA','Onerado',45);
+      INSERT INTO orcamentos VALUES (
+        8,1,'Orcamento legado inconsistente','',1,'DF','1.0','Em elaboracao',
+        'Onerado',40,8,48,'2026-07-26','',NULL,20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        30000,8,'1','item',1,1,'composicao','30000',NULL,
+        'SINAPI.445566','SINAPI','Legada DF','UN',1,40,NULL
+      );
+    `);
+    const legadoParaBahia = await repo.updateOrcamento(db, 8, payload({
+      nome_orcamento: 'Orcamento legado inconsistente',
+      uf_referencia: 'BA',
+      regime_previdenciario: 'Onerado',
+      valor_custo_direto: 40,
+      valor_bdi: 8,
+      valor_total: 48,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoParaBahia.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual(
+      (await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=30000')).id_composicao,
+      '30001',
+    );
+
+    const legadoAlterandoRegime = await repo.updateOrcamento(db, 8, payload({
+      nome_orcamento: 'Orcamento legado inconsistente',
+      uf_referencia: 'BA',
+      regime_previdenciario: 'Onerado',
+      valor_custo_direto: 35,
+      valor_bdi: 7,
+      valor_total: 42,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoAlterandoRegime.atualizacao_composicoes, undefined);
+    await exec(db, "UPDATE orcamentos SET regime_previdenciario='Desonerado' WHERE id_orcamento=8");
+    const legadoParaOnerado = await repo.updateOrcamento(db, 8, payload({
+      nome_orcamento: 'Orcamento legado inconsistente',
+      uf_referencia: 'BA',
+      regime_previdenciario: 'Onerado',
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoParaOnerado.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual(
+      (await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=30000')).id_composicao,
+      '30002',
+    );
+
+    await exec(db, `
+      INSERT INTO composicoes VALUES
+        (30010,'SINAPI.778899','SINAPI','UNITARIO','Legada abril','UN','04/2026','DF','COM CUSTO',50),
+        (30011,'SINAPI.778899','SINAPI','UNITARIO','Legada maio','UN','05/2026','DF','COM CUSTO',55),
+        (30012,'SINAPI.778899','SINAPI','UNITARIO','Onerada maio','UN','05/2026','DF','Onerado',65);
+      INSERT INTO orcamentos VALUES (
+        9,1,'Orcamento legado por data-base','',1,'DF','1.0','Em elaboracao',
+        'Onerado',50,10,60,'2026-07-26','',NULL,20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        30010,9,'1','item',1,1,'composicao','30010',NULL,
+        'SINAPI.778899','SINAPI','Legada abril','UN',1,50,NULL
+      );
+    `);
+    const legadoParaMaio = await repo.updateOrcamento(db, 9, payload({
+      nome_orcamento: 'Orcamento legado por data-base',
+      id_data_base: 2,
+      uf_referencia: 'DF',
+      regime_previdenciario: 'Onerado',
+      valor_custo_direto: 50,
+      valor_bdi: 10,
+      valor_total: 60,
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(legadoParaMaio.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual(
+      (await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=30010')).id_composicao,
+      '30011',
+    );
+
     await exec(db, `
       ATTACH DATABASE ':memory:' AS catalog;
       CREATE TABLE catalog.composicoes AS SELECT * FROM main.composicoes WHERE 0;
