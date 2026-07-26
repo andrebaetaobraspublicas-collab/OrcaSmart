@@ -51,7 +51,10 @@ module.exports = function(db) {
   }));
 
   router.delete('/:id', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.deleteOrcamento(db, req.params.id));
+    const resultado = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.deleteOrcamento(writeDb, req.params.id))
+      : await orcamentosService.deleteOrcamento(db, req.params.id);
+    res.json(resultado);
   }));
 
   router.post('/:id/duplicar', asyncHandler(async (req, res) => {

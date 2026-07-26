@@ -132,6 +132,34 @@ async function main() {
       ORDER BY ordem, id_item`, [duplicado.id_orcamento]);
     assert.deepStrictEqual(copia, origem);
 
+    const excluido = await repo.deleteOrcamento(db, duplicado.id_orcamento);
+    assert.strictEqual(excluido.changes, 1);
+    assert.strictEqual(
+      (await all(db, 'SELECT COUNT(*) AS total FROM orcamento_sintetico WHERE id_orcamento=2'))[0].total,
+      0,
+    );
+
+    // Simula resíduos deixados pela versão anterior e a reutilização do mesmo ID
+    // pelo sequenciador por tenant do runtime MySQL.
+    await exec(db, `
+      INSERT INTO orcamento_sintetico (
+        id_orcamento, item_num, tipo_linha, profundidade, ordem, descricao
+      ) VALUES
+        (2, 'ORFA-1', 'section', 0, 1, 'LINHA ÓRFÃ'),
+        (2, 'ORFA-2', 'item', 1, 2, 'LINHA ÓRFÃ');
+      UPDATE sqlite_sequence SET seq=1 WHERE name='orcamentos';
+    `);
+    const duplicadoComIdReutilizado = await repo.duplicarOrcamento(db, 1);
+    assert.strictEqual(duplicadoComIdReutilizado.id_orcamento, 2);
+    const copiaSemOrfaos = await all(db, `
+      SELECT item_num, tipo_linha, profundidade, ordem, tipo_item,
+             id_composicao, id_insumo, codigo, fonte, descricao, unidade,
+             quantidade, custo_unitario, data_criacao, bdi_percentual_linha
+      FROM orcamento_sintetico
+      WHERE id_orcamento=?
+      ORDER BY ordem, id_item`, [duplicadoComIdReutilizado.id_orcamento]);
+    assert.deepStrictEqual(copiaSemOrfaos, origem);
+
     await exec(db, `
       CREATE TRIGGER falhar_copia_item
       BEFORE INSERT ON orcamento_sintetico

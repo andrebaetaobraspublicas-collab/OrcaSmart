@@ -784,8 +784,104 @@ async function updateOrcamento(db, id, data = {}) {
   }
 }
 
+async function deleteRowsByIds(db, table, column, ids = []) {
+  if (!ids.length || !await tableExists(db, table)) return 0;
+  const result = await run(
+    db,
+    `DELETE FROM ${quoteIdent(table)} WHERE ${quoteIdent(column)} IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return Number(result.changes || 0);
+}
+
+async function limparDependenciasOrcamento(db, idOrcamento) {
+  const resumo = {};
+
+  if (await tableExists(db, 'eventogramas')) {
+    const eventogramas = await all(
+      db,
+      'SELECT id_eventograma FROM eventogramas WHERE id_orcamento=?',
+      [idOrcamento],
+    );
+    const idsEventogramas = eventogramas.map(row => row.id_eventograma);
+    let idsEventos = [];
+    if (idsEventogramas.length && await tableExists(db, 'ev_eventos')) {
+      const eventos = await all(
+        db,
+        `SELECT id_evento FROM ev_eventos WHERE id_eventograma IN (${idsEventogramas.map(() => '?').join(',')})`,
+        idsEventogramas,
+      );
+      idsEventos = eventos.map(row => row.id_evento);
+    }
+    resumo.evento_itens = await deleteRowsByIds(db, 'ev_evento_itens', 'id_evento', idsEventos);
+    resumo.eventos = await deleteRowsByIds(db, 'ev_eventos', 'id_eventograma', idsEventogramas);
+    const removidos = await run(db, 'DELETE FROM eventogramas WHERE id_orcamento=?', [idOrcamento]);
+    resumo.eventogramas = Number(removidos.changes || 0);
+  }
+
+  if (await tableExists(db, 'riscos_analises')) {
+    const analises = await all(
+      db,
+      'SELECT id_analise FROM riscos_analises WHERE id_orcamento=?',
+      [idOrcamento],
+    );
+    const idsAnalises = analises.map(row => row.id_analise);
+    resumo.riscos_bdi = await deleteRowsByIds(db, 'riscos_bdi_aplicacoes', 'id_analise', idsAnalises);
+    resumo.riscos_simulacoes = await deleteRowsByIds(db, 'riscos_simulacoes', 'id_analise', idsAnalises);
+    resumo.riscos_eventos = await deleteRowsByIds(db, 'riscos_eventos', 'id_analise', idsAnalises);
+    resumo.riscos_servicos = await deleteRowsByIds(db, 'riscos_servicos', 'id_analise', idsAnalises);
+    const removidas = await run(db, 'DELETE FROM riscos_analises WHERE id_orcamento=?', [idOrcamento]);
+    resumo.riscos_analises = Number(removidas.changes || 0);
+  }
+
+  if (await tableExists(db, 'encargos_orcamento_aplicacoes')) {
+    const encargos = await run(
+      db,
+      'DELETE FROM encargos_orcamento_aplicacoes WHERE id_orcamento=?',
+      [idOrcamento],
+    );
+    resumo.encargos = Number(encargos.changes || 0);
+  }
+
+  if (await tableExists(db, 'orcamento_sintetico')) {
+    const itens = await all(
+      db,
+      'SELECT id_item FROM orcamento_sintetico WHERE id_orcamento=?',
+      [idOrcamento],
+    );
+    resumo.evento_itens_orfaos = await deleteRowsByIds(
+      db,
+      'ev_evento_itens',
+      'id_item',
+      itens.map(row => row.id_item),
+    );
+    const sintetico = await run(
+      db,
+      'DELETE FROM orcamento_sintetico WHERE id_orcamento=?',
+      [idOrcamento],
+    );
+    resumo.linhas_sintetico = Number(sintetico.changes || 0);
+  }
+
+  return resumo;
+}
+
 async function deleteOrcamento(db, id) {
-  return run(db, 'DELETE FROM orcamentos WHERE id_orcamento = ?', [id]);
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const existente = await one(db, 'SELECT id_orcamento FROM orcamentos WHERE id_orcamento=?', [id]);
+    if (!existente) {
+      await run(db, 'COMMIT');
+      return { changes: 0 };
+    }
+    await limparDependenciasOrcamento(db, id);
+    const result = await run(db, 'DELETE FROM orcamentos WHERE id_orcamento=?', [id]);
+    await run(db, 'COMMIT');
+    return result;
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 async function duplicarOrcamento(db, id) {
@@ -826,6 +922,12 @@ async function duplicarOrcamento(db, id) {
       row.id_bdi_perfil ?? null,
       row.bdi_percentual ?? 0,
     ]);
+
+    // IDs são sequenciais por tenant no runtime MySQL. Se um orçamento antigo
+    // tiver sido excluído antes da correção em cascata, o ID pode ser reutilizado
+    // enquanto ainda existem linhas órfãs. Remove somente esses resíduos do novo
+    // ID antes de copiar a estrutura da origem.
+    await limparDependenciasOrcamento(db, result.lastID);
 
     for (const item of itens) {
       await run(db, `

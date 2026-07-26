@@ -74,6 +74,9 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   não deixa orçamento parcial.
 - A transação também valida que a quantidade de linhas gravadas é exatamente
   igual à quantidade existente na origem; qualquer divergência cancela a cópia.
+- A exclusão remove em transação as linhas sintéticas e demais dependências do
+  orçamento. A duplicação também elimina resíduos órfãos de versões anteriores
+  quando o runtime MySQL reutiliza um identificador excluído.
 
 ### Alteração de regime, UF e data-base do orçamento
 
