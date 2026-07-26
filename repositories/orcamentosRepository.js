@@ -916,9 +916,34 @@ async function atualizarEventogramasDoOrcamento(db, idOrcamento, totalOrcamento 
   return { eventogramas_atualizados: eventogramas.length };
 }
 
-async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = []) {
+async function remapearComposicoesVinculadas(
+  db,
+  idOrcamento,
+  camposAlterados = [],
+  contextoInformado = {},
+) {
   await ensureBdiLinha(db);
   const contexto = await getOrcamentoContexto(db, idOrcamento);
+  const dataBaseInformada = mesReferencia({
+    mes: contextoInformado?.data_base_mes,
+    ano: contextoInformado?.data_base_ano,
+  });
+  let dataBaseOrigem = null;
+  if (parseMesRef(dataBaseInformada)) {
+    contexto.mes_ref = dataBaseInformada;
+    contexto.data_base_mes = Number(contextoInformado.data_base_mes);
+    contexto.data_base_ano = Number(contextoInformado.data_base_ano);
+    dataBaseOrigem = 'formulario';
+    const idDataBase = await buscarIdDataBasePorMesReferencia(db, dataBaseInformada);
+    if (idDataBase) {
+      contexto.id_data_base = idDataBase;
+      await run(
+        db,
+        'UPDATE orcamentos SET id_data_base=? WHERE id_orcamento=?',
+        [idDataBase, idOrcamento],
+      );
+    }
+  }
   const vinculadas = await all(db, `
     SELECT *
     FROM orcamento_sintetico
@@ -973,6 +998,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       throw err;
     }
     contexto.mes_ref = dataBaseInferida;
+    dataBaseOrigem = 'vinculos';
     const idDataBase = await buscarIdDataBasePorMesReferencia(db, dataBaseInferida);
     if (idDataBase) {
       contexto.id_data_base = idDataBase;
@@ -1090,6 +1116,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       uf: String(contexto?.uf || '').trim().toUpperCase() || null,
       data_base: String(contexto?.mes_ref || '').trim() || null,
       ...(dataBaseInferida ? { data_base_inferida: dataBaseInferida } : {}),
+      ...(dataBaseOrigem ? { data_base_origem: dataBaseOrigem } : {}),
       regime: normalizarRegime(contexto?.regime) || null,
     },
     vinculadas_verificadas: vinculadas.length,
@@ -1521,7 +1548,12 @@ async function updateOrcamento(db, id, data = {}) {
         throw err;
       }
       const totalLinhasAntes = diagnosticoDuplicatas?.linhas_totais ?? 0;
-      atualizacaoComposicoes = await remapearComposicoesVinculadas(db, id, alteracoesContexto);
+      atualizacaoComposicoes = await remapearComposicoesVinculadas(
+        db,
+        id,
+        alteracoesContexto,
+        dadosEfetivos,
+      );
       const totalLinhasDepois = Number((await one(db, `
         SELECT COUNT(*) AS total
         FROM orcamento_sintetico

@@ -142,14 +142,16 @@ Router.register('orcamentos', async () => {
       d => String(d.id_data_base) === String(orc.id_data_base ?? '')
     );
     const dataBaseAtualLegada = orc.id_data_base && !dataBaseAtualDisponivel
-      ? `<option value="${Utils.esc(orc.id_data_base)}" selected>`
+      ? `<option value="${Utils.esc(orc.id_data_base)}"`
+        + ` data-mes="${Utils.esc(orc.data_base_mes || '')}"`
+        + ` data-ano="${Utils.esc(orc.data_base_ano || '')}" selected>`
         + `${orc.data_base_mes && orc.data_base_ano
           ? `${Utils.nomeMes(orc.data_base_mes)}/${orc.data_base_ano}`
           : 'Data-base atual'}`
         + '</option>'
       : '';
     const dbOpts = dataBaseAtualLegada + datasBase.map(d =>
-      `<option value="${d.id_data_base}" ${orc.id_data_base == d.id_data_base ? 'selected':''}>${Utils.nomeMes(d.mes)}/${d.ano}</option>`
+      `<option value="${d.id_data_base}" data-mes="${d.mes}" data-ano="${d.ano}" ${orc.id_data_base == d.id_data_base ? 'selected':''}>${Utils.nomeMes(d.mes)}/${d.ano}</option>`
     ).join('');
 
     Modal.open({
@@ -325,11 +327,15 @@ Router.register('orcamentos', async () => {
     const cd = Number(orcOriginal.valor_custo_direto || 0);
     const bdi = Number(orcOriginal.valor_bdi || 0);
     const total = Number(orcOriginal.valor_total || (cd + bdi));
+    const dataBaseSelect = document.getElementById('f_db');
+    const dataBaseOption = dataBaseSelect.selectedOptions[0];
     const payload = {
       id_obra:           document.getElementById('f_obra').value,
       nome_orcamento:    document.getElementById('f_nome').value.trim(),
       descricao:         document.getElementById('f_desc').value.trim(),
-      id_data_base:      document.getElementById('f_db').value || orcOriginal.id_data_base || null,
+      id_data_base:      dataBaseSelect.value || orcOriginal.id_data_base || null,
+      data_base_mes:     Number(dataBaseOption?.dataset?.mes || orcOriginal.data_base_mes || 0) || null,
+      data_base_ano:     Number(dataBaseOption?.dataset?.ano || orcOriginal.data_base_ano || 0) || null,
       uf_referencia:     document.getElementById('f_uf').value,
       regime_previdenciario: document.getElementById('f_regime_prev').value,
       versao:            document.getElementById('f_versao').value.trim() || '1.0',

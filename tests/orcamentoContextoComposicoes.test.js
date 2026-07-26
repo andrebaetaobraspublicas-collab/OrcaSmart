@@ -313,7 +313,7 @@ async function main() {
         (30001,'SINAPI.445566','SINAPI','UNITARIO','Legada BA','UN','04/2026','BA','COM CUSTO',35),
         (30002,'SINAPI.445566','SINAPI','UNITARIO','Onerada BA','UN','04/2026','BA','Onerado',45);
       INSERT INTO orcamentos VALUES (
-        8,1,'Orcamento legado inconsistente','',NULL,'DF','1.0','Em elaboracao',
+        8,1,'Orcamento legado inconsistente','',999,'DF','1.0','Em elaboracao',
         'Onerado',40,8,48,'2026-07-26','',NULL,20
       );
       INSERT INTO orcamento_sintetico VALUES (
@@ -323,7 +323,9 @@ async function main() {
     `);
     const legadoParaBahia = await repo.updateOrcamento(db, 8, payload({
       nome_orcamento: 'Orcamento legado inconsistente',
-      id_data_base: null,
+      id_data_base: 999,
+      data_base_mes: 4,
+      data_base_ano: 2026,
       uf_referencia: 'BA',
       regime_previdenciario: 'Onerado',
       valor_custo_direto: 40,
@@ -339,7 +341,7 @@ async function main() {
     assert.deepStrictEqual(legadoParaBahia.atualizacao_composicoes.contexto_aplicado, {
       uf: 'BA',
       data_base: '04/2026',
-      data_base_inferida: '04/2026',
+      data_base_origem: 'formulario',
       regime: 'Onerado',
     });
     assert.strictEqual(
