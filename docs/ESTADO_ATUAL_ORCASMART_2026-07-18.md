@@ -125,6 +125,16 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   de orçamentos. Edições explícitas de linhas ou BDI recalculam e persistem o
   novo total.
 
+### Regime e encargos das composições
+
+- A listagem de composições apresenta o regime previdenciário ao lado do custo.
+- O detalhamento informa UF, regime previdenciário e o perfil de encargo social
+  oficial compatível com fonte, UF, data-base e categoria Horista/Mensalista.
+- Registros SINAPI legados marcados como `COM CUSTO` são identificados como
+  desonerados porque o importador que gerou seus custos priorizava os preços
+  desonerados. Novos recálculos persistem explicitamente `Onerado` ou
+  `Desonerado`, eliminando a ambiguidade para operações futuras.
+
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.
 - Exportação PDF profissional.

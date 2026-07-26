@@ -98,9 +98,111 @@ async function validarPreviewExclusaoCdhu() {
   }
 }
 
+async function validarContextoPrevidenciario() {
+  const db = new sqlite3.Database(':memory:');
+  try {
+    await exec(db, `
+      CREATE TABLE grupos_composicoes (
+        id_grupo_comp INTEGER PRIMARY KEY,
+        nome_grupo TEXT
+      );
+      CREATE TABLE composicoes (
+        id_composicao INTEGER PRIMARY KEY,
+        codigo TEXT,
+        descricao TEXT,
+        id_grupo_comp INTEGER,
+        fonte TEXT,
+        formato TEXT,
+        unidade TEXT,
+        custo_unitario REAL,
+        situacao TEXT,
+        uf_referencia TEXT,
+        mes_referencia TEXT,
+        situacao_ref TEXT
+      );
+      CREATE TABLE itens_composicao (
+        id_item INTEGER PRIMARY KEY,
+        id_composicao INTEGER,
+        tipo_item TEXT,
+        codigo_item TEXT,
+        descricao TEXT,
+        unidade TEXT,
+        coeficiente REAL,
+        preco_unitario REAL,
+        custo_parcial REAL,
+        situacao_item TEXT,
+        ordem INTEGER
+      );
+      CREATE TABLE composicoes_secoes (
+        id_secao INTEGER PRIMARY KEY,
+        id_composicao INTEGER,
+        ordem INTEGER,
+        letra_secao TEXT
+      );
+      CREATE TABLE composicoes_secao_itens (
+        id_item_secao INTEGER PRIMARY KEY,
+        id_secao INTEGER,
+        ordem INTEGER
+      );
+      CREATE TABLE perfis_encargos (
+        id_perfil INTEGER PRIMARY KEY,
+        nome_perfil TEXT,
+        categoria TEXT,
+        regime TEXT,
+        uf_referencia TEXT,
+        fonte_referencia TEXT,
+        encargo_total REAL,
+        encargo_original_percentual REAL,
+        vigencia_inicio TEXT,
+        vigencia_fim TEXT,
+        situacao TEXT
+      );
+
+      INSERT INTO grupos_composicoes VALUES (1, 'Acessibilidade');
+      INSERT INTO composicoes VALUES (
+        1, 'SINAPI.105002', 'Rampa de acessibilidade', 1, 'SINAPI',
+        'UNITARIO', 'UN', 1050.44, 'Ativo', 'DF', '04/2026', 'COM CUSTO'
+      );
+      INSERT INTO itens_composicao VALUES (
+        1, 1, 'COMPOSICAO', '88316', 'Servente', 'H', 7.2, 23.67, 170.42, 'COM CUSTO', 1
+      );
+      INSERT INTO perfis_encargos VALUES (
+        29, 'DF – Horista – Com Desoneração – 01/2026', 'Horista', 'Desonerado',
+        'DF', 'SINAPI', 100.89341, 94.63, '2026-01-01', '2026-12-31', 'Ativo'
+      );
+    `);
+
+    const desoneradas = await repo.listComposicoes(db, {
+      quick: 1,
+      regime: 'Desonerado',
+      limit: 10,
+      offset: 0,
+    });
+    const oneradas = await repo.listComposicoes(db, {
+      quick: 1,
+      regime: 'Onerado',
+      limit: 10,
+      offset: 0,
+    });
+    assert.strictEqual(desoneradas.items.length, 1);
+    assert.strictEqual(desoneradas.items[0].regime_previdenciario, 'Desonerado');
+    assert.strictEqual(oneradas.items.length, 0);
+
+    const comp = await repo.getComposicao(db, 1);
+    await repo.enriquecerContextoPrevidenciario(db, comp);
+    assert.strictEqual(comp.regime_previdenciario, 'Desonerado');
+    assert.strictEqual(comp.encargo_social.categoria, 'Horista');
+    assert.strictEqual(comp.encargo_social.percentual, 94.63);
+    assert.strictEqual(comp.encargo_social.nome_perfil, 'DF – Horista – Com Desoneração – 01/2026');
+  } finally {
+    await new Promise(resolve => db.close(resolve));
+  }
+}
+
 async function run() {
   await validarListagemRapida();
   await validarPreviewExclusaoCdhu();
+  await validarContextoPrevidenciario();
   const queries = [];
   const fakeDb = {
     get(sql, _params, callback) {

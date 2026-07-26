@@ -140,6 +140,37 @@ function visibleCatalogClause(alias = 'c', hasOverrides = true) {
     )`;
 }
 
+function regimePrevidenciarioSql(alias = 'c') {
+  return `CASE
+    WHEN LOWER(COALESCE(${alias}.situacao_ref,'')) LIKE '%sem desoner%'
+      OR LOWER(COALESCE(${alias}.situacao_ref,'')) = 'onerado'
+      THEN 'Onerado'
+    WHEN LOWER(COALESCE(${alias}.situacao_ref,'')) LIKE '%desoner%'
+      THEN 'Desonerado'
+    WHEN UPPER(COALESCE(${alias}.fonte,''))='SINAPI'
+      AND (
+        TRIM(COALESCE(${alias}.situacao_ref,''))=''
+        OR UPPER(COALESCE(${alias}.situacao_ref,'')) IN ('COM CUSTO','SEM CUSTO')
+      )
+      THEN 'Desonerado'
+    ELSE NULL
+  END`;
+}
+
+function regimePrevidenciarioComposicao(comp = {}) {
+  const raw = String(comp.regime_previdenciario || comp.situacao_ref || '').trim().toLowerCase();
+  if (raw.includes('sem desoner') || raw === 'onerado' || raw === 'normal') return 'Onerado';
+  if (raw.includes('desoner')) return 'Desonerado';
+  if (String(comp.fonte || '').trim().toUpperCase() === 'SINAPI'
+      && (!raw || raw === 'com custo' || raw === 'sem custo')) {
+    // O importador SINAPI vigente calcula o custo persistido priorizando a
+    // coluna de preços desonerados. Registros anteriores guardavam "COM CUSTO"
+    // no campo que deveria identificar o regime.
+    return 'Desonerado';
+  }
+  return null;
+}
+
 function compSelectColumns(idExpr, scopeExpr, catalogIdExpr) {
   return `
     ${idExpr} AS id_composicao,
@@ -148,6 +179,7 @@ function compSelectColumns(idExpr, scopeExpr, catalogIdExpr) {
     c.fic, c.producao_equipe, c.unidade_producao, c.situacao, c.observacoes,
     c.custo_horario_execucao, c.custo_unitario_execucao, c.custo_fic, c.subtotal_sicro,
     g.nome_grupo AS nome_grupo_comp,
+    ${regimePrevidenciarioSql('c')} AS regime_previdenciario,
     ${scopeExpr} AS _tenant_scope,
     ${catalogIdExpr} AS _catalog_id`;
 }
@@ -260,7 +292,8 @@ async function aplicarPrecosResolvidosTenantLista(db, items = []) {
 }
 
 const selectComp = `
-  SELECT c.*, g.nome_grupo AS nome_grupo_comp
+  SELECT c.*, g.nome_grupo AS nome_grupo_comp,
+         ${regimePrevidenciarioSql('c')} AS regime_previdenciario
   FROM composicoes c
   LEFT JOIN grupos_composicoes g ON c.id_grupo_comp = g.id_grupo_comp`;
 
@@ -409,14 +442,9 @@ function appendListFilters(query = {}) {
     params.push(query.mes_ref);
   }
   if (query.regime === 'Desonerado') {
-    where.push("(LOWER(COALESCE(c.situacao_ref,'')) LIKE '%desonerado%' OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%com desoner%')");
+    where.push(`(${regimePrevidenciarioSql('c')} = 'Desonerado')`);
   } else if (query.regime === 'Onerado') {
-    where.push(`(
-      LOWER(COALESCE(c.situacao_ref,'')) = 'onerado'
-      OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%sem desoner%'
-      OR (LOWER(COALESCE(c.situacao_ref,'')) LIKE '%onerado%'
-          AND LOWER(COALESCE(c.situacao_ref,'')) NOT LIKE '%desonerado%')
-    )`);
+    where.push(`(${regimePrevidenciarioSql('c')} = 'Onerado')`);
   }
   if (query.q) {
     where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
@@ -527,6 +555,81 @@ async function listComposicoes(db, query = {}) {
     ORDER BY c.fonte, c.codigo
     LIMIT ? OFFSET ?`, [...params, limit, offset]);
   return { items, total: Number(total?.total || 0), limit, offset };
+}
+
+function categoriaEncargoDaComposicao(comp = {}) {
+  const unidades = (comp.itens || [])
+    .map(item => String(item.unidade || '').trim().toUpperCase())
+    .filter(Boolean);
+  if (unidades.some(unidade => ['MES', 'MÊS', 'MESISTA', 'MENSALISTA'].includes(unidade))) {
+    return 'Mensalista';
+  }
+  return 'Horista';
+}
+
+async function enriquecerContextoPrevidenciario(db, comp) {
+  if (!comp) return comp;
+  const regime = regimePrevidenciarioComposicao(comp);
+  comp.regime_previdenciario = regime;
+  comp.encargo_social = null;
+  if (!regime || !comp.uf_referencia || !comp.mes_referencia) return comp;
+
+  const ref = parseMesRef(comp.mes_referencia);
+  if (!ref) return comp;
+  const categoria = categoriaEncargoDaComposicao(comp);
+  const fonteRaw = String(comp.fonte || '').trim().toUpperCase();
+  const fonte = fonteRaw.includes('SINAPI')
+    ? 'SINAPI'
+    : fonteRaw.includes('SICRO')
+      ? 'SICRO'
+      : fonteRaw;
+  const schema = await tableExists(db, 'perfis_encargos', 'catalog') ? 'catalog.' : '';
+  if (!schema && !await tableExists(db, 'perfis_encargos')) return comp;
+  const inicio = `${ref.ano}-${String(ref.mes).padStart(2, '0')}-01`;
+  const fim = `${ref.ano}-${String(ref.mes).padStart(2, '0')}-31`;
+  const regimeWhere = regime === 'Desonerado'
+    ? "LOWER(COALESCE(regime,'')) LIKE '%desoner%'"
+    : "(LOWER(COALESCE(regime,'')) IN ('normal','onerado') OR LOWER(COALESCE(regime,'')) LIKE '%sem desoner%')";
+  const nomeOficial = regime === 'Desonerado' ? '%com desonera%' : '%sem desonera%';
+  const perfil = await one(db, `
+    SELECT id_perfil, nome_perfil, categoria, regime, uf_referencia,
+           fonte_referencia, encargo_total, encargo_original_percentual,
+           vigencia_inicio, vigencia_fim
+    FROM ${schema}perfis_encargos
+    WHERE UPPER(COALESCE(uf_referencia,''))=?
+      AND UPPER(COALESCE(fonte_referencia,''))=?
+      AND UPPER(COALESCE(categoria,''))=UPPER(?)
+      AND ${regimeWhere}
+      AND (vigencia_inicio IS NULL OR vigencia_inicio='' OR vigencia_inicio<=?)
+      AND (vigencia_fim IS NULL OR vigencia_fim='' OR vigencia_fim>=?)
+      AND COALESCE(situacao,'Ativo')='Ativo'
+    ORDER BY
+      CASE WHEN LOWER(COALESCE(nome_perfil,'')) LIKE ? THEN 0 ELSE 1 END,
+      CASE WHEN encargo_original_percentual IS NOT NULL THEN 0 ELSE 1 END,
+      id_perfil DESC
+    LIMIT 1`, [
+    String(comp.uf_referencia).trim().toUpperCase(),
+    fonte,
+    categoria,
+    fim,
+    inicio,
+    nomeOficial,
+  ]).catch(() => null);
+  if (!perfil) return comp;
+
+  comp.encargo_social = {
+    id_perfil: perfil.id_perfil,
+    nome_perfil: perfil.nome_perfil,
+    categoria: perfil.categoria,
+    regime,
+    uf: perfil.uf_referencia,
+    percentual: toNum(
+      perfil.encargo_original_percentual ?? perfil.encargo_total,
+      null,
+    ),
+    percentual_calculado: toNum(perfil.encargo_total, null),
+  };
+  return comp;
 }
 
 async function findDetailedTenantSicro(db, identity = {}) {
@@ -927,6 +1030,20 @@ async function recalcularFonte(db, source, filters = {}) {
     if (!mudouNaPassada) break;
   }
 
+  const regimePersistido = regime === 'desonerado' || regime === 'ambos'
+    ? 'Desonerado'
+    : 'Onerado';
+  for (const chunk of chunkArray(comps.map(comp => comp.id), 500)) {
+    if (!chunk.length) continue;
+    await run(db, `
+      UPDATE ${table}
+      SET situacao_ref=?
+      WHERE ${idCol} IN (${chunk.map(() => '?').join(',')})`, [
+      regimePersistido,
+      ...chunk,
+    ]);
+  }
+
   return { analisadas: comps.length, atualizadas: atualizadasIds.size, semPreco, criadas: materializadas.criadas || 0 };
 }
 
@@ -990,14 +1107,9 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
     params.push(query.mes_ref);
   }
   if (query.regime === 'Desonerado') {
-    where.push("(LOWER(COALESCE(c.situacao_ref,'')) LIKE '%desonerado%' OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%com desoner%')");
+    where.push(`(${regimePrevidenciarioSql('c')} = 'Desonerado')`);
   } else if (query.regime === 'Onerado') {
-    where.push(`(
-      LOWER(COALESCE(c.situacao_ref,'')) = 'onerado'
-      OR LOWER(COALESCE(c.situacao_ref,'')) LIKE '%sem desoner%'
-      OR (LOWER(COALESCE(c.situacao_ref,'')) LIKE '%onerado%'
-          AND LOWER(COALESCE(c.situacao_ref,'')) NOT LIKE '%desonerado%')
-    )`);
+    where.push(`(${regimePrevidenciarioSql('c')} = 'Onerado')`);
   }
   if (query.q) {
     where.push('(c.descricao LIKE ? OR c.codigo LIKE ?)');
@@ -2781,6 +2893,7 @@ module.exports = {
   listComposicoes,
   recalcularCustosReferenciais,
   getComposicao,
+  enriquecerContextoPrevidenciario,
   createComposicao,
   updateComposicaoDirect,
   deleteComposicaoDirect,

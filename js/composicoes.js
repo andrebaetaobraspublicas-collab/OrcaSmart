@@ -101,6 +101,26 @@ Router.register('composicoes', async () => {
       || '—';
   }
 
+  function regimePrevidenciario(comp = {}) {
+    const raw = String(comp.regime_previdenciario || comp.situacao_ref || '').trim().toLowerCase();
+    if (raw.includes('sem desoner') || raw === 'onerado' || raw === 'normal') return 'Onerado';
+    if (raw.includes('desoner')) return 'Desonerado';
+    if (String(comp.fonte || '').toUpperCase() === 'SINAPI'
+        && (!raw || raw === 'com custo' || raw === 'sem custo')) return 'Desonerado';
+    return null;
+  }
+
+  function badgeRegime(comp = {}) {
+    const regime = regimePrevidenciario(comp);
+    if (regime === 'Desonerado') {
+      return '<span class="badge badge-success" style="white-space:nowrap">Desonerada</span>';
+    }
+    if (regime === 'Onerado') {
+      return '<span class="badge badge-warning" style="white-space:nowrap">Onerada</span>';
+    }
+    return '<span class="text-xs text-3">Não informado</span>';
+  }
+
   async function carregar() {
     try {
       if (!metadataPromise) {
@@ -287,6 +307,7 @@ Router.register('composicoes', async () => {
                 <th>UF</th><th>Data-Base</th>
                 <th>Fonte</th><th>Formato</th><th>Unid.</th>
                 <th style="text-align:right">Custo (R$)</th>
+                <th>Regime Prev.</th>
                 <th>Ações</th>
               </tr></thead>
               <tbody>
@@ -309,6 +330,7 @@ Router.register('composicoes', async () => {
                     <td style="text-align:right;font-size:.85rem">
                       ${c.custo_unitario != null ? Utils.moeda(c.custo_unitario) : '—'}
                     </td>
+                    <td>${badgeRegime(c)}</td>
                     <td>
                       <div class="td-actions">
                         <button class="btn-icon" style="color:var(--c-primary)" title="Ver composição"
@@ -403,6 +425,11 @@ Router.register('composicoes', async () => {
 
     const fi = COR_FONTE[comp.fonte] || COR_FONTE.USUARIO;
     const cod_limpo = comp.codigo?.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU)\./,'') || '—';
+    const encargo = comp.encargo_social || null;
+    const encargoHtml = encargo && encargo.percentual != null
+      ? `<strong>${Utils.num(encargo.percentual, 4)}%</strong> — ${Utils.esc(encargo.categoria || 'Horista')}
+         <div class="text-xs text-3" style="margin-top:2px">${Utils.esc(encargo.nome_perfil || '')}</div>`
+      : '<span class="text-3">Não informado</span>';
 
     // Conteúdo específico por formato
     let corpo = '';
@@ -429,8 +456,11 @@ Router.register('composicoes', async () => {
             ${infoBox('Unidade', comp.unidade||'—')}
             ${infoBox('Fonte', `<span class="badge ${fi.badge}">${fi.icon} ${comp.fonte}</span>`)}
             ${infoBox('Referência', comp.mes_referencia||'—')}
+            ${infoBox('UF', Utils.esc(comp.uf_referencia||'—'))}
+            ${infoBox('Regime Previdenciário', badgeRegime(comp))}
+            ${infoBox('Encargo Social', encargoHtml)}
             ${infoBox('Grupo', Utils.trunc(grupoReferencia(comp),30))}
-            ${infoBox('Situação', comp.situacao_ref||comp.situacao||'—')}
+            ${infoBox('Situação', comp.situacao||'—')}
             ${comp.fic != null ? infoBox('FIC', Utils.num(comp.fic,5)) : ''}
             ${(comp.custo_unitario != null || comp.custo_calculado > 0)
                 ? infoBox('Custo Unit.',

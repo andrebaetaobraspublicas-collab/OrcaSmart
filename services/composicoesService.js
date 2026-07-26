@@ -128,7 +128,7 @@ async function getComposicao(db, id) {
     err.status = 404;
     throw err;
   }
-  return comp;
+  return repo.enriquecerContextoPrevidenciario(db, comp);
 }
 
 module.exports = {
