@@ -32,6 +32,17 @@ function run(db, sql, params = []) {
   });
 }
 
+let performanceIndexesPromise = null;
+function ensurePerformanceIndexes(db) {
+  if (!performanceIndexesPromise) {
+    performanceIndexesPromise = run(
+      db,
+      'CREATE INDEX IF NOT EXISTS idx_pem_servicos_codigo ON pem_servicos(codigo)',
+    ).catch(() => null);
+  }
+  return performanceIndexesPromise;
+}
+
 async function nextLocalId(db, table, column) {
   const row = await one(db, `SELECT COALESCE(MAX(${column}),0) + 1 AS next_id FROM ${table}`).catch(() => null);
   return Number(row?.next_id || 1);
@@ -51,24 +62,23 @@ async function hasTenantComposicoes(db) {
 }
 
 async function stats(db) {
-  const totalServicos = (await one(db, 'SELECT COUNT(*) AS total FROM pem_servicos'))?.total || 0;
-  const totalEquipamentos = (await one(db, 'SELECT COUNT(*) AS total FROM pem_equipamentos'))?.total || 0;
-  const totalVariaveis = (await one(db, 'SELECT COUNT(*) AS total FROM pem_variaveis'))?.total || 0;
-  const comFormula = (await one(db, "SELECT COUNT(*) AS total FROM pem_equipamentos WHERE formula != '' AND formula IS NOT NULL"))?.total || 0;
-  const comLigacao = (await one(db, `
-    SELECT COUNT(DISTINCT p.id_pem) AS total
-    FROM pem_servicos p
-    JOIN composicoes c ON (c.codigo=p.codigo OR c.codigo='SICRO.' || p.codigo) AND UPPER(c.fonte)='SICRO'`))?.total || 0;
+  await ensurePerformanceIndexes(db);
+  const [servicos, equipamentos, variaveis, formulas] = await Promise.all([
+    one(db, 'SELECT COUNT(*) AS total FROM pem_servicos'),
+    one(db, 'SELECT COUNT(*) AS total FROM pem_equipamentos'),
+    one(db, 'SELECT COUNT(*) AS total FROM pem_variaveis'),
+    one(db, "SELECT COUNT(*) AS total FROM pem_equipamentos WHERE formula IS NOT NULL AND formula<>''"),
+  ]);
   return {
-    total_servicos: totalServicos,
-    total_equipamentos: totalEquipamentos,
-    total_variaveis: totalVariaveis,
-    com_formula: comFormula,
-    com_ligacao_sicro: comLigacao,
+    total_servicos: Number(servicos?.total || 0),
+    total_equipamentos: Number(equipamentos?.total || 0),
+    total_variaveis: Number(variaveis?.total || 0),
+    com_formula: Number(formulas?.total || 0),
   };
 }
 
 async function list(db, query = {}) {
+  await ensurePerformanceIndexes(db);
   const limit = Math.max(1, Math.min(200, Number(query.limit || 50)));
   const offset = Math.max(0, Number(query.offset || 0));
   const params = [];
@@ -77,22 +87,17 @@ async function list(db, query = {}) {
     where += ' AND (s.codigo LIKE ? OR s.servico LIKE ?)';
     params.push(`%${query.q}%`, `%${query.q}%`);
   }
-  const total = (await one(db, `SELECT COUNT(*) AS total FROM pem_servicos s ${where}`, params))?.total || 0;
-  const items = await all(db, `
-    SELECT s.*, COUNT(e.id_pem_equip) AS qtd_equipamentos,
-           c.id_composicao AS id_composicao_vinculada,
-           c.uf_referencia, c.mes_referencia
-    FROM (
-      SELECT *
+  const [countRow, items] = await Promise.all([
+    one(db, `SELECT COUNT(*) AS total FROM pem_servicos s ${where}`, params),
+    all(db, `
+      SELECT s.*,
+             (SELECT COUNT(*) FROM pem_equipamentos e WHERE e.id_pem=s.id_pem) AS qtd_equipamentos
       FROM pem_servicos s
       ${where}
       ORDER BY s.codigo
-      LIMIT ? OFFSET ?
-    ) s
-    LEFT JOIN pem_equipamentos e ON e.id_pem=s.id_pem
-    LEFT JOIN composicoes c ON (c.codigo=s.codigo OR c.codigo='SICRO.' || s.codigo) AND UPPER(c.fonte)='SICRO'
-    GROUP BY s.id_pem
-    ORDER BY s.codigo`, [...params, limit, offset]);
+      LIMIT ? OFFSET ?`, [...params, limit, offset]),
+  ]);
+  const total = Number(countRow?.total || 0);
   return { total, items };
 }
 
@@ -102,19 +107,39 @@ async function getLinkedComposition(db, codigo) {
   return one(db, `
     SELECT *
     FROM composicoes
-    WHERE codigo IN (?, ?) AND UPPER(fonte)='SICRO'
+    WHERE codigo IN (?, ?) AND fonte='SICRO'
     ORDER BY id_composicao DESC
-    LIMIT 1`, [raw, withPrefix]);
+    LIMIT 1`, [withPrefix, raw]);
 }
 
 async function getById(db, idPem) {
   const pem = await one(db, 'SELECT * FROM pem_servicos WHERE id_pem=?', [idPem]);
   if (!pem) return null;
-  pem.equipamentos = await all(db, 'SELECT * FROM pem_equipamentos WHERE id_pem=? ORDER BY ordem', [idPem]);
-  for (const equip of pem.equipamentos) {
-    equip.variaveis = await all(db, 'SELECT * FROM pem_variaveis WHERE id_pem_equip=? ORDER BY letra', [equip.id_pem_equip]);
+  const [equipamentos, composicao] = await Promise.all([
+    all(db, 'SELECT * FROM pem_equipamentos WHERE id_pem=? ORDER BY ordem', [idPem]),
+    getLinkedComposition(db, pem.codigo),
+  ]);
+  pem.equipamentos = equipamentos;
+  if (equipamentos.length) {
+    const ids = equipamentos.map(equip => equip.id_pem_equip);
+    const variaveis = await all(
+      db,
+      `SELECT * FROM pem_variaveis
+       WHERE id_pem_equip IN (${ids.map(() => '?').join(',')})
+       ORDER BY id_pem_equip, letra`,
+      ids,
+    );
+    const porEquipamento = new Map();
+    for (const variavel of variaveis) {
+      const key = String(variavel.id_pem_equip);
+      if (!porEquipamento.has(key)) porEquipamento.set(key, []);
+      porEquipamento.get(key).push(variavel);
+    }
+    for (const equip of equipamentos) {
+      equip.variaveis = porEquipamento.get(String(equip.id_pem_equip)) || [];
+    }
   }
-  pem.composicao_vinculada = await getLinkedComposition(db, pem.codigo);
+  pem.composicao_vinculada = composicao;
   return pem;
 }
 

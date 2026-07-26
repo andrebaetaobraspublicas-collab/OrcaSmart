@@ -308,7 +308,8 @@ CREATE TABLE IF NOT EXISTS `pem_servicos` (
   `producao_equipe` DECIMAL(20,8) NULL,
   `unidade` VARCHAR(120) NULL,
   `observacoes` TEXT NULL,
-  PRIMARY KEY (`id_pem`)
+  PRIMARY KEY (`id_pem`),
+  KEY `idx_pem_servicos_codigo` (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `pem_variaveis` (

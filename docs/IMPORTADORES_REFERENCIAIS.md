@@ -35,6 +35,11 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
   custo horário, custo unitário de execução, FIC, subtotal e custo unitário são
   recalculados. A operação é transacional e falha sem gravar dados parciais se
   algum código de mão de obra utilizado não estiver no relatório desonerado.
+- A linha final `Subtotal` do relatório não pertence à última seção analítica
+  aberta. Os totais A–F usados na derivação são sempre recompostos pela soma dos
+  respectivos itens; seções vazias contribuem com zero. Essa regra também
+  corrige, na reimportação, memórias antigas em que o subtotal geral havia sido
+  persistido indevidamente como total da seção D.
 - Reimportar a mão de obra desonerada recalcula o conjunto já existente sem
   duplicá-lo. O regime integra a identidade lógica da composição SICRO, de modo
   que onerada e desonerada coexistem com o mesmo código, UF e data-base.

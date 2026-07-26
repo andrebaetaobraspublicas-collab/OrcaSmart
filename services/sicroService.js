@@ -107,7 +107,6 @@ function parseSicroWorkbook(buffer, options = {}) {
     }
     if (total.includes('Subtotal')) {
       atual.subtotal_sicro = numero(c[8]);
-      if (secao.custo_total_secao === null) secao.custo_total_secao = numero(c[8]);
       return;
     }
     if (v0 === 'Obs.') { secaoAtual = null; return; }
@@ -281,12 +280,16 @@ function prepararComposicoesSicroDesoneradas(composicoes, secoes, itens, precosM
             item.custo_total = arredondarSicro(Number(item.quantidade || 0) * custoComposicao);
           }
         }
-        if (['B', 'D', 'E'].includes(letra) && secao.itens.length) {
-          secao.custo_total_secao = arredondarSicro(
-            secao.itens.reduce((total, item) => total + Number(item.custo_total || 0), 0),
-          );
-        }
-        totais[letra] = Number(secao.custo_total_secao || 0);
+        // O relatório encerra algumas composições com a linha "Subtotal"
+        // ainda sob a última seção aberta. Importações antigas acabaram
+        // persistindo esse subtotal geral em seções vazias (principalmente D),
+        // e a derivação desonerada o somava novamente ao custo de execução.
+        // O total confiável de qualquer seção analítica é a soma de seus itens;
+        // uma seção sem itens necessariamente contribui com zero.
+        secao.custo_total_secao = arredondarSicro(
+          secao.itens.reduce((total, item) => total + Number(item.custo_total || 0), 0),
+        );
+        totais[letra] = secao.custo_total_secao;
       }
 
       const producao = Number(comp.producao_equipe || 0);

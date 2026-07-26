@@ -175,6 +175,10 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   replica a memória analítica onerada da mesma UF/data-base, preserva todas as
   seções e itens e recalcula custos de mão de obra, composições auxiliares, FIC e
   total em um conjunto independente marcado como `Desonerado`.
+- O subtotal geral do relatório analítico SICRO não é tratado como total da
+  última seção aberta. Na derivação desonerada, cada seção A–F é recomposta pela
+  soma de seus itens e seções vazias valem zero, impedindo a soma em dobro do
+  custo de execução observada em cargas anteriores.
 - Na atualização de UF/data-base/regime do orçamento, referências existentes
   em regime incompatível não são utilizadas. O resumo diferencia ausência real
   de composição da rejeição por regime e informa o regime atual do orçamento;
@@ -194,6 +198,11 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   a abertura inicia metadados e listagem em paralelo. Índices MySQL específicos
   atendem regime, fonte, UF e data-base, e buscas por código usam prefixos
   indexáveis em vez de curingas iniciais.
+- A tela de Produções Horárias pagina diretamente `pem_servicos`, calcula a
+  quantidade de equipamentos somente para os registros exibidos e não cruza a
+  listagem com o catálogo integral de composições. Indicadores, datas-base e
+  primeira página são solicitados em paralelo; a abertura do detalhe carrega
+  todas as variáveis em uma única consulta.
 
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.

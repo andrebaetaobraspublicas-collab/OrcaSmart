@@ -1,9 +1,11 @@
 const assert = require('assert');
+const XLSX = require('xlsx');
 const {
   normalizarSicroOnerado,
 } = require('../utils/composicoesRegimeMysql');
 const sinapiRoutes = require('../routes/sinapiRoutes');
 const {
+  parseSicroWorkbook,
   prepararComposicoesSicroDesoneradas,
 } = require('../services/sicroService');
 
@@ -29,6 +31,21 @@ const {
     assert(sql.includes("UPPER(COALESCE(fonte,''))='SICRO'"));
     assert(sql.includes("TRIM(COALESCE(situacao_ref,''))=''"));
   });
+
+  const planilhaSubtotal = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(planilhaSubtotal, XLSX.utils.aoa_to_sheet([
+    ['SISTEMA DE CUSTOS REFERENCIAIS', '', '', 'São Paulo', '', '', '', 0],
+    ['Custo Unitário de Referência', '', '', 'Abril/2026', '', '', '', 1, 'un'],
+    ['2407973', 'Composição auxiliar'],
+    ['D - Atividades Auxiliares'],
+    ['Subtotal', '', '', '', '', '', '', '', 60.7631],
+  ]), 'Relatório');
+  const parsedSubtotal = parseSicroWorkbook(
+    XLSX.write(planilhaSubtotal, { type: 'buffer', bookType: 'xlsx' }),
+  );
+  assert.strictEqual(parsedSubtotal.length, 1);
+  assert.strictEqual(parsedSubtotal[0].subtotal_sicro, 60.7631);
+  assert.strictEqual(parsedSubtotal[0].secoes.D.custo_total_secao, null);
 
   assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('Sem desoneração'), 'Onerado');
   assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('COM CUSTO'), 'Desonerado');
@@ -58,11 +75,23 @@ const {
       custo_fic: 0,
       fic: 0,
     },
+    {
+      id_composicao: 3,
+      codigo: 'SICRO.300',
+      producao_equipe: 1,
+      custo_unitario: 60,
+      custo_horario_execucao: 60,
+      custo_unitario_execucao: 60,
+      custo_fic: 0,
+      fic: 0,
+    },
   ];
   const secoesSicro = [
     { id_secao: 10, id_composicao: 1, letra_secao: 'B', custo_total_secao: 60, ordem: 1 },
     { id_secao: 20, id_composicao: 2, letra_secao: 'B', custo_total_secao: 30, ordem: 1 },
     { id_secao: 21, id_composicao: 2, letra_secao: 'D', custo_total_secao: 180, ordem: 2 },
+    { id_secao: 30, id_composicao: 3, letra_secao: 'A', custo_total_secao: 60, ordem: 1 },
+    { id_secao: 31, id_composicao: 3, letra_secao: 'D', custo_total_secao: 60, ordem: 2 },
   ];
   const itensSicro = [
     {
@@ -98,6 +127,16 @@ const {
       custo_total: 180,
       ordem: 0,
     },
+    {
+      id_item_secao: 300,
+      id_composicao: 3,
+      id_secao: 30,
+      letra_secao: 'A',
+      codigo_item: 'E1',
+      quantidade: 1,
+      custo_total: 60,
+      ordem: 0,
+    },
   ];
   const derivadas = prepararComposicoesSicroDesoneradas(
     fontesSicro,
@@ -106,10 +145,15 @@ const {
     new Map([['P9801', 20]]),
   );
   assert.deepStrictEqual(derivadas.codigos_mao_obra_sem_preco, []);
-  assert.strictEqual(derivadas.composicoes.length, 2);
+  assert.strictEqual(derivadas.composicoes.length, 3);
   assert(derivadas.composicoes.every(comp => comp.situacao_ref === 'Desonerado'));
   assert.strictEqual(derivadas.composicoes[0].custo_unitario, 40);
   assert.strictEqual(derivadas.composicoes[1].custo_unitario, 140);
+  assert.strictEqual(derivadas.composicoes[2].custo_unitario, 60);
+  assert.strictEqual(
+    derivadas.composicoes[2].secoes.find(secao => secao.letra_secao === 'D').custo_total_secao,
+    0,
+  );
   assert.strictEqual(
     derivadas.composicoes[1].secoes.find(secao => secao.letra_secao === 'D').itens[0].preco_unitario,
     40,

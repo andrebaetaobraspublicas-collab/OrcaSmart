@@ -92,6 +92,7 @@ async function main() {
          0,1,'un',210,30,30,0,210,'Ativo','create','active','','');
       INSERT INTO tenant_composicoes_secoes VALUES
         (1,10,1,'B','Mão de Obra',60,1,'create','active','',''),
+        (1,11,1,'D','Atividades Auxiliares',60,2,'create','active','',''),
         (1,20,2,'B','Mão de Obra',30,1,'create','active','',''),
         (1,21,2,'D','Atividades Auxiliares',180,2,'create','active','','');
       INSERT INTO tenant_composicoes_secao_itens VALUES

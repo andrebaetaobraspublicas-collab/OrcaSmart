@@ -233,8 +233,15 @@ Router.register('producao-horaria', async () => {
   /* ── Carregar lista ────────────────────────────────────────────────────── */
   async function carregar() {
     try {
-      [stats, datasBase] = await Promise.all([API.pem.stats(), API.datasBase.list()]);
-      await buscar();
+      const [statsRes, datasRes, listaRes] = await Promise.all([
+        API.pem.stats(),
+        API.datasBase.list(),
+        API.pem.list(filtros),
+      ]);
+      stats = statsRes;
+      datasBase = datasRes;
+      totalReg = listaRes.total;
+      renderLista(listaRes.items);
     } catch(e) { Toast.error(e.message); }
   }
 

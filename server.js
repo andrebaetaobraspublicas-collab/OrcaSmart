@@ -848,6 +848,8 @@ app.get('/api/status', (_req, res) => res.json({
   budgetRecalculationJobVersion: 1,
   budgetSocialChargesSummaryVersion: 1,
   sicroLaborRegimesVersion: 1,
+  sicroDerivedCostFixVersion: 1,
+  pemPerformanceVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
