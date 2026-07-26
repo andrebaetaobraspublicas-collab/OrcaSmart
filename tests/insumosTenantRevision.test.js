@@ -66,7 +66,11 @@ async function main() {
         id_preco INTEGER PRIMARY KEY, id_insumo INTEGER, id_data_base INTEGER, id_fonte INTEGER,
         uf_referencia TEXT, preco_referencia REAL, preco_desonerado REAL, preco_nao_desonerado REAL,
         iva_equivalente REAL, cbs_percentual REAL, ibs_percentual REAL, is_percentual REAL,
-        preco_sem_tributos REAL, encargos_sociais_percentual REAL
+        preco_sem_tributos REAL, encargos_sociais_percentual REAL,
+        encargos_sociais_onerado_percentual REAL,
+        encargos_sociais_desonerado_percentual REAL,
+        id_perfil_encargo_onerado INTEGER,
+        id_perfil_encargo_desonerado INTEGER
       );
       CREATE TABLE catalog.datas_base (id_data_base INTEGER PRIMARY KEY, mes INTEGER, ano INTEGER, descricao TEXT);
       CREATE TABLE catalog.fontes_referencia (id_fonte INTEGER PRIMARY KEY, nome_fonte TEXT);
@@ -83,6 +87,10 @@ async function main() {
         uf_referencia TEXT, preco_referencia REAL, preco_desonerado REAL, preco_nao_desonerado REAL,
         iva_equivalente REAL, cbs_percentual REAL, ibs_percentual REAL, is_percentual REAL,
         preco_sem_tributos REAL, encargos_sociais_percentual REAL,
+        encargos_sociais_onerado_percentual REAL,
+        encargos_sociais_desonerado_percentual REAL,
+        id_perfil_encargo_onerado INTEGER,
+        id_perfil_encargo_desonerado INTEGER,
         tenant_override_action TEXT, tenant_override_status TEXT,
         tenant_created_at TEXT, tenant_updated_at TEXT
       );
@@ -229,6 +237,31 @@ async function main() {
       origem: 'CDHU', uf: 'SP', mes: 5, ano: 2026, limit: 300,
     });
     assert.deepStrictEqual(new Set(preservado.map(item => item.codigo_insumo)), new Set(['CDHU-ERR-2', 'CDHU-TENANT-ERR-2']));
+
+    await exec(db, `
+      INSERT INTO catalog.unidades_medida (id_unidade, sigla, descricao)
+      VALUES (1, 'H', 'Hora');
+      INSERT INTO catalog.insumos
+        (id_insumo,codigo_insumo,descricao,tipo_insumo,id_unidade,origem,encargos_aplicaveis,situacao)
+      VALUES
+        (40,'2706','ENGENHEIRO CIVIL DE OBRA JUNIOR (HORISTA)','Mão de Obra',1,'SINAPI','Sim','Ativo');
+      INSERT INTO catalog.precos_insumos
+        (id_preco,id_insumo,id_data_base,uf_referencia,preco_referencia,preco_desonerado,preco_nao_desonerado,
+         encargos_sociais_onerado_percentual,encargos_sociais_desonerado_percentual,
+         id_perfil_encargo_onerado,id_perfil_encargo_desonerado)
+      VALUES
+        (401,40,2,'SP',124.77,118.40,124.77,115.01,90.12,11,12);
+    `);
+    const maoObraOnerada = await service.listInsumos(db, {
+      origem: 'SINAPI', uf: 'SP', mes: 5, ano: 2026, regime: 'onerado', limit: 300,
+    });
+    assert.strictEqual(maoObraOnerada.length, 1);
+    assert.strictEqual(maoObraOnerada[0].encargos_sociais_calculado, 115.01);
+    assert.strictEqual(maoObraOnerada[0].encargos_sociais_desonerado_percentual, 90.12);
+    const maoObraDesonerada = await service.listInsumos(db, {
+      origem: 'SINAPI', uf: 'SP', mes: 5, ano: 2026, regime: 'desonerado', limit: 300,
+    });
+    assert.strictEqual(maoObraDesonerada[0].encargos_sociais_calculado, 90.12);
 
     console.log('insumosTenantRevision.test.js: OK');
   } finally {

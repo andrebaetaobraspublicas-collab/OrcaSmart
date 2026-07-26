@@ -48,6 +48,7 @@ const { ensureMysqlRiscosSchema } = require('./utils/riscosMysqlSchema');
 const { normalizarMysqlRegimesComposicoes } = require('./utils/composicoesRegimeMysql');
 const { ensureMysqlComposicoesPerformance } = require('./utils/composicoesPerformanceMysql');
 const { normalizarMysqlTributosInsumos2026 } = require('./utils/insumosTributos2026');
+const { normalizarMysqlEncargosInsumosSinapi } = require('./utils/sinapiEncargosInsumos');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -106,6 +107,14 @@ const bootState = {
     connectionMode: null,
     socketPath: null,
     insumosTributos2026: {
+      status: 'pending',
+      progress: null,
+      resultado: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+    },
+    sinapiEncargosInsumos: {
       status: 'pending',
       progress: null,
       resultado: null,
@@ -825,6 +834,7 @@ function buildPhase4Status() {
     mysqlError: bootState.mysql.error,
     mysqlErrorAttempts: bootState.mysql.errorAttempts,
     insumosTributos2026: bootState.mysql.insumosTributos2026,
+    sinapiEncargosInsumos: bootState.mysql.sinapiEncargosInsumos,
     mysql: {
       host: bootState.mysql.config.host,
       port: bootState.mysql.config.port,
@@ -864,6 +874,7 @@ app.get('/api/status', (_req, res) => res.json({
   sicroDerivedCostFixVersion: 1,
   pemPerformanceVersion: 1,
   insumosTributos2026Version: 1,
+  sinapiEncargosInsumosVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
@@ -1209,6 +1220,34 @@ async function initializeMysqlPilot() {
             console.warn('[insumos] Falha ao normalizar tributos 2026:', err.message || err);
           });
       }, 1000).unref?.();
+      setTimeout(() => {
+        bootState.mysql.sinapiEncargosInsumos = {
+          status: 'running',
+          progress: null,
+          resultado: null,
+          error: null,
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+        };
+        normalizarMysqlEncargosInsumosSinapi(mysqlConfig(), {
+          onProgress: (progress) => {
+            bootState.mysql.sinapiEncargosInsumos.progress = progress;
+            console.log('[insumos] Encargos sociais SINAPI:', JSON.stringify(progress));
+          },
+        })
+          .then((resultado) => {
+            bootState.mysql.sinapiEncargosInsumos.status = 'completed';
+            bootState.mysql.sinapiEncargosInsumos.resultado = resultado;
+            bootState.mysql.sinapiEncargosInsumos.finishedAt = new Date().toISOString();
+            console.log('[insumos] Encargos sociais SINAPI normalizados:', JSON.stringify(resultado));
+          })
+          .catch((err) => {
+            bootState.mysql.sinapiEncargosInsumos.status = 'error';
+            bootState.mysql.sinapiEncargosInsumos.error = err.message || String(err);
+            bootState.mysql.sinapiEncargosInsumos.finishedAt = new Date().toISOString();
+            console.warn('[insumos] Falha ao normalizar encargos sociais SINAPI:', err.message || err);
+          });
+      }, 1500).unref?.();
       setTimeout(() => {
         ensureMysqlComposicoesPerformance(mysqlConfig())
           .then(created => console.log('[composicoes] Índices de desempenho:', JSON.stringify(created)))

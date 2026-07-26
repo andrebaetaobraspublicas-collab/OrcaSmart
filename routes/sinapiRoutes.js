@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { createMysqlConnection, databaseEngine } = require('../utils/mysqlRuntime');
 const { calcularTributosInsumo2026 } = require('../utils/insumosTributos2026');
+const { resolverEncargosInsumoSinapi } = require('../utils/sinapiEncargosInsumos');
 
 const SINAPI_IMPORT_JOBS = new Map();
 const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
@@ -1032,6 +1033,8 @@ module.exports = function sinapiRoutes(db) {
         insumos_atualizados: 0,
         precos_inseridos: 0,
         precos_atualizados: 0,
+        encargos_sociais_associados: 0,
+        encargos_sociais_sem_perfil: 0,
         composicoes_inseridas: 0,
         composicoes_atualizadas: 0,
         itens_inseridos: 0,
@@ -1048,6 +1051,8 @@ module.exports = function sinapiRoutes(db) {
           insumos_atualizados: out.insumos_atualizados,
           precos_inseridos: out.precos_inseridos,
           precos_atualizados: out.precos_atualizados,
+          encargos_sociais_associados: out.encargos_sociais_associados,
+          encargos_sociais_sem_perfil: out.encargos_sociais_sem_perfil,
           composicoes_inseridas: out.composicoes_inseridas,
           composicoes_atualizadas: out.composicoes_atualizadas,
           itens_inseridos: out.itens_inseridos,
@@ -1080,9 +1085,133 @@ module.exports = function sinapiRoutes(db) {
         const unidadeTable = `${refPrefix}unidades_medida`;
         const insumoTable = `${refPrefix}insumos`;
         const precoTable = `${refPrefix}precos_insumos`;
+        const perfilEncargoTable = `${refPrefix}perfis_encargos`;
         const forceReferentialUpdate = sobrepor;
         const ufWherePlaceholders = ufs.map(() => '?').join(',');
         const useDirectCatalogLookups = databaseEngine() === 'mysql' && useCatalogReferencial;
+
+        async function ensureSinapiEncargosPrecoSchema() {
+          if (databaseEngine() === 'mysql') return;
+          const schema = refPrefix ? 'catalog' : 'main';
+          const columns = new Set(
+            (await allC(`PRAGMA ${schema}.table_info(precos_insumos)`)).map(row => row.name),
+          );
+          const additions = [
+            ['encargos_sociais_onerado_percentual', 'REAL'],
+            ['encargos_sociais_desonerado_percentual', 'REAL'],
+            ['id_perfil_encargo_onerado', 'INTEGER'],
+            ['id_perfil_encargo_desonerado', 'INTEGER'],
+          ];
+          for (const [column, ddl] of additions) {
+            if (!columns.has(column)) {
+              await runC(`ALTER TABLE ${precoTable} ADD COLUMN ${column} ${ddl}`);
+            }
+          }
+        }
+
+        async function associarEncargosSociaisSinapi() {
+          await ensureSinapiEncargosPrecoSchema();
+          const perfis = await allC(`
+            SELECT pe.*, db.mes AS data_base_mes, db.ano AS data_base_ano,
+                   NULL AS tenant_id
+            FROM ${perfilEncargoTable} pe
+            LEFT JOIN ${dataBaseTable} db ON db.id_data_base=pe.id_data_base
+            WHERE UPPER(TRIM(COALESCE(pe.fonte_referencia,'')))='SINAPI'
+              AND COALESCE(pe.situacao,'Ativo')='Ativo'`).catch(() => []);
+          if (!perfis.length) {
+            out.encargos_sociais_sem_perfil += 1;
+            out.alertas.push(`Nenhum perfil de encargos sociais SINAPI foi localizado para ${mesRef}.`);
+            return;
+          }
+          const priceSource = useDirectCatalogLookups ? directMysqlTable(precoTable) : precoTable;
+          const inputSource = useDirectCatalogLookups ? directMysqlTable(insumoTable) : insumoTable;
+          const unitSource = useDirectCatalogLookups ? directMysqlTable(unidadeTable) : unidadeTable;
+          const dataSource = useDirectCatalogLookups ? directMysqlTable(dataBaseTable) : dataBaseTable;
+          const rows = await selectRowsTimed(`
+            SELECT p.id_preco AS id, p.uf_referencia, db.mes, db.ano,
+                   i.descricao, COALESCE(um.sigla,'') AS unidade,
+                   p.encargos_sociais_onerado_percentual,
+                   p.encargos_sociais_desonerado_percentual,
+                   p.id_perfil_encargo_onerado,
+                   p.id_perfil_encargo_desonerado
+            FROM ${priceSource} p
+            JOIN ${inputSource} i ON i.id_insumo=p.id_insumo
+            LEFT JOIN ${unitSource} um ON um.id_unidade=i.id_unidade
+            LEFT JOIN ${dataSource} db ON db.id_data_base=p.id_data_base
+            WHERE p.id_data_base=?
+              AND UPPER(TRIM(COALESCE(i.origem,'')))='SINAPI'
+              AND UPPER(COALESCE(p.uf_referencia,'')) IN (${ufWherePlaceholders})
+              AND (
+                UPPER(TRIM(COALESCE(i.tipo_insumo,''))) LIKE 'M%O DE OBRA'
+                OR UPPER(TRIM(COALESCE(i.tipo_insumo,'')))='MAO DE OBRA'
+              )`, [idDataBase, ...ufs], 'Associacao dos encargos sociais SINAPI', 20000);
+
+          const updates = [];
+          let semPerfil = 0;
+          let associados = 0;
+          for (const row of rows) {
+            const resolved = resolverEncargosInsumoSinapi(perfis, row);
+            if (!resolved || resolved.onerado_percentual == null || resolved.desonerado_percentual == null) {
+              semPerfil += 1;
+              continue;
+            }
+            associados += 1;
+            const same = (a, b) => {
+              if ((a === null || a === undefined) && (b === null || b === undefined)) return true;
+              return Math.abs(Number(a) - Number(b)) < 0.00000001;
+            };
+            const update = {
+              id: row.id,
+              onerado: resolved.onerado_percentual,
+              desonerado: resolved.desonerado_percentual,
+              idOnerado: resolved.id_perfil_onerado,
+              idDesonerado: resolved.id_perfil_desonerado,
+            };
+            if (!same(row.encargos_sociais_onerado_percentual, update.onerado)
+                || !same(row.encargos_sociais_desonerado_percentual, update.desonerado)
+                || !same(row.id_perfil_encargo_onerado, update.idOnerado)
+                || !same(row.id_perfil_encargo_desonerado, update.idDesonerado)) {
+              updates.push(update);
+            }
+          }
+
+          const batchSize = 250;
+          for (let offset = 0; offset < updates.length; offset += batchSize) {
+            const batch = updates.slice(offset, offset + batchSize);
+            const fields = [
+              ['encargos_sociais_onerado_percentual', 'onerado'],
+              ['encargos_sociais_desonerado_percentual', 'desonerado'],
+              ['id_perfil_encargo_onerado', 'idOnerado'],
+              ['id_perfil_encargo_desonerado', 'idDesonerado'],
+            ];
+            const params = [];
+            const sets = fields.map(([column, key]) => {
+              const cases = batch.map((row) => {
+                params.push(row.id, row[key]);
+                return 'WHEN ? THEN ?';
+              }).join(' ');
+              return `${column}=CASE id_preco ${cases} ELSE ${column} END`;
+            });
+            params.push(...batch.map(row => row.id));
+            const sql = `
+              UPDATE ${priceSource}
+              SET ${sets.join(', ')}
+              WHERE id_preco IN (${batch.map(() => '?').join(',')})`;
+            if (useDirectCatalogLookups) {
+              await executeDirectMysqlReusable(sql, params, 'Gravacao dos encargos sociais SINAPI', 15000);
+            } else {
+              await runC(sql, params);
+            }
+          }
+          out.encargos_sociais_associados += associados;
+          out.encargos_sociais_sem_perfil += semPerfil;
+          if (semPerfil) {
+            out.alertas.push(
+              `${semPerfil} preço(s) de mão de obra SINAPI permaneceram sem encargos porque não há perfis onerado e desonerado compatíveis por UF, data-base e categoria.`,
+            );
+          }
+        }
+
         const selectRowsTimed = async (sql, params, label, ms = 12000) => {
           const started = Date.now();
           console.log('[SINAPI_IMPORT_SQL_START]', JSON.stringify({
@@ -1675,6 +1804,10 @@ module.exports = function sinapiRoutes(db) {
         }
 
         await processarInsumosCombinados();
+        if (importarIsd || importarIcd) {
+          reportProgress(43, 'Associando encargos sociais', 'Relacionando mão de obra aos perfis SINAPI por UF, data-base, regime e categoria.');
+          await associarEncargosSociaisSinapi();
+        }
 
         if (importarAnalitico && !analSheet) {
           throw httpError(400, 'Aba Analitico/Analitico com Custo nao encontrada no arquivo SINAPI enviado.');
@@ -2128,7 +2261,7 @@ module.exports = function sinapiRoutes(db) {
         reportProgress(99, 'Finalizando', 'Consolidando resultado da importacao.');
         await closeDirectMysqlReusable();
         if (useLongTransaction) await runC('COMMIT');
-        out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
+        out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Encargos sociais associados: ${out.encargos_sociais_associados}. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
       } catch (err) {
         await closeDirectMysqlReusable();

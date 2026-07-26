@@ -396,8 +396,23 @@ Router.register('insumos', async () => {
 
   function encSocHTML(ins) {
     if (!ehMaoDeObra(ins.tipo_insumo)) return '';
-    const valor = Number(ins.encargos_sociais_calculado || ins.encargos_sociais_percentual || 0);
-    if (valor > 0) return `<span class="badge badge-blue">${Utils.num(valor, 2)}%</span>`;
+    const regime = String(filtros.regime || '').toLowerCase();
+    const onerado = Number(ins.encargos_sociais_onerado_percentual || 0);
+    const desonerado = Number(ins.encargos_sociais_desonerado_percentual || 0);
+    const selecionado = Number(ins.encargos_sociais_calculado || ins.encargos_sociais_percentual || 0);
+    if (regime === 'onerado' && selecionado > 0) {
+      return `<span class="badge badge-warning" title="Encargo social onerado">ON ${Utils.num(selecionado, 2)}%</span>`;
+    }
+    if (regime === 'desonerado' && selecionado > 0) {
+      return `<span class="badge badge-success" title="Encargo social desonerado">DES ${Utils.num(selecionado, 2)}%</span>`;
+    }
+    if (onerado > 0 || desonerado > 0) {
+      return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">
+        ${onerado > 0 ? `<span class="badge badge-warning" title="Encargo social onerado">ON ${Utils.num(onerado, 2)}%</span>` : ''}
+        ${desonerado > 0 ? `<span class="badge badge-success" title="Encargo social desonerado">DES ${Utils.num(desonerado, 2)}%</span>` : ''}
+      </div>`;
+    }
+    if (selecionado > 0) return `<span class="badge badge-blue">${Utils.num(selecionado, 2)}%</span>`;
     return '<span class="text-3">&mdash;</span>';
   }
 

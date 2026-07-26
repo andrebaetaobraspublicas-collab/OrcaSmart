@@ -78,7 +78,18 @@ async function hasActiveInsumoOverrides(db) {
   return !!row;
 }
 
-function insumoColumns(idExpr, scopeExpr, catalogIdExpr = 'NULL') {
+function encargoPrecoExpr(regime = '') {
+  const value = String(regime || '').trim().toLowerCase();
+  if (value === 'onerado') {
+    return 'COALESCE(p.encargos_sociais_onerado_percentual, p.encargos_sociais_percentual, i.encargos_sociais_percentual)';
+  }
+  if (value === 'desonerado') {
+    return 'COALESCE(p.encargos_sociais_desonerado_percentual, p.encargos_sociais_percentual, i.encargos_sociais_percentual)';
+  }
+  return 'COALESCE(p.encargos_sociais_percentual, i.encargos_sociais_percentual)';
+}
+
+function insumoColumns(idExpr, scopeExpr, catalogIdExpr = 'NULL', regime = '') {
   return `
     ${idExpr} AS id_insumo,
     i.codigo_insumo,
@@ -107,7 +118,11 @@ function insumoColumns(idExpr, scopeExpr, catalogIdExpr = 'NULL') {
     p.is_percentual,
     p.preco_sem_tributos,
     p.encargos_sociais_percentual AS preco_encargos_sociais_percentual,
-    COALESCE(p.encargos_sociais_percentual, i.encargos_sociais_percentual) AS encargos_sociais_calculado,
+    p.encargos_sociais_onerado_percentual,
+    p.encargos_sociais_desonerado_percentual,
+    p.id_perfil_encargo_onerado,
+    p.id_perfil_encargo_desonerado,
+    ${encargoPrecoExpr(regime)} AS encargos_sociais_calculado,
     db2.mes AS preco_mes,
     db2.ano AS preco_ano,
     fr.nome_fonte AS nome_fonte,
@@ -126,6 +141,10 @@ const selectInsumo = `
          p.uf_referencia AS preco_uf, p.iva_equivalente,
          p.cbs_percentual, p.ibs_percentual, p.is_percentual, p.preco_sem_tributos,
          p.encargos_sociais_percentual AS preco_encargos_sociais_percentual,
+         p.encargos_sociais_onerado_percentual,
+         p.encargos_sociais_desonerado_percentual,
+         p.id_perfil_encargo_onerado,
+         p.id_perfil_encargo_desonerado,
          COALESCE(p.encargos_sociais_percentual, i.encargos_sociais_percentual) AS encargos_sociais_calculado,
          db2.mes AS preco_mes, db2.ano AS preco_ano,
          fr.nome_fonte AS nome_fonte
@@ -167,6 +186,17 @@ async function ensureSchemaInternal(db) {
     const priceCols = new Set((await all(db, 'PRAGMA table_info(precos_insumos)')).map(c => c.name));
     if (!priceCols.has('encargos_sociais_percentual')) {
       await run(db, 'ALTER TABLE precos_insumos ADD COLUMN encargos_sociais_percentual REAL');
+    }
+    const sinapiChargeColumns = [
+      ['encargos_sociais_onerado_percentual', 'REAL'],
+      ['encargos_sociais_desonerado_percentual', 'REAL'],
+      ['id_perfil_encargo_onerado', 'INTEGER'],
+      ['id_perfil_encargo_desonerado', 'INTEGER'],
+    ];
+    for (const [column, type] of sinapiChargeColumns) {
+      if (!priceCols.has(column)) {
+        await run(db, `ALTER TABLE precos_insumos ADD COLUMN ${column} ${type}`);
+      }
     }
 
     const indexes = [
@@ -238,7 +268,11 @@ function priceSelect(query = {}) {
              p.uf_referencia AS preco_uf, p.iva_equivalente,
              p.cbs_percentual, p.ibs_percentual, p.is_percentual, p.preco_sem_tributos,
              p.encargos_sociais_percentual AS preco_encargos_sociais_percentual,
-             COALESCE(p.encargos_sociais_percentual, i.encargos_sociais_percentual) AS encargos_sociais_calculado,
+             p.encargos_sociais_onerado_percentual,
+             p.encargos_sociais_desonerado_percentual,
+             p.id_perfil_encargo_onerado,
+             p.id_perfil_encargo_desonerado,
+             ${encargoPrecoExpr(regime)} AS encargos_sociais_calculado,
              db2.mes AS preco_mes, db2.ano AS preco_ano,
              fr.nome_fonte AS nome_fonte
       FROM insumos i
@@ -394,7 +428,8 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
   if (regime === 'onerado') precoExpr = 'COALESCE(NULLIF(p.preco_nao_desonerado,0), p.preco_referencia)';
   if (regime === 'desonerado') precoExpr = 'COALESCE(NULLIF(p.preco_desonerado,0), p.preco_referencia)';
 
-  const columns = insumoColumns(idExpr, scopeExpr, catalogIdExpr).replace('p.preco_referencia AS preco_regime', `${precoExpr} AS preco_regime`);
+  const columns = insumoColumns(idExpr, scopeExpr, catalogIdExpr, regime)
+    .replace('p.preco_referencia AS preco_regime', `${precoExpr} AS preco_regime`);
   let sql = `
     SELECT ${columns}
     FROM ${table} i

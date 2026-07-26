@@ -17,6 +17,25 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
 - Recálculo de composições foi ajustado ao MariaDB.
 - Evitar carregar/recalcular todo o catálogo na abertura de uma tela.
 
+### Encargos sociais dos insumos de mão de obra
+
+Os preços SINAPI podem conter simultaneamente valores onerados (ISD) e
+desonerados (ICD). Por isso, cada registro de preço mantém associações
+independentes com os encargos dos dois regimes:
+
+- `encargos_sociais_onerado_percentual` e `id_perfil_encargo_onerado`;
+- `encargos_sociais_desonerado_percentual` e `id_perfil_encargo_desonerado`.
+
+A importação não calcula nem estima alíquotas. Ela consulta os perfis de
+encargos sociais já cadastrados e só associa um perfil quando houver
+correspondência de fonte SINAPI, UF, data-base/vigência, regime previdenciário
+e categoria. Insumos cuja unidade seja `H` usam a categoria `Horista`; os de
+unidade `MÊS` usam `Mensalista`, com a descrição como fallback. Ausências são
+mantidas sem preenchimento e contabilizadas no resumo da importação.
+
+Na inicialização da versão SaaS, uma rotina idempotente aplica a mesma regra
+aos preços SINAPI já existentes.
+
 ## SICRO — insumos
 
 - Endpoint: `POST /api/sicro/importar-insumos`.

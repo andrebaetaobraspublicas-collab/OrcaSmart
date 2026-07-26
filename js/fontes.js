@@ -1088,6 +1088,14 @@ Router.register('fontes', async () => {
           </div>
         </label>
 
+        <div style="background:#ecfdf5;border:1px solid #86efac;border-radius:var(--radius);padding:12px 14px;margin:12px 0;font-size:.8rem;color:#166534;line-height:1.55">
+          <strong>Encargos sociais da mão de obra:</strong>
+          ao importar ISD e ICD, o sistema associa automaticamente cada preço aos perfis SINAPI já cadastrados.
+          A correspondência é estrita por <strong>UF, data-base, regime previdenciário e categoria</strong>:
+          unidade H usa o perfil Horista e unidade MÊS usa o perfil Mensalista.
+          Se algum perfil não existir, o preço será mantido sem associação e aparecerá no resumo da importação.
+        </div>
+
         <label class="sinapi-check" id="lbl_anal">
           <input type="checkbox" id="chk_anal" ${a.tem_analitico?'checked':''} ${!a.tem_analitico?'disabled':''}>
           <div>
@@ -1242,6 +1250,10 @@ Router.register('fontes', async () => {
           ${kpi('Composições recalculadas', res.composicoes_recalculadas || 0, '#10b981')}
           ${kpi('Composições novas + atualizadas',
                 (res.composicoes_inseridas||0)+(res.composicoes_atualizadas||0), '#10b981')}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px">
+          ${kpi('Preços de mão de obra com encargos associados', res.encargos_sociais_associados || 0, '#15803d')}
+          ${kpi('Preços sem perfil compatível', res.encargos_sociais_sem_perfil || 0, '#b45309')}
         </div>
 
         <div style="margin-top:12px;background:#fefce8;border:1px solid #fde047;border-radius:var(--radius);padding:10px 12px;font-size:.8rem;color:#713f12">
