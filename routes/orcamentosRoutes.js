@@ -166,7 +166,13 @@ module.exports = function(db) {
       updated_at_ms: Date.now(),
     };
     RECALC_JOBS.set(id, job);
-    setImmediate(async () => {
+    // A conexão é adquirida ainda no contexto autenticado da requisição. O
+    // trabalho pode terminar depois da resposta 202, mas não pode depender de
+    // uma conexão criada/reutilizada somente no setImmediate.
+    const processamento = db && typeof db.withConnection === 'function'
+      ? db.withConnection(writeDb => orcamentosService.recalcularCustos(writeDb, idOrcamento))
+      : orcamentosService.recalcularCustos(db, idOrcamento);
+    Promise.resolve().then(async () => {
       try {
         Object.assign(job, {
           percent: 30,
@@ -174,9 +180,7 @@ module.exports = function(db) {
           mensagem: 'Aplicando UF, data-base e regime previdenciário aos vínculos.',
           updated_at_ms: Date.now(),
         });
-        const result = db && typeof db.withConnection === 'function'
-          ? await db.withConnection(writeDb => orcamentosService.recalcularCustos(writeDb, idOrcamento))
-          : await orcamentosService.recalcularCustos(db, idOrcamento);
+        const result = await processamento;
         Object.assign(job, {
           status: 'done',
           percent: 100,

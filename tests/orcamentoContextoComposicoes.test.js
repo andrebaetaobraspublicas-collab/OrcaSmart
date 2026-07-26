@@ -244,7 +244,8 @@ async function main() {
     }));
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.composicoes_atualizadas, 0);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.linhas_modificadas, 0);
-    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 1);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 0);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_ausente, 1);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.recalculado, false);
     assert.strictEqual(regimeSemReferencia.valor_total, 114);
 
@@ -279,6 +280,32 @@ async function main() {
         'Serviço equivalente', 'm²', 1, 110, NULL
       );
     `);
+    await exec(db, `
+      CREATE TABLE tenant_composicoes (
+        id_composicao INTEGER, codigo TEXT, fonte TEXT, formato TEXT,
+        descricao TEXT, unidade TEXT, mes_referencia TEXT, uf_referencia TEXT,
+        situacao_ref TEXT, custo_unitario REAL, tenant_override_status TEXT
+      );
+      INSERT INTO catalog.composicoes VALUES (
+        20, '999', 'SINAPI', 'UNITARIO', 'Registro de catalogo com ID colidente',
+        'm2', '04/2026', 'DF', 'Onerado', 999
+      );
+      INSERT INTO tenant_composicoes
+        (rowid,id_composicao,codigo,fonte,formato,descricao,unidade,mes_referencia,
+         uf_referencia,situacao_ref,custo_unitario,tenant_override_status)
+      VALUES
+        (20,20,'888','SINAPI','UNITARIO','Composicao privada DF','m2','04/2026','DF','Onerado',120,'active'),
+        (21,21,'888','SINAPI','UNITARIO','Composicao privada CE','m2','04/2026','CE','Onerado',115,'active');
+      INSERT INTO orcamentos VALUES (
+        5,1,'Orcamento com ID ambiguo','',1,'DF','1.0','Em elaboracao',
+        'Onerado',120,24,144,'2026-07-26','',NULL,20
+      );
+      INSERT INTO orcamento_sintetico VALUES (
+        13,5,'1.1','item',1,1,'composicao','20',NULL,
+        'CODIGO VISUAL ANTIGO','SINAPI','Composicao privada DF','m2',1,120,NULL
+      );
+    `);
+
     const sequencialDesonerado = await repo.updateOrcamento(db, 3, payload({
       nome_orcamento: 'Orçamento sequencial no catálogo',
       regime_previdenciario: 'Desonerado',
@@ -325,6 +352,16 @@ async function main() {
     }));
     assert.strictEqual(legadoCe.atualizacao_composicoes.composicoes_atualizadas, 1);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=12')).id_composicao, '11');
+
+    const escopoPrivadoResolvido = await repo.updateOrcamento(db, 5, payload({
+      nome_orcamento: 'Orcamento com ID ambiguo',
+      uf_referencia: 'CE',
+      regime_previdenciario: 'Onerado',
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(escopoPrivadoResolvido.atualizacao_composicoes.composicoes_atualizadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=13')).id_composicao, 'tenant:21');
+    assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=13')).custo_unitario, 115);
 
     await exec(db, `
       ALTER TABLE obras ADD COLUMN descricao TEXT;
@@ -381,6 +418,29 @@ async function main() {
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '1');
     assert.strictEqual(vinculosRevalidados.totais.total, 240);
 
+    await exec(db, `
+      CREATE TABLE eventogramas (
+        id_eventograma INTEGER PRIMARY KEY,
+        id_orcamento INTEGER,
+        valor_total_ref REAL,
+        data_atualizacao TEXT
+      );
+      CREATE TABLE ev_eventos (
+        id_evento INTEGER PRIMARY KEY,
+        id_eventograma INTEGER,
+        id_evento_pai INTEGER,
+        valor_calculado REAL
+      );
+      CREATE TABLE ev_evento_itens (
+        id INTEGER PRIMARY KEY,
+        id_evento INTEGER,
+        id_item INTEGER
+      );
+      INSERT INTO eventogramas VALUES (1, 3, 240, NULL);
+      INSERT INTO ev_eventos VALUES (1, 1, NULL, 240);
+      INSERT INTO ev_evento_itens VALUES (1, 1, 11);
+    `);
+
     // O recálculo deve trabalhar apenas com as composições vinculadas e voltar
     // ao contexto vigente, sem carregar todo o catálogo.
     await exec(db, `
@@ -394,6 +454,13 @@ async function main() {
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '8');
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=11')).custo_unitario, 75);
     assert.strictEqual(recalculadoNoContexto.totais.total, 180);
+    assert.strictEqual(recalculadoNoContexto.eventogramas_atualizados, 1);
+    assert.strictEqual((await one(db, 'SELECT valor_total_ref FROM eventogramas WHERE id_eventograma=1')).valor_total_ref, 180);
+    assert.strictEqual((await one(db, 'SELECT valor_calculado FROM ev_eventos WHERE id_evento=1')).valor_calculado, 180);
+
+    const recalculadoNovamente = await repo.recalcularCustos(db, 3);
+    assert.strictEqual(recalculadoNovamente.totais.total, 180);
+    assert.strictEqual(recalculadoNovamente.eventogramas_atualizados, 1);
 
     await exec(db, `
       INSERT INTO orcamento_sintetico

@@ -1,3 +1,5 @@
+const eventogramasRepository = require('./eventogramasRepository');
+
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
@@ -155,7 +157,8 @@ function normalizarRegime(value) {
   if (s.includes('sem desoner') || s.includes('nao desoner') || s.includes('não desoner')) return 'Onerado';
   if (s.includes('desoner')) return 'Desonerado';
   if (s.includes('oner')) return 'Onerado';
-  if (s.trim() === 'com custo' || s.trim() === 'sem custo') return 'Desonerado';
+  // "Com custo"/"sem custo" descreve a disponibilidade do preço em alguns
+  // referenciais; não identifica o regime previdenciário.
   return '';
 }
 
@@ -440,8 +443,37 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   return cache;
 }
 
-function idComposicaoComparavel(value) {
-  return String(value ?? '').trim().replace(/^(?:catalog|main):/i, '');
+function referenciaComposicao(value, scopePadrao = 'catalog') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { scope: '', id: '', key: '' };
+  const tenant = raw.match(/^tenant:(.+)$/i);
+  if (tenant) return { scope: 'tenant', id: tenant[1], key: `tenant:${tenant[1]}` };
+  const catalog = raw.match(/^(?:catalog|main):(.+)$/i);
+  const id = catalog ? catalog[1] : raw;
+  return { scope: scopePadrao, id, key: `${scopePadrao}:${id}` };
+}
+
+function mesmaReferenciaComposicao(left, right) {
+  const a = referenciaComposicao(left);
+  const b = referenciaComposicao(right);
+  return !!a.key && a.key === b.key;
+}
+
+function pontuarIdentidadeVinculada(item, row) {
+  let score = 0;
+  const fonteItem = normalizarFonte(item?.fonte);
+  const fonteRow = normalizarFonte(row?.fonte);
+  if (fonteItem && fonteRow) score += fonteItem === fonteRow ? 40 : -80;
+  const codigoItem = codigoCanonicoComposicao(item?.codigo, fonteItem);
+  const codigoRow = codigoCanonicoComposicao(row?.codigo, fonteRow);
+  if (codigoItem && codigoRow) score += codigoItem === codigoRow ? 100 : -60;
+  const descricaoItem = descricaoCanonicaComposicao(item?.descricao);
+  const descricaoRow = descricaoCanonicaComposicao(row?.descricao);
+  if (descricaoItem && descricaoRow && descricaoItem === descricaoRow) score += 25;
+  const unidadeItem = String(item?.unidade || '').trim().toUpperCase();
+  const unidadeRow = String(row?.unidade || '').trim().toUpperCase();
+  if (unidadeItem && unidadeRow && unidadeItem === unidadeRow) score += 5;
+  return score;
 }
 
 async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
@@ -458,12 +490,21 @@ async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
       .map(id => id.replace(/^(?:catalog|main):/i, ''))
       .filter(Boolean),
   )];
+  // Registros antigos do orçamento podem conter somente o número da composição,
+  // embora a composição esteja no escopo privado do tenant. Consultar os dois
+  // escopos e resolver pela identidade persistida da própria linha elimina a
+  // colisão entre "123" (catálogo) e "tenant:123".
   const tenantIds = [...new Set(
     ids
-      .filter(id => /^tenant:/i.test(id))
-      .map(id => id.replace(/^tenant:/i, ''))
+      .map(id => id.replace(/^(?:tenant|catalog|main):/i, ''))
       .filter(Boolean),
   )];
+  const porReferencia = new Map();
+  const adicionar = (row, scope) => {
+    const ref = referenciaComposicao(row.id_composicao, scope);
+    if (!ref.key) return;
+    porReferencia.set(ref.key, { ...row, _tenant_scope: scope });
+  };
 
   if (hasCatalog) {
     for (const chunk of chunkArray(catalogIds, 350)) {
@@ -475,7 +516,7 @@ async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
           hasOverrides,
         )}
         AND CAST(c.id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
-      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+      rows.forEach(row => adicionar(row, 'catalog'));
     }
   }
   if (hasTenant && tenantIds.length) {
@@ -487,7 +528,7 @@ async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
       const rows = await all(db, `
         ${compSelectForAuto(tenantIdExpr, "'tenant'", 'tenant_composicoes')}
         AND CAST(c.${tenantPk} AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
-      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+      rows.forEach(row => adicionar(row, 'tenant'));
     }
   }
   if (!hasCatalog && (await tableExists(db, 'composicoes'))) {
@@ -500,14 +541,36 @@ async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
           false,
         )}
         AND CAST(c.id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
-      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+      rows.forEach(row => adicionar(row, 'catalog'));
     }
   }
+
+  itens.forEach((item, index) => {
+    const raw = String(item.id_composicao || '').trim();
+    if (!raw) return;
+    const explicitTenant = /^tenant:/i.test(raw);
+    const explicitCatalog = /^(?:catalog|main):/i.test(raw);
+    const id = raw.replace(/^(?:tenant|catalog|main):/i, '');
+    let candidatos;
+    if (explicitTenant) candidatos = [porReferencia.get(`tenant:${id}`)].filter(Boolean);
+    else if (explicitCatalog) candidatos = [porReferencia.get(`catalog:${id}`)].filter(Boolean);
+    else candidatos = [
+      porReferencia.get(`catalog:${id}`),
+      porReferencia.get(`tenant:${id}`),
+    ].filter(Boolean);
+    candidatos.sort((a, b) => (
+      pontuarIdentidadeVinculada(item, b) - pontuarIdentidadeVinculada(item, a)
+      || ((a._tenant_scope === 'catalog' ? 0 : 1) - (b._tenant_scope === 'catalog' ? 0 : 1))
+    ));
+    if (candidatos[0]) {
+      identidades.set(String(item.id_item ?? `index:${index}`), candidatos[0]);
+    }
+  });
   return identidades;
 }
 
 function itemComIdentidadeVinculada(item, identidades) {
-  const identidade = identidades.get(idComposicaoComparavel(item.id_composicao));
+  const identidade = identidades.get(String(item.id_item));
   if (!identidade) return item;
   return {
     ...item,
@@ -584,8 +647,7 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterado
   const candidatos = [];
   let composicaoAtual = null;
   candidatosItem.forEach((row) => {
-    if (idComposicaoComparavel(row.id_composicao)
-        === idComposicaoComparavel(item.id_composicao)) composicaoAtual = row;
+    if (mesmaReferenciaComposicao(row.id_composicao, item.id_composicao)) composicaoAtual = row;
   });
   const regimeAtual = normalizarRegime(
     item._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
@@ -785,6 +847,28 @@ async function recalcularTotaisDoOrcamento(db, idOrcamento) {
   return valores;
 }
 
+async function atualizarEventogramasDoOrcamento(db, idOrcamento, totalOrcamento = null) {
+  if (!await tableExists(db, 'eventogramas') || !await tableExists(db, 'ev_eventos')) {
+    return { eventogramas_atualizados: 0 };
+  }
+  const total = totalOrcamento === null
+    ? toNum((await one(db, 'SELECT valor_total FROM orcamentos WHERE id_orcamento=?', [idOrcamento]))?.valor_total, 0)
+    : toNum(totalOrcamento, 0);
+  const eventogramas = await all(
+    db,
+    'SELECT id_eventograma FROM eventogramas WHERE id_orcamento=? ORDER BY id_eventograma',
+    [idOrcamento],
+  );
+  for (const row of eventogramas) {
+    await run(db, `
+      UPDATE eventogramas
+      SET valor_total_ref=?, data_atualizacao=datetime('now')
+      WHERE id_eventograma=? AND id_orcamento=?`, [total, row.id_eventograma, idOrcamento]);
+    await eventogramasRepository.recalcularValoresEventograma(db, row.id_eventograma);
+  }
+  return { eventogramas_atualizados: eventogramas.length };
+}
+
 async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = []) {
   await ensureBdiLinha(db);
   const contexto = await getOrcamentoContexto(db, idOrcamento);
@@ -865,8 +949,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       continue;
     }
 
-    const mesmoVinculo = idComposicaoComparavel(composicao.id_composicao)
-      === idComposicaoComparavel(item.id_composicao);
+    const mesmoVinculo = mesmaReferenciaComposicao(composicao.id_composicao, item.id_composicao);
     const custo = toNum(composicao.custo_unitario, 0) > 0
       ? composicao.custo_unitario
       : item.custo_unitario;
@@ -1041,7 +1124,7 @@ async function mapearCategoriasEncargosDasComposicoes(db, linhas = []) {
   const marcar = (rows, tenant = false) => {
     rows.forEach(row => {
       const id = tenant ? `tenant:${row.id_composicao}` : String(row.id_composicao);
-      categorias.set(idComposicaoComparavel(id), 'Mensalista');
+      categorias.set(referenciaComposicao(id, tenant ? 'tenant' : 'catalog').key, 'Mensalista');
     });
   };
 
@@ -1111,13 +1194,16 @@ async function sintetizarEncargosSociaisDoOrcamento(db, idOrcamento, orcamento) 
   let semInformacao = 0;
 
   for (const linha of vinculadas) {
-    const comp = identidades.get(idComposicaoComparavel(linha.id_composicao));
+    const comp = identidades.get(String(linha.id_item));
+    const chaveCategoria = comp
+      ? referenciaComposicao(comp.id_composicao, comp._tenant_scope || 'catalog').key
+      : referenciaComposicao(linha.id_composicao).key;
     const contexto = {
       fonte: comp?.fonte || linha.fonte,
       uf: comp?.uf_referencia || contextoPadrao.uf,
       mes_referencia: comp?.mes_referencia || contextoPadrao.mes_referencia,
       regime: normalizarRegime(comp?.situacao_ref) || contextoPadrao.regime,
-      categoria: categorias.get(idComposicaoComparavel(linha.id_composicao)) || 'Horista',
+      categoria: categorias.get(chaveCategoria) || 'Horista',
     };
     const perfil = escolherPerfilEncargoParaContexto(perfis, contexto);
     const percentual = perfil
@@ -1334,6 +1420,10 @@ async function updateOrcamento(db, id, data = {}) {
         atualizacaoComposicoes.recalculado = false;
       }
       atualizacaoComposicoes.selecionar_novo_bdi = alteracoesContexto.includes('regime_previdenciario');
+      Object.assign(
+        atualizacaoComposicoes,
+        await atualizarEventogramasDoOrcamento(db, id, atualizacaoComposicoes.totais.total),
+      );
     }
 
     const atualizado = await getOrcamento(db, id, { incluirSinteseEncargos: false });
@@ -1921,7 +2011,7 @@ async function recalcularCustos(db, idOrcamento) {
     // atual. A busca é restrita à UF, data-base e regime do orçamento.
     const remapeamento = await remapearComposicoesVinculadas(db, idOrcamento, []);
     const itens = await all(db, `
-      SELECT id_item, id_composicao, custo_unitario
+      SELECT id_item, id_composicao, codigo, fonte, descricao, unidade, custo_unitario
       FROM orcamento_sintetico
       WHERE id_orcamento=? AND tipo_linha='item'
         AND id_composicao IS NOT NULL
@@ -1931,7 +2021,7 @@ async function recalcularCustos(db, idOrcamento) {
     let custosAtualizados = 0;
     let semReferencia = 0;
     for (const item of itens) {
-      const comp = identidades.get(idComposicaoComparavel(item.id_composicao));
+      const comp = identidades.get(String(item.id_item));
       const custo = toNum(comp?.custo_unitario, 0);
       if (!comp || custo <= 0) {
         semReferencia += 1;
@@ -1947,6 +2037,7 @@ async function recalcularCustos(db, idOrcamento) {
     }
 
     const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    const derivados = await atualizarEventogramasDoOrcamento(db, idOrcamento, totais.total);
     const atualizados = Number(remapeamento.linhas_modificadas || 0) + custosAtualizados;
     await run(db, 'COMMIT');
     return {
@@ -1957,6 +2048,7 @@ async function recalcularCustos(db, idOrcamento) {
       sem_correspondencia: Number(remapeamento.sem_correspondencia || 0),
       linhas_sem_referencia: semReferencia,
       totais,
+      ...derivados,
       mensagem: atualizados
         ? `${atualizados} linha(s) atualizada(s) e orçamento recalculado no contexto ${contexto.uf || 'sem UF'} / ${contexto.mes_ref || 'sem data-base'} / ${contexto.regime || 'sem regime'}.`
         : `Os vínculos já estavam atualizados. Os totais foram conferidos no contexto ${contexto.uf || 'sem UF'} / ${contexto.mes_ref || 'sem data-base'} / ${contexto.regime || 'sem regime'}.`,
@@ -2038,6 +2130,7 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
     }
 
     const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    const derivados = await atualizarEventogramasDoOrcamento(db, idOrcamento, totais.total);
     const remapeadas = Number(remapeamento.composicoes_atualizadas || 0);
     await run(db, 'COMMIT');
     return {
@@ -2048,6 +2141,7 @@ async function vincularComposicoesAutomaticamente(db, idOrcamento) {
       verificados: itens.length + Number(remapeamento.vinculadas_verificadas || 0),
       detalhes,
       totais,
+      ...derivados,
       mensagem: vinculados || remapeadas
         ? `${vinculados} nova(s) linha(s) vinculada(s) e ${remapeadas} composição(ões) remapeada(s) para ${contexto.uf} / ${contexto.mes_ref} / ${contexto.regime}. Os totais foram recalculados.`
         : `Todos os vínculos possíveis já foram verificados em ${contexto.uf} / ${contexto.mes_ref} / ${contexto.regime}. Os totais foram recalculados.`,
@@ -2321,12 +2415,27 @@ function escolherPrecoPorRegime(row, regime) {
   return ref || deson || oner || 0;
 }
 
-async function buildComposicaoCacheForAbc(db) {
+async function buildComposicaoCacheForAbc(db, contexto = {}) {
   const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
   const hasTenant = await tableExists(db, 'tenant_composicoes');
   const hasMain = await tableExists(db, 'composicoes');
   const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
-  const selects = [];
+  const consultas = [];
+  const uf = String(contexto?.uf || '').trim().toUpperCase();
+  const mesRef = String(contexto?.mes_ref || '').trim();
+  const filtroContexto = (alias = 'c') => {
+    const where = [];
+    const params = [];
+    if (uf) {
+      where.push(`UPPER(COALESCE(${alias}.uf_referencia,''))=?`);
+      params.push(uf);
+    }
+    if (mesRef) {
+      where.push(`COALESCE(${alias}.mes_referencia,'')=?`);
+      params.push(mesRef);
+    }
+    return { sql: where.length ? ` AND ${where.join(' AND ')}` : '', params };
+  };
 
   if (hasCatalog) {
     const visible = hasOverrides
@@ -2337,29 +2446,35 @@ async function buildComposicaoCacheForAbc(db) {
             AND r.action IN ('update','delete')
         )`
       : '1=1';
-    selects.push(`
+    const filtro = filtroContexto();
+    consultas.push({ sql: `
       SELECT CAST(c.id_composicao AS TEXT) AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
              c.mes_referencia, c.situacao_ref, c.custo_unitario, 'catalog' AS scope
       FROM catalog.composicoes c
-      WHERE ${visible}`);
+      WHERE ${visible}${filtro.sql}`, params: filtro.params });
   }
   if (hasTenant) {
-    selects.push(`
+    const filtro = filtroContexto();
+    consultas.push({ sql: `
       SELECT 'tenant:' || c.rowid AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
              c.mes_referencia, c.situacao_ref, c.custo_unitario, 'tenant' AS scope
       FROM tenant_composicoes c
-      WHERE COALESCE(c.tenant_override_status,'active')='active'`);
+      WHERE COALESCE(c.tenant_override_status,'active')='active'${filtro.sql}`, params: filtro.params });
   }
   if (!hasCatalog && hasMain) {
-    selects.push(`
+    const filtro = filtroContexto();
+    consultas.push({ sql: `
       SELECT CAST(c.id_composicao AS TEXT) AS id_composicao, c.codigo, c.fonte, c.uf_referencia,
              c.mes_referencia, c.situacao_ref, c.custo_unitario, 'main' AS scope
-      FROM composicoes c`);
+      FROM composicoes c WHERE 1=1${filtro.sql}`, params: filtro.params });
   }
 
   const cache = new Map();
-  if (!selects.length) return cache;
-  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
+  if (!consultas.length) return cache;
+  const rows = [];
+  for (const consulta of consultas) {
+    rows.push(...await all(db, consulta.sql, consulta.params).catch(() => []));
+  }
   rows.forEach((row) => {
     codigoVariantesComposicao(row.codigo, row.fonte).forEach((codigo) => {
       const key = String(codigo || '').trim().toUpperCase();
@@ -2371,35 +2486,45 @@ async function buildComposicaoCacheForAbc(db) {
   return cache;
 }
 
-async function buildItensComposicaoCacheForAbc(db) {
+async function buildItensComposicaoCacheForAbc(db, idsComposicoes = []) {
   const hasCatalog = await tableExists(db, 'itens_composicao', 'catalog');
   const hasTenant = await tableExists(db, 'tenant_itens_composicao');
   const hasMain = await tableExists(db, 'itens_composicao');
-  const selects = [];
-
-  if (hasCatalog) {
-    selects.push(`
-      SELECT CAST(id_composicao AS TEXT) AS id_composicao, codigo_item, descricao, unidade,
-             coeficiente, tipo_item, preco_unitario, custo_parcial, ordem, id_item AS sort_id
-      FROM catalog.itens_composicao`);
+  const cache = new Map();
+  const refs = [...new Set(idsComposicoes.map(id => String(id || '').trim()).filter(Boolean))];
+  if (!refs.length) return cache;
+  const catalogIds = refs
+    .filter(id => !/^tenant:/i.test(id))
+    .map(id => id.replace(/^(?:catalog|main):/i, ''));
+  const tenantIds = refs
+    .filter(id => /^tenant:/i.test(id))
+    .map(id => id.replace(/^tenant:/i, ''));
+  const rows = [];
+  for (const chunk of chunkArray(catalogIds, 350)) {
+    const marks = chunk.map(() => '?').join(',');
+    if (hasCatalog) {
+      rows.push(...await all(db, `
+        SELECT CAST(id_composicao AS TEXT) AS id_composicao, codigo_item, descricao, unidade,
+               coeficiente, tipo_item, preco_unitario, custo_parcial, ordem, id_item AS sort_id
+        FROM catalog.itens_composicao
+        WHERE CAST(id_composicao AS TEXT) IN (${marks})`, chunk).catch(() => []));
+    } else if (hasMain) {
+      rows.push(...await all(db, `
+        SELECT CAST(id_composicao AS TEXT) AS id_composicao, codigo_item, descricao, unidade,
+               coeficiente, tipo_item, preco_unitario, custo_parcial, ordem, id_item AS sort_id
+        FROM itens_composicao
+        WHERE CAST(id_composicao AS TEXT) IN (${marks})`, chunk).catch(() => []));
+    }
   }
-  if (hasTenant) {
-    selects.push(`
+  for (const chunk of chunkArray(tenantIds, 350)) {
+    if (!hasTenant) break;
+    rows.push(...await all(db, `
       SELECT 'tenant:' || id_composicao AS id_composicao, codigo_item, descricao, unidade,
              coeficiente, tipo_item, preco_unitario, custo_parcial, ordem, rowid AS sort_id
       FROM tenant_itens_composicao
-      WHERE COALESCE(tenant_override_status,'active')='active'`);
+      WHERE CAST(id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})
+        AND COALESCE(tenant_override_status,'active')='active'`, chunk).catch(() => []));
   }
-  if (!hasCatalog && hasMain) {
-    selects.push(`
-      SELECT CAST(id_composicao AS TEXT) AS id_composicao, codigo_item, descricao, unidade,
-             coeficiente, tipo_item, preco_unitario, custo_parcial, ordem, id_item AS sort_id
-      FROM itens_composicao`);
-  }
-
-  const cache = new Map();
-  if (!selects.length) return cache;
-  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
   rows.sort((a, b) => String(a.id_composicao).localeCompare(String(b.id_composicao))
     || toNum(a.ordem, 0) - toNum(b.ordem, 0)
     || toNum(a.sort_id, 0) - toNum(b.sort_id, 0));
@@ -2445,38 +2570,48 @@ function normalizarItemSecaoParaAbc(row) {
   };
 }
 
-async function buildItensSecaoComposicaoCacheForAbc(db) {
+async function buildItensSecaoComposicaoCacheForAbc(db, idsComposicoes = []) {
   const hasCatalog = await tableExists(db, 'composicoes_secao_itens', 'catalog');
   const hasTenant = await tableExists(db, 'tenant_composicoes_secao_itens');
   const hasMain = await tableExists(db, 'composicoes_secao_itens');
-  const selects = [];
-
-  if (hasCatalog) {
-    selects.push(`
-      SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
-             descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
-             id_item_secao AS sort_id
-      FROM catalog.composicoes_secao_itens`);
+  const cache = new Map();
+  const refs = [...new Set(idsComposicoes.map(id => String(id || '').trim()).filter(Boolean))];
+  if (!refs.length) return cache;
+  const catalogIds = refs
+    .filter(id => !/^tenant:/i.test(id))
+    .map(id => id.replace(/^(?:catalog|main):/i, ''));
+  const tenantIds = refs
+    .filter(id => /^tenant:/i.test(id))
+    .map(id => id.replace(/^tenant:/i, ''));
+  const rows = [];
+  for (const chunk of chunkArray(catalogIds, 350)) {
+    const marks = chunk.map(() => '?').join(',');
+    if (hasCatalog) {
+      rows.push(...await all(db, `
+        SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
+               descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
+               id_item_secao AS sort_id
+        FROM catalog.composicoes_secao_itens
+        WHERE CAST(id_composicao AS TEXT) IN (${marks})`, chunk).catch(() => []));
+    } else if (hasMain) {
+      rows.push(...await all(db, `
+        SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
+               descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
+               id_item_secao AS sort_id
+        FROM composicoes_secao_itens
+        WHERE CAST(id_composicao AS TEXT) IN (${marks})`, chunk).catch(() => []));
+    }
   }
-  if (hasTenant) {
-    selects.push(`
+  for (const chunk of chunkArray(tenantIds, 350)) {
+    if (!hasTenant) break;
+    rows.push(...await all(db, `
       SELECT 'tenant:' || id_composicao AS id_composicao, letra_secao, codigo_item,
              descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
              rowid AS sort_id
       FROM tenant_composicoes_secao_itens
-      WHERE COALESCE(tenant_override_status,'active')='active'`);
+      WHERE CAST(id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})
+        AND COALESCE(tenant_override_status,'active')='active'`, chunk).catch(() => []));
   }
-  if (!hasCatalog && hasMain) {
-    selects.push(`
-      SELECT CAST(id_composicao AS TEXT) AS id_composicao, letra_secao, codigo_item,
-             descricao, unidade, quantidade, preco_unitario, custo_total, ordem,
-             id_item_secao AS sort_id
-      FROM composicoes_secao_itens`);
-  }
-
-  const cache = new Map();
-  if (!selects.length) return cache;
-  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
   rows.sort((a, b) => String(a.id_composicao).localeCompare(String(b.id_composicao))
     || String(a.letra_secao || '').localeCompare(String(b.letra_secao || ''))
     || toNum(a.ordem, 0) - toNum(b.ordem, 0)
@@ -2491,10 +2626,29 @@ async function buildItensSecaoComposicaoCacheForAbc(db) {
 }
 
 async function buildInsumoPriceCacheForAbc(db, contexto) {
-  const selects = [];
+  const consultas = [];
+  const uf = String(contexto?.uf || '').trim().toUpperCase();
+  const data = parseMesRef(contexto?.mes_ref);
+  const filtroPreco = (precoAlias = 'p', dataAlias = 'db2') => {
+    const clauses = [];
+    const params = [];
+    if (uf) {
+      clauses.push(`UPPER(COALESCE(${precoAlias}.uf_referencia,''))=?`);
+      params.push(uf);
+    }
+    if (data) {
+      clauses.push(`${dataAlias}.mes=?`, `${dataAlias}.ano=?`);
+      params.push(data.index % 12 || 12, Math.floor((data.index - 1) / 12));
+    }
+    return {
+      sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '',
+      params,
+    };
+  };
 
   if (await tableExists(db, 'tenant_precos_insumos') && await tableExists(db, 'tenant_insumos')) {
-    selects.push(`
+    const filtro = filtroPreco();
+    consultas.push({ sql: `
       SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
              p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
              p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'tenant' AS scope
@@ -2502,30 +2656,37 @@ async function buildInsumoPriceCacheForAbc(db, contexto) {
       JOIN tenant_precos_insumos p ON p.id_insumo = i.rowid
       LEFT JOIN catalog.datas_base db2 ON db2.id_data_base = p.id_data_base
       WHERE COALESCE(i.tenant_override_status,'active')='active'
-        AND COALESCE(p.tenant_override_status,'active')='active'`);
+        AND COALESCE(p.tenant_override_status,'active')='active'${filtro.sql}`, params: filtro.params });
   }
   if (await tableExists(db, 'precos_insumos', 'catalog') && await tableExists(db, 'insumos', 'catalog')) {
-    selects.push(`
+    const filtro = filtroPreco();
+    consultas.push({ sql: `
       SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
              p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
              p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'catalog' AS scope
       FROM catalog.insumos i
       JOIN catalog.precos_insumos p ON p.id_insumo = i.id_insumo
-      LEFT JOIN catalog.datas_base db2 ON db2.id_data_base = p.id_data_base`);
+      LEFT JOIN catalog.datas_base db2 ON db2.id_data_base = p.id_data_base
+      WHERE 1=1${filtro.sql}`, params: filtro.params });
   }
   if (!(await tableExists(db, 'precos_insumos', 'catalog')) && await tableExists(db, 'precos_insumos') && await tableExists(db, 'insumos')) {
-    selects.push(`
+    const filtro = filtroPreco();
+    consultas.push({ sql: `
       SELECT i.codigo_insumo, i.descricao, i.tipo_insumo, p.uf_referencia,
              p.preco_desonerado, p.preco_nao_desonerado, p.preco_referencia,
              p.ibs_percentual, p.cbs_percentual, db2.mes, db2.ano, 'main' AS scope
       FROM insumos i
       JOIN precos_insumos p ON p.id_insumo = i.id_insumo
-      LEFT JOIN datas_base db2 ON db2.id_data_base = p.id_data_base`);
+      LEFT JOIN datas_base db2 ON db2.id_data_base = p.id_data_base
+      WHERE 1=1${filtro.sql}`, params: filtro.params });
   }
 
   const cache = new Map();
-  if (!selects.length) return cache;
-  const rows = await all(db, selects.join('\nUNION ALL\n')).catch(() => []);
+  if (!consultas.length) return cache;
+  const rows = [];
+  for (const consulta of consultas) {
+    rows.push(...await all(db, consulta.sql, consulta.params).catch(() => []));
+  }
   rows.forEach((row) => {
     row.preco_escolhido = escolherPrecoPorRegime(row, contexto?.regime);
     row.mes_referencia = mesReferencia(row);
@@ -2688,16 +2849,25 @@ async function curvaAbcInsumos(db, idOrcamento) {
   if (!orcamento) return null;
 
   const contexto = await getOrcamentoContexto(db, idOrcamento);
-  const compCache = await buildComposicaoCacheForAbc(db);
-  const itensCompCache = await buildItensComposicaoCacheForAbc(db);
-  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db);
-  const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
   const servicos = await all(db, `
     SELECT id_item, item_num, codigo, fonte, descricao AS servico_descricao, unidade,
            quantidade AS qtd_servico, custo_unitario, id_composicao
     FROM orcamento_sintetico
     WHERE id_orcamento = ? AND tipo_linha = 'item'
     ORDER BY ordem`, [idOrcamento]);
+  // A Curva ABC deve percorrer apenas o grafo de composições pertinente ao
+  // orçamento e ao seu contexto. A implementação anterior carregava o catálogo
+  // inteiro (mais de um milhão de composições) para cada requisição.
+  const compCache = await buildComposicaoCacheForAbc(db, contexto);
+  const idsComposicoes = new Set(
+    servicos.map(row => String(row.id_composicao || '').trim()).filter(Boolean),
+  );
+  compCache.forEach(rows => rows.forEach((row) => {
+    if (row?.id_composicao) idsComposicoes.add(String(row.id_composicao));
+  }));
+  const itensCompCache = await buildItensComposicaoCacheForAbc(db, [...idsComposicoes]);
+  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db, [...idsComposicoes]);
+  const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
 
   const grouped = new Map();
   const addInsumoAgrupado = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
