@@ -153,6 +153,9 @@ function regimePrevidenciarioSql(alias = 'c') {
         OR UPPER(COALESCE(${alias}.situacao_ref,'')) IN ('COM CUSTO','SEM CUSTO')
       )
       THEN 'Desonerado'
+    WHEN UPPER(COALESCE(${alias}.fonte,''))='SICRO'
+      AND TRIM(COALESCE(${alias}.situacao_ref,''))=''
+      THEN 'Onerado'
     ELSE NULL
   END`;
 }
@@ -168,6 +171,7 @@ function regimePrevidenciarioComposicao(comp = {}) {
     // no campo que deveria identificar o regime.
     return 'Desonerado';
   }
+  if (String(comp.fonte || '').trim().toUpperCase() === 'SICRO' && !raw) return 'Onerado';
   return null;
 }
 

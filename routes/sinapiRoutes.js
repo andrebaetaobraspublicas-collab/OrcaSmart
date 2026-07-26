@@ -8,6 +8,38 @@ const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
 const SINAPI_ACTIVE_IMPORT_TTL_MS = 20 * 60 * 1000;
 let sinapiActiveImportId = null;
 
+function normalizarRegimeSinapi(value) {
+  const raw = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+  if (raw.includes('sem desoner') || raw.includes('nao desoner') || raw === 'onerado') return 'Onerado';
+  if (raw.includes('desoner') || raw === 'desonerado') return 'Desonerado';
+  // O catálogo SINAPI legado foi calculado priorizando o preço desonerado.
+  if (!raw || raw === 'com custo' || raw === 'sem custo') return 'Desonerado';
+  return null;
+}
+
+function expandirComposicoesSinapiPorRegime(composicoes) {
+  const expanded = new Map();
+  for (const comp of composicoes || []) {
+    const raw = String(comp?.situacao || comp?.regime || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const regimes = raw.includes('desoner') || raw === 'onerado'
+      ? [normalizarRegimeSinapi(raw)]
+      : ['Onerado', 'Desonerado'];
+    for (const regime of regimes.filter(Boolean)) {
+      const key = `${String(comp?.codigo || '').trim()}|${regime}`;
+      if (!expanded.has(key)) expanded.set(key, { ...comp, situacao: regime, regime });
+    }
+  }
+  return [...expanded.values()];
+}
+
 function cleanupSinapiJobs() {
   const cutoff = Date.now() - SINAPI_IMPORT_JOB_TTL_MS;
   for (const [id, job] of SINAPI_IMPORT_JOBS.entries()) {
@@ -1651,10 +1683,11 @@ module.exports = function sinapiRoutes(db) {
             return inseridos;
           }
 
-          const compKey = (codigo, uf, ref) => [
+          const compKey = (codigo, uf, ref, regime) => [
             String(codigo || '').trim(),
             String(uf || '').trim().toUpperCase(),
             String(ref || '').trim(),
+            normalizarRegimeSinapi(regime) || String(regime || '').trim(),
           ].join('|');
           const isDescricaoComposicaoInvalida = (descricao, grupo) => {
             const descNorm = normalizeText(descricao);
@@ -1669,6 +1702,7 @@ module.exports = function sinapiRoutes(db) {
             SELECT MAX(c.codigo) AS codigo, c.${compIdWhere} AS id_composicao,
                    MAX(c.uf_referencia) AS uf_referencia,
                    MAX(c.mes_referencia) AS mes_referencia,
+                   MAX(c.situacao_ref) AS situacao_ref,
                    MAX(c.descricao) AS descricao,
                    COUNT(i.${itemIdWhere}) AS itens_count
             FROM ${compTable} c
@@ -1677,13 +1711,13 @@ module.exports = function sinapiRoutes(db) {
               AND c.mes_referencia=?
               AND c.uf_referencia IN (${ufWherePlaceholders})
             GROUP BY c.${compIdWhere}`, [mesRef, ...ufs]))
-            .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia), {
+            .map(r => [compKey(r.codigo, r.uf_referencia, r.mes_referencia, r.situacao_ref), {
               id: r.id_composicao,
               descricao: r.descricao,
               itens_count: Number(r.itens_count || 0),
             }]));
           reportProgress(45, 'Importando composicoes', `Lendo aba ${analSheet.name} da planilha SINAPI.`);
-          const comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
+          let comps = parseAnaliticoRows(parseSheetRows(files, analSheet.path));
           if (resumoComposicoesSheet) {
             const resumo = parseResumoComposicoesRows(parseSheetRows(files, resumoComposicoesSheet.path));
             aplicarDescricoesResumo(comps, resumo);
@@ -1692,6 +1726,7 @@ module.exports = function sinapiRoutes(db) {
           if (!comps.length) {
             throw httpError(400, `Nenhuma composicao foi detectada na aba ${analSheet.name}. Verifique se o arquivo e a planilha SINAPI Referencia oficial.`);
           }
+          comps = expandirComposicoesSinapiPorRegime(comps);
           reportProgress(45, 'Importando composicoes', `Importando ${comps.length} composicoes para ${ufs.length} UF(s).`);
           const totalCompWork = Math.max(1, comps.length * ufs.length);
           let compWork = 0;
@@ -1739,7 +1774,7 @@ module.exports = function sinapiRoutes(db) {
               const existentes = [];
               const faltantes = [];
               for (const compUf of ufs) {
-                const keyComp = compKey(comp.codigo, compUf, mesRef);
+                const keyComp = compKey(comp.codigo, compUf, mesRef, comp.regime);
                 const existingComp = compMap.get(keyComp);
                 if (existingComp?.id) existentes.push({ uf: compUf, keyComp, ...existingComp });
                 else faltantes.push(compUf);
@@ -1796,11 +1831,12 @@ module.exports = function sinapiRoutes(db) {
 
                 const ufPlaceholdersNovas = faltantes.map(() => '?').join(',');
                 const novasRows = await allC(`
-                  SELECT ${compIdSelect}, uf_referencia, descricao
+                  SELECT ${compIdSelect}, uf_referencia, descricao, situacao_ref
                   FROM ${compTable}
                   WHERE fonte='SINAPI' AND codigo=? AND mes_referencia=?
+                    AND situacao_ref=?
                     AND uf_referencia IN (${ufPlaceholdersNovas})
-                  ORDER BY ${compIdWhere} DESC`, [comp.codigo, mesRef, ...faltantes]);
+                  ORDER BY ${compIdWhere} DESC`, [comp.codigo, mesRef, comp.regime, ...faltantes]);
                 const novaPorUf = new Map();
                 for (const row of novasRows) {
                   const uf = String(row.uf_referencia || '').toUpperCase();
@@ -1811,7 +1847,7 @@ module.exports = function sinapiRoutes(db) {
                   if (!nova?.id_composicao) {
                     throw new Error(`Composicao ${comp.codigo}/${compUf} foi gravada, mas nao pode ser relida para incluir os itens.`);
                   }
-                  const keyComp = compKey(comp.codigo, compUf, mesRef);
+                  const keyComp = compKey(comp.codigo, compUf, mesRef, comp.regime);
                   compMap.set(keyComp, { id: nova.id_composicao, descricao: comp.descricao });
                   alvosItens.push({ idComp: nova.id_composicao, itens: comp.itens });
                 }
@@ -1831,7 +1867,7 @@ module.exports = function sinapiRoutes(db) {
             }
 
             for (const compUf of ufs) {
-              const keyComp = compKey(comp.codigo, compUf, mesRef);
+              const keyComp = compKey(comp.codigo, compUf, mesRef, comp.regime);
               const existingComp = compMap.get(keyComp);
               let idComp = existingComp?.id;
               let gravarItens = true;
@@ -1899,25 +1935,30 @@ module.exports = function sinapiRoutes(db) {
               reportProgress(basePct, 'Recalculando custos', `Recalculando composicoes ${recalcUf} (${ufIndex + 1}/${recalcUfs.length}).`);
               const precos = await allC(`
                 SELECT i.codigo_insumo,
-                       COALESCE(NULLIF(p.preco_desonerado,0), NULLIF(p.preco_nao_desonerado,0), NULLIF(p.preco_referencia,0), 0) AS preco
+                       COALESCE(NULLIF(p.preco_desonerado,0), 0) AS preco_desonerado,
+                       COALESCE(NULLIF(p.preco_nao_desonerado,0), 0) AS preco_onerado
                 FROM ${precoTable} p
                 JOIN ${insumoTable} i ON i.id_insumo = p.id_insumo
                 WHERE p.id_data_base=?
                   AND UPPER(COALESCE(i.origem,''))='SINAPI'
                   AND UPPER(COALESCE(p.uf_referencia,''))=?`, [idDataBase, recalcUf]);
-              const precoPorInsumo = new Map(precos.map(p => [String(p.codigo_insumo || '').trim(), Number(p.preco || 0)]));
+              const precoPorInsumo = new Map(precos.map(p => [String(p.codigo_insumo || '').trim(), {
+                Desonerado: Number(p.preco_desonerado || 0),
+                Onerado: Number(p.preco_onerado || 0),
+              }]));
               const compRows = await allC(`
-                SELECT ${compIdSelect}, codigo, mes_referencia, custo_unitario
+                SELECT ${compIdSelect}, codigo, mes_referencia, situacao_ref, custo_unitario
                 FROM ${compTable}
                 WHERE UPPER(COALESCE(fonte,''))='SINAPI'
                   AND mes_referencia=?
                   AND UPPER(COALESCE(uf_referencia,''))=?`, [mesRef, recalcUf]);
               const custoPorComposicao = new Map(compRows.map(c => [
-                String(c.codigo || '').trim(), Number(c.custo_unitario || 0),
+                `${String(c.codigo || '').trim()}|${normalizarRegimeSinapi(c.situacao_ref) || ''}`,
+                Number(c.custo_unitario || 0),
               ]));
               const itensCalc = await allC(`
                 SELECT i.${itemIdWhere} AS item_pk, i.id_composicao, i.tipo_item, i.codigo_item, i.coeficiente,
-                       c.${compIdWhere} AS comp_pk, c.codigo AS comp_codigo
+                       c.${compIdWhere} AS comp_pk, c.codigo AS comp_codigo, c.situacao_ref
                 FROM ${itemTable} i
                 JOIN ${compTable} c ON i.id_composicao = c.${compIdWhere}
                 WHERE UPPER(COALESCE(c.fonte,''))='SINAPI'
@@ -1936,24 +1977,30 @@ module.exports = function sinapiRoutes(db) {
                 let mudou = false;
                 for (const comp of compRows) {
                   const itens = itensPorComposicao.get(String(comp.id_composicao)) || [];
+                  const regimeComp = normalizarRegimeSinapi(comp.situacao_ref) || 'Desonerado';
                   let total = 0;
                   let calculou = false;
+                  let completo = true;
                   for (const item of itens) {
                     const codigoItem = String(item.codigo_item || '').trim();
                     const coef = toNum(item.coeficiente, 0);
                     const preco = isCompItem(item.tipo_item)
-                      ? (custoPorComposicao.get(codigoItem) || 0)
-                      : (precoPorInsumo.get(codigoItem) || 0);
-                    if (!preco || !coef) continue;
+                      ? (custoPorComposicao.get(`${codigoItem}|${regimeComp}`) || 0)
+                      : (precoPorInsumo.get(codigoItem)?.[regimeComp] || 0);
+                    if (!coef) continue;
+                    if (!preco) {
+                      completo = false;
+                      continue;
+                    }
                     const parcial = Number((coef * preco).toFixed(4));
                     total += parcial;
                     calculou = true;
                     item.preco_calculado = preco;
                     item.parcial_calculado = parcial;
                   }
-                  if (!calculou || total <= 0) continue;
+                  if (!completo || !calculou || total <= 0) continue;
                   const custo = Number(total.toFixed(4));
-                  const key = String(comp.codigo || '').trim();
+                  const key = `${String(comp.codigo || '').trim()}|${regimeComp}`;
                   if (Math.abs((custoPorComposicao.get(key) || 0) - custo) > 0.0001) {
                     custoPorComposicao.set(key, custo);
                     const ref = compPorId.get(String(comp.id_composicao));
@@ -2107,4 +2154,7 @@ module.exports = function sinapiRoutes(db) {
 
   return router;
 };
+
+module.exports.normalizarRegimeSinapi = normalizarRegimeSinapi;
+module.exports.expandirComposicoesSinapiPorRegime = expandirComposicoesSinapiPorRegime;
 

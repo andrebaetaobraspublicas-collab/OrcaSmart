@@ -1,5 +1,6 @@
 const assert = require('assert');
 const sicroRoutes = require('../routes/sicroRoutes');
+const sinapiRoutes = require('../routes/sinapiRoutes');
 const referenceImportRoutes = require('../routes/referenceImportRoutes');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
 const {
@@ -49,6 +50,20 @@ assert(imports.includes('POST /sicor-mg/importar'));
 assert(imports.includes('POST /cdhu/importar'));
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }), false);
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }, true), true);
+
+assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('Sem desoneração'), 'Onerado');
+assert.strictEqual(sinapiRoutes.normalizarRegimeSinapi('COM CUSTO'), 'Desonerado');
+const sinapiRegimes = sinapiRoutes.expandirComposicoesSinapiPorRegime([
+  { codigo: '93358', situacao: 'COM CUSTO', itens: [{ codigo_item: '88316' }] },
+]);
+assert.deepStrictEqual(sinapiRegimes.map(comp => comp.regime), ['Onerado', 'Desonerado']);
+assert.notStrictEqual(sinapiRegimes[0], sinapiRegimes[1]);
+assert.strictEqual(sinapiRegimes[0].itens[0].codigo_item, '88316');
+const sinapiRegimesExplicitos = sinapiRoutes.expandirComposicoesSinapiPorRegime([
+  { codigo: '93358', situacao: 'Onerado' },
+  { codigo: '93358', situacao: 'Desonerado' },
+]);
+assert.deepStrictEqual(sinapiRegimesExplicitos.map(comp => comp.regime), ['Onerado', 'Desonerado']);
 
 const boundary = 'orcasmart-import-test';
 const body = Buffer.from([

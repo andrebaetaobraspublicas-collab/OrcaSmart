@@ -45,6 +45,7 @@ const {
 } = require('./utils/mysqlTenantRuntime');
 const { ensureMysqlBdiSchema, recalcularMysqlBdiValores } = require('./utils/bdiMysqlSchema');
 const { ensureMysqlRiscosSchema } = require('./utils/riscosMysqlSchema');
+const { normalizarMysqlRegimesComposicoes } = require('./utils/composicoesRegimeMysql');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -1157,6 +1158,8 @@ async function initializeMysqlPilot() {
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
       await ensureMysqlRiscosSchema(mysqlConfig());
+      const regimesComposicoes = await normalizarMysqlRegimesComposicoes(mysqlConfig());
+      console.log('[composicoes] Regimes SICRO normalizados:', JSON.stringify(regimesComposicoes));
       setTimeout(() => {
         recalcularMysqlBdiValores(mysqlConfig())
           .then((bdiRecalc) => {

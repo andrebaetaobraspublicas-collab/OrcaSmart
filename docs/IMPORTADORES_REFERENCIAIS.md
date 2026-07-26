@@ -10,6 +10,9 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
 
 - Rotas: `routes/sinapiRoutes.js`.
 - Analisa e importa planilhas de referência, inclusive todas as UFs.
+- Cada composição analítica é persistida em duas referências lógicas,
+  `Onerado` e `Desonerado`, para o mesmo código, UF e data-base. O recálculo
+  usa o preço de insumo e as composições auxiliares do mesmo regime.
 - Importação longa usa job consultável e progresso.
 - Recálculo de composições foi ajustado ao MariaDB.
 - Evitar carregar/recalcular todo o catálogo na abertura de uma tela.
@@ -32,6 +35,8 @@ as gravações precisam respeitar catálogo/tenant e `tenant_id`.
 - O parser percorre todas as planilhas e reconhece um bloco por composição.
 - Seções persistidas: A equipamentos, B mão de obra, C materiais, D atividades
   auxiliares, E tempo fixo e F momento de transporte.
+- Na ausência de indicação diferente no referencial, as composições SICRO são
+  persistidas como `Onerado`.
 - A contagem de análise deve refletir todos os blocos do workbook, não apenas o
   número de abas.
 - A opção de sobrepor atualiza a composição lógica da mesma fonte, código, UF e
@@ -114,6 +119,8 @@ corrigida em `5dccb3d` e coberta por `tests/mysqlTenantRuntime.test.js`.
 - Endpoint: `POST /api/cdhu/importar`.
 - Recebe PDF e arquivo sintético.
 - Backend Node em `services/referenceImportService.js`.
+- A carga atual não diferencia regime previdenciário; por isso as composições
+  permanecem com regime `Não informado`.
 - A data-base é detectada primeiro em cabeçalhos explícitos, inclusive no formato
   por extenso usado pela CDHU (`MAIO/26`), e também aceita `MM/AAAA` e
   `AAAA-MM`. Datas de emissão e trechos internos de códigos de projeto não devem

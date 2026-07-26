@@ -184,18 +184,18 @@ async function insertMany(db, table, columns, rows, batchSize = 200) {
 }
 
 async function updateCompositions(db, rows, batchSize = 100) {
-  const columns = ['descricao','unidade','fic','producao_equipe','unidade_producao','custo_unitario','custo_horario_execucao','custo_unitario_execucao','custo_fic','subtotal_sicro','tenant_updated_at'];
+  const columns = ['descricao','unidade','fic','producao_equipe','unidade_producao','custo_unitario','custo_horario_execucao','custo_unitario_execucao','custo_fic','subtotal_sicro','situacao_ref','tenant_updated_at'];
   for (const batch of chunks(rows, batchSize)) {
     if (!batch.length) continue;
     const params = [];
     const assignments = columns.map((column, columnIndex) => {
       const cases = batch.map((row) => {
-        params.push(row[11], row[columnIndex]);
+        params.push(row[row.length - 1], row[columnIndex]);
         return 'WHEN ? THEN ?';
       }).join(' ');
       return `${column}=CASE id_composicao ${cases} ELSE ${column} END`;
     });
-    const ids = batch.map(row => row[11]);
+    const ids = batch.map(row => row[row.length - 1]);
     params.push(...ids);
     await dbRun(db, `UPDATE tenant_composicoes SET ${assignments.join(',')} WHERE id_composicao IN (${ids.map(() => '?').join(',')})`, params);
   }
@@ -239,13 +239,13 @@ async function importarSicro(db, buffer, options = {}) {
         let id = map.get(key);
         if (id && !sobrepor) { counts.composicoes_ignoradas += 1; continue; }
         if (id) {
-          updateComps.push([comp.descricao, comp.unidade_producao, comp.fic, comp.producao_equipe, comp.unidade_producao, comp.custo_unitario, comp.custo_horario_execucao, comp.custo_unitario_execucao, comp.custo_fic, comp.subtotal_sicro, now, id]);
+          updateComps.push([comp.descricao, comp.unidade_producao, comp.fic, comp.producao_equipe, comp.unidade_producao, comp.custo_unitario, comp.custo_horario_execucao, comp.custo_unitario_execucao, comp.custo_fic, comp.subtotal_sicro, 'Onerado', now, id]);
           replaceIds.push(id);
           counts.composicoes_atualizadas += 1;
         } else {
           id = nextComp++;
           map.set(key, id);
-          newComps.push([tenantId, id, comp.codigo, 'SICRO', 'PRODUCAO_HORARIA', comp.descricao, comp.unidade_producao, comp.mes_referencia, uf, comp.fic, comp.producao_equipe, comp.unidade_producao, comp.custo_unitario, comp.custo_horario_execucao, comp.custo_unitario_execucao, comp.custo_fic, comp.subtotal_sicro, 'Ativo', 'create', 'active', now, now]);
+          newComps.push([tenantId, id, comp.codigo, 'SICRO', 'PRODUCAO_HORARIA', comp.descricao, comp.unidade_producao, comp.mes_referencia, uf, 'Onerado', comp.fic, comp.producao_equipe, comp.unidade_producao, comp.custo_unitario, comp.custo_horario_execucao, comp.custo_unitario_execucao, comp.custo_fic, comp.subtotal_sicro, 'Ativo', 'create', 'active', now, now]);
           counts.composicoes_inseridas += 1;
         }
         Object.entries(comp.secoes).sort(([a], [b]) => a.localeCompare(b)).forEach(([letra, secao], ordem) => {
@@ -267,7 +267,7 @@ async function importarSicro(db, buffer, options = {}) {
       }
       await updateCompositions(conn, updateComps);
       progress(40, 'Gravando composicoes', `${counts.composicoes_inseridas} novas e ${counts.composicoes_atualizadas} atualizadas.`);
-      await insertMany(conn, 'tenant_composicoes', ['tenant_id','id_composicao','codigo','fonte','formato','descricao','unidade','mes_referencia','uf_referencia','fic','producao_equipe','unidade_producao','custo_unitario','custo_horario_execucao','custo_unitario_execucao','custo_fic','subtotal_sicro','situacao','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at'], newComps, 150);
+      await insertMany(conn, 'tenant_composicoes', ['tenant_id','id_composicao','codigo','fonte','formato','descricao','unidade','mes_referencia','uf_referencia','situacao_ref','fic','producao_equipe','unidade_producao','custo_unitario','custo_horario_execucao','custo_unitario_execucao','custo_fic','subtotal_sicro','situacao','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at'], newComps, 150);
       progress(62, 'Gravando secoes', `${sections.length.toLocaleString('pt-BR')} secoes preparadas.`);
       await insertMany(conn, 'tenant_composicoes_secoes', ['tenant_id','id_secao','id_composicao','letra_secao','nome_secao','custo_total_secao','ordem','tenant_override_action','tenant_override_status','tenant_created_at','tenant_updated_at'], sections, 300);
       progress(78, 'Gravando itens', `${items.length.toLocaleString('pt-BR')} itens preparados.`);

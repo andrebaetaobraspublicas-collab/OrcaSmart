@@ -107,6 +107,7 @@ Router.register('composicoes', async () => {
     if (raw.includes('desoner')) return 'Desonerado';
     if (String(comp.fonte || '').toUpperCase() === 'SINAPI'
         && (!raw || raw === 'com custo' || raw === 'sem custo')) return 'Desonerado';
+    if (String(comp.fonte || '').toUpperCase() === 'SICRO' && !raw) return 'Onerado';
     return null;
   }
 

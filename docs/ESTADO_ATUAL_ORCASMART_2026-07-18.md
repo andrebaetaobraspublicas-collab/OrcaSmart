@@ -140,6 +140,13 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   desonerados porque o importador que gerou seus custos priorizava os preços
   desonerados. Novos recálculos persistem explicitamente `Onerado` ou
   `Desonerado`, eliminando a ambiguidade para operações futuras.
+- A importação SINAPI passa a materializar duas composições para cada
+  código/UF/data-base: uma `Onerado` e outra `Desonerado`. A identidade lógica,
+  as composições auxiliares e os preços de insumos são resolvidos dentro do
+  mesmo regime, sem fallback cruzado nem total parcial quando faltar preço.
+- Composições SICRO sem regime explícito são normalizadas e persistidas como
+  `Onerado`. A CDHU/SP permanece com regime não informado, pois a carga atual
+  não diferencia essa informação.
 
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.
