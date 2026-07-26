@@ -105,6 +105,14 @@ const bootState = {
     databaseName: null,
     connectionMode: null,
     socketPath: null,
+    insumosTributos2026: {
+      status: 'pending',
+      progress: null,
+      resultado: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+    },
   },
 };
 
@@ -816,6 +824,7 @@ function buildPhase4Status() {
     mysqlChecking: bootState.mysql.checking,
     mysqlError: bootState.mysql.error,
     mysqlErrorAttempts: bootState.mysql.errorAttempts,
+    insumosTributos2026: bootState.mysql.insumosTributos2026,
     mysql: {
       host: bootState.mysql.config.host,
       port: bootState.mysql.config.port,
@@ -854,6 +863,7 @@ app.get('/api/status', (_req, res) => res.json({
   sicroLaborRegimesVersion: 1,
   sicroDerivedCostFixVersion: 1,
   pemPerformanceVersion: 1,
+  insumosTributos2026Version: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
@@ -1172,11 +1182,32 @@ async function initializeMysqlPilot() {
       const regimesComposicoes = await normalizarMysqlRegimesComposicoes(mysqlConfig());
       console.log('[composicoes] Regimes SICRO normalizados:', JSON.stringify(regimesComposicoes));
       setTimeout(() => {
+        bootState.mysql.insumosTributos2026 = {
+          status: 'running',
+          progress: null,
+          resultado: null,
+          error: null,
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+        };
         normalizarMysqlTributosInsumos2026(mysqlConfig(), {
-          onProgress: (progress) => console.log('[insumos] Tributos 2026:', JSON.stringify(progress)),
+          onProgress: (progress) => {
+            bootState.mysql.insumosTributos2026.progress = progress;
+            console.log('[insumos] Tributos 2026:', JSON.stringify(progress));
+          },
         })
-          .then(resultados => console.log('[insumos] Tributos 2026 normalizados:', JSON.stringify(resultados)))
-          .catch(err => console.warn('[insumos] Falha ao normalizar tributos 2026:', err.message || err));
+          .then((resultados) => {
+            bootState.mysql.insumosTributos2026.status = 'completed';
+            bootState.mysql.insumosTributos2026.resultado = resultados;
+            bootState.mysql.insumosTributos2026.finishedAt = new Date().toISOString();
+            console.log('[insumos] Tributos 2026 normalizados:', JSON.stringify(resultados));
+          })
+          .catch((err) => {
+            bootState.mysql.insumosTributos2026.status = 'error';
+            bootState.mysql.insumosTributos2026.error = err.message || String(err);
+            bootState.mysql.insumosTributos2026.finishedAt = new Date().toISOString();
+            console.warn('[insumos] Falha ao normalizar tributos 2026:', err.message || err);
+          });
       }, 1000).unref?.();
       setTimeout(() => {
         ensureMysqlComposicoesPerformance(mysqlConfig())
