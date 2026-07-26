@@ -63,6 +63,16 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 
 ## Funcionalidades estabilizadas recentemente
 
+### Duplicação de orçamentos
+
+- A duplicação preserva o BDI, o regime previdenciário, o custo direto, o valor
+  do BDI e o total do orçamento de origem.
+- Todas as linhas do orçamento sintético são copiadas, incluindo seções,
+  serviços, vínculos com composições e insumos, unidades, quantidades, custos
+  unitários e BDI específico por linha.
+- Cabeçalho e linhas são gravados na mesma transação; uma falha durante a cópia
+  não deixa orçamento parcial.
+
 ### BDI e Reforma Tributária
 
 - IVA equivalente calculado por

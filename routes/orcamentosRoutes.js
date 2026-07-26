@@ -52,7 +52,10 @@ module.exports = function(db) {
   }));
 
   router.post('/:id/duplicar', asyncHandler(async (req, res) => {
-    res.status(201).json(await orcamentosService.duplicarOrcamento(db, req.params.id));
+    const row = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.duplicarOrcamento(writeDb, req.params.id))
+      : await orcamentosService.duplicarOrcamento(db, req.params.id);
+    res.status(201).json(row);
   }));
 
   router.get('/:id/sintetico', asyncHandler(async (req, res) => {

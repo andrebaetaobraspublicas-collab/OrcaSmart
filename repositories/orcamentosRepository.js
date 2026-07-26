@@ -430,24 +430,78 @@ async function deleteOrcamento(db, id) {
 }
 
 async function duplicarOrcamento(db, id) {
-  const row = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento = ?', [id]);
-  if (!row) return null;
-  const partes = String(row.versao || '1.0').split('.');
-  const novaVersao = `${partes[0]}.${parseInt(partes[1] || 0, 10) + 1}`;
-  const result = await run(db, `
-    INSERT INTO orcamentos (id_obra, nome_orcamento, descricao, id_data_base,
-      uf_referencia, versao, status, observacoes)
-    VALUES (?,?,?,?,?,?,?,?)`, [
-    row.id_obra,
-    `Cópia de ${row.nome_orcamento}`,
-    row.descricao,
-    row.id_data_base,
-    row.uf_referencia,
-    novaVersao,
-    'Em elaboração',
-    row.observacoes,
-  ]);
-  return getOrcamento(db, result.lastID);
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const row = await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento = ?', [id]);
+    if (!row) {
+      await run(db, 'COMMIT');
+      return null;
+    }
+    const partes = String(row.versao || '1.0').split('.');
+    const novaVersao = `${partes[0]}.${parseInt(partes[1] || 0, 10) + 1}`;
+    const itens = await all(
+      db,
+      'SELECT * FROM orcamento_sintetico WHERE id_orcamento=? ORDER BY ordem, id_item',
+      [id],
+    );
+
+    const result = await run(db, `
+      INSERT INTO orcamentos (
+        id_obra, nome_orcamento, descricao, id_data_base, uf_referencia,
+        versao, status, regime_previdenciario, valor_custo_direto, valor_bdi,
+        valor_total, observacoes, id_bdi_perfil, bdi_percentual
+      )
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      row.id_obra,
+      `Cópia de ${row.nome_orcamento}`,
+      row.descricao,
+      row.id_data_base,
+      row.uf_referencia,
+      novaVersao,
+      'Em elaboração',
+      row.regime_previdenciario || 'Onerado',
+      row.valor_custo_direto ?? 0,
+      row.valor_bdi ?? 0,
+      row.valor_total ?? 0,
+      row.observacoes,
+      row.id_bdi_perfil ?? null,
+      row.bdi_percentual ?? 0,
+    ]);
+
+    for (const item of itens) {
+      await run(db, `
+        INSERT INTO orcamento_sintetico (
+          id_orcamento, item_num, tipo_linha, profundidade, ordem, tipo_item,
+          id_composicao, id_insumo, codigo, fonte, descricao, unidade,
+          quantidade, custo_unitario, data_criacao, bdi_percentual_linha
+        )
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+        result.lastID,
+        item.item_num,
+        item.tipo_linha,
+        item.profundidade,
+        item.ordem,
+        item.tipo_item,
+        item.id_composicao,
+        item.id_insumo,
+        item.codigo,
+        item.fonte,
+        item.descricao,
+        item.unidade,
+        item.quantidade,
+        item.custo_unitario,
+        item.data_criacao,
+        item.bdi_percentual_linha,
+      ]);
+    }
+
+    const duplicado = await getOrcamento(db, result.lastID);
+    await run(db, 'COMMIT');
+    return duplicado;
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 async function updateBdi(db, id, data = {}) {
