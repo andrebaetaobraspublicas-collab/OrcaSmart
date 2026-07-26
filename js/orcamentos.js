@@ -241,7 +241,9 @@ Router.register('orcamentos', async () => {
   }
 
   function mostrarResumoAtualizacao(resumo = {}) {
-    const semCorrespondencia = Number(resumo.sem_correspondencia || 0);
+    const semCorrespondenciaRegime = Number(resumo.sem_correspondencia_regime || 0);
+    const semCorrespondenciaAusente = Number(resumo.sem_correspondencia_ausente || 0);
+    const regimeOrcamento = resumo.regime_orcamento || '';
     const semVinculo = Number(resumo.linhas_sem_vinculo || 0);
     const atualizadas = Number(resumo.composicoes_atualizadas || 0);
     const jaCompativeis = Number(resumo.composicoes_ja_compativeis || 0);
@@ -254,9 +256,17 @@ Router.register('orcamentos', async () => {
           Selecione e aplique uma nova composição de BDI adequada ao novo regime.
         </div>`
       : '';
-    const avisoPendencias = semCorrespondencia
+    const avisoRegime = semCorrespondenciaRegime
+      ? `<div style="margin-top:12px;padding:12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412">
+          <strong>${semCorrespondenciaRegime} linha(s)</strong> possuem referência com o mesmo código, fonte,
+          UF e data-base, mas foram preservadas porque as referências encontradas pertencem a outro regime
+          previdenciário. O orçamento está <strong>${Utils.esc(regimeOrcamento || 'com regime não informado')}</strong>.
+          Para o SINAPI legado, reimporte a referência para materializar também as composições oneradas.
+        </div>`
+      : '';
+    const avisoPendencias = semCorrespondenciaAusente
       ? `<div style="margin-top:12px;padding:12px;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;color:#92400e">
-          ${semCorrespondencia} linha(s) vinculada(s) permaneceram inalteradas porque não existe composição
+          ${semCorrespondenciaAusente} linha(s) vinculada(s) permaneceram inalteradas porque não existe composição
           com o mesmo código, fonte, UF, data-base e regime selecionados.
         </div>`
       : '';
@@ -270,6 +280,7 @@ Router.register('orcamentos', async () => {
           <p><strong>${referenciasCandidatas}</strong> referência(s) candidata(s) localizada(s) na UF e data-base selecionadas.</p>
           <p><strong>${semVinculo}</strong> linha(s) sem vínculo não foram modificadas automaticamente.</p>
           <p style="margin-top:10px"><strong>${recalculado ? 'Novo total' : 'Total preservado'}:</strong> ${Utils.moeda(totais.total || 0)}</p>
+          ${avisoRegime}
           ${avisoPendencias}
           ${avisoBdi}
         </div>`,

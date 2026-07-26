@@ -124,7 +124,7 @@ async function main() {
 
       INSERT INTO orcamentos VALUES (
         2, 1, 'Orçamento com referência neutra', '', 1, 'DF', '1.0', 'Em elaboração',
-        'Onerado', 100, 20, 120, '2026-07-26', '', NULL, 20
+        'Desonerado', 100, 20, 120, '2026-07-26', '', NULL, 20
       );
       INSERT INTO orcamento_sintetico VALUES (
         10, 2, '1.1', 'item', 1, 1, 'composicao', '6', NULL,
@@ -179,6 +179,8 @@ async function main() {
     }));
     assert.strictEqual(semEquivalente.atualizacao_composicoes.composicoes_atualizadas, 0);
     assert.strictEqual(semEquivalente.atualizacao_composicoes.sem_correspondencia, 1);
+    assert.strictEqual(semEquivalente.atualizacao_composicoes.sem_correspondencia_regime, 1);
+    assert.strictEqual(semEquivalente.atualizacao_composicoes.sem_correspondencia_ausente, 0);
     assert.strictEqual(semEquivalente.atualizacao_composicoes.selecionar_novo_bdi, true);
     assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=1')).id_composicao, '4');
     assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=1')).custo_unitario, 60);
@@ -196,6 +198,7 @@ async function main() {
     const alteradoParaCe = await repo.updateOrcamento(db, 2, payload({
       nome_orcamento: 'Orçamento com referência neutra',
       uf_referencia: 'CE',
+      regime_previdenciario: 'Desonerado',
       valor_custo_direto: 100,
       valor_bdi: 20,
       valor_total: 120,
@@ -218,7 +221,7 @@ async function main() {
     const regimeSemReferencia = await repo.updateOrcamento(db, 2, payload({
       nome_orcamento: 'Orçamento com referência neutra',
       uf_referencia: 'CE',
-      regime_previdenciario: 'Desonerado',
+      regime_previdenciario: 'Onerado',
       valor_custo_direto: 95,
       valor_bdi: 19,
       valor_total: 114,
@@ -226,6 +229,7 @@ async function main() {
     }));
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.composicoes_atualizadas, 0);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.linhas_modificadas, 0);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 1);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.recalculado, false);
     assert.strictEqual(regimeSemReferencia.valor_total, 114);
 

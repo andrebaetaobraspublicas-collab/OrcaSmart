@@ -112,6 +112,7 @@ function normalizarRegime(value) {
   if (s.includes('sem desoner') || s.includes('nao desoner') || s.includes('não desoner')) return 'Onerado';
   if (s.includes('desoner')) return 'Desonerado';
   if (s.includes('oner')) return 'Onerado';
+  if (s.trim() === 'com custo' || s.trim() === 'sem custo') return 'Desonerado';
   return '';
 }
 
@@ -406,28 +407,35 @@ function composicaoCompativelEstrita(candidato, contexto, options = {}) {
   return options.permitirRegimeNeutro === true;
 }
 
-function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados = []) {
+function candidatosParaItemNoCache(item, cache) {
   const fontes = new Set(fonteAliases(item.fonte).map(f => String(f || '').trim().toUpperCase()));
   const candidatos = [];
-  let composicaoAtual = null;
+  const ids = new Set();
   for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
     const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
     rows.forEach((row) => {
       if (!fontes.has(String(row.fonte || '').trim().toUpperCase())) return;
-      if (String(row.id_composicao) === String(item.id_composicao)) composicaoAtual = row;
+      const id = String(row.id_composicao || '');
+      if (ids.has(id)) return;
+      ids.add(id);
+      candidatos.push(row);
     });
   }
+  return candidatos;
+}
+
+function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados = []) {
+  const candidatosItem = candidatosParaItemNoCache(item, cache);
+  const candidatos = [];
+  let composicaoAtual = null;
+  candidatosItem.forEach((row) => {
+    if (String(row.id_composicao) === String(item.id_composicao)) composicaoAtual = row;
+  });
   const regimeAtual = normalizarRegime(composicaoAtual?.situacao_ref);
   const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario') && !regimeAtual;
-  for (const codigo of codigoVariantesComposicao(item.codigo, item.fonte)) {
-    const rows = cache.get(String(codigo || '').trim().toUpperCase()) || [];
-    rows.forEach((row) => {
-      if (fontes.has(String(row.fonte || '').trim().toUpperCase())
-          && composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) {
-        candidatos.push(row);
-      }
-    });
-  }
+  candidatosItem.forEach((row) => {
+    if (composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) candidatos.push(row);
+  });
   candidatos.sort((a, b) => {
     const scopeA = (a._tenant_scope || a.scope) === 'tenant' ? 0 : 1;
     const scopeB = (b._tenant_scope || b.scope) === 'tenant' ? 0 : 1;
@@ -645,18 +653,35 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
   let jaCompativeis = 0;
   let linhasModificadas = 0;
   let semCorrespondencia = 0;
+  let semCorrespondenciaRegime = 0;
+  let semCorrespondenciaAusente = 0;
   const detalhes = [];
   for (const item of vinculadas) {
     const composicao = escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterados);
     if (!composicao) {
       semCorrespondencia += 1;
+      const candidatasItem = candidatosParaItemNoCache(item, cache);
+      const regimeAlvo = normalizarRegime(contexto?.regime);
+      const regimesCandidatos = new Set(
+        candidatasItem.map(row => normalizarRegime(row.situacao_ref)).filter(Boolean),
+      );
+      const rejeitadaPorRegime = candidatasItem.length > 0
+        && regimeAlvo
+        && regimesCandidatos.size > 0
+        && !regimesCandidatos.has(regimeAlvo);
+      if (rejeitadaPorRegime) semCorrespondenciaRegime += 1;
+      else semCorrespondenciaAusente += 1;
       if (detalhes.length < 100) {
         detalhes.push({
           id_item: item.id_item,
           item_num: item.item_num,
           codigo: item.codigo,
           fonte: item.fonte,
-          status: 'mantida_sem_correspondencia',
+          status: rejeitadaPorRegime
+            ? 'mantida_regime_incompativel'
+            : 'mantida_sem_correspondencia',
+          regime_orcamento: regimeAlvo || null,
+          regimes_encontrados: [...regimesCandidatos],
         });
       }
       continue;
@@ -702,6 +727,9 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
     composicoes_ja_compativeis: jaCompativeis,
     linhas_modificadas: linhasModificadas,
     sem_correspondencia: semCorrespondencia,
+    sem_correspondencia_regime: semCorrespondenciaRegime,
+    sem_correspondencia_ausente: semCorrespondenciaAusente,
+    regime_orcamento: normalizarRegime(contexto?.regime) || null,
     linhas_sem_vinculo: Number(semVinculo?.total || 0),
     referencias_candidatas: referenciasCandidatas,
     detalhes,

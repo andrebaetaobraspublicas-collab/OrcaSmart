@@ -147,6 +147,10 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Composições SICRO sem regime explícito são normalizadas e persistidas como
   `Onerado`. A CDHU/SP permanece com regime não informado, pois a carga atual
   não diferencia essa informação.
+- Na atualização de UF/data-base/regime do orçamento, referências existentes
+  em regime incompatível não são utilizadas. O resumo diferencia ausência real
+  de composição da rejeição por regime e informa o regime atual do orçamento;
+  registros SINAPI legados `COM CUSTO` são tratados como `Desonerado`.
 
 - Alteração/aplicação do BDI recalcula preço unitário e total do orçamento.
 - Importação de orçamento por Excel e PDF com layouts variados.
