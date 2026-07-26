@@ -205,7 +205,9 @@ async function main() {
 
     const consultasCandidatas = [];
     db.on('trace', (sql) => {
-      if (sql.includes('composicoes_candidatas')) consultasCandidatas.push(sql);
+      if (sql.includes('FROM composicoes c') || sql.includes('FROM catalog.composicoes c')) {
+        consultasCandidatas.push(sql);
+      }
     });
     const alteradoParaCe = await repo.updateOrcamento(db, 2, payload({
       nome_orcamento: 'Orçamento com referência neutra',
@@ -225,8 +227,8 @@ async function main() {
     assert.strictEqual(alteradoParaCe.valor_total, 114);
     assert(
       consultasCandidatas.some(sql => (
-        /UPPER\(COALESCE\(uf_referencia,''\)\)='CE'/.test(sql)
-        && /COALESCE\(mes_referencia,''\)='04\/2026'/.test(sql)
+        /UPPER\(COALESCE\(c\.uf_referencia,''\)\)='CE'/.test(sql)
+        && /COALESCE\(c\.mes_referencia,''\)='04\/2026'/.test(sql)
       )),
       'a consulta de substituição deve filtrar UF e data-base no banco',
     );
@@ -338,11 +340,60 @@ async function main() {
       INSERT INTO encargos_orcamento_aplicacoes VALUES (
         1, 3, 55, 84.44, 'Encargos SINAPI desonerados', '2026-07-26'
       );
+      CREATE TABLE perfis_encargos (
+        id_perfil INTEGER PRIMARY KEY,
+        nome_perfil TEXT,
+        categoria TEXT,
+        regime TEXT,
+        uf_referencia TEXT,
+        fonte_referencia TEXT,
+        encargo_total REAL,
+        encargo_original_percentual REAL,
+        vigencia TEXT,
+        vigencia_inicio TEXT,
+        vigencia_fim TEXT,
+        situacao TEXT
+      );
+      INSERT INTO perfis_encargos VALUES (
+        29, 'CE - Horista - Com Desoneração - 04/2026', 'Horista',
+        'Desonerado', 'CE', 'SINAPI', 91.25, 88.55, '04/2026',
+        '2026-04-01', '2026-04-30', 'Ativo'
+      );
     `);
     const completoComContexto = await repo.getOrcamento(db, 3);
     assert.strictEqual(completoComContexto.descricao_obra, 'Descrição técnica da obra de teste');
     assert.strictEqual(completoComContexto.encargo_social_percentual, 84.44);
     assert.strictEqual(completoComContexto.encargo_social_observacoes, 'Encargos SINAPI desonerados');
+    assert.strictEqual(completoComContexto.encargos_sociais_sintese.composicoes_analisadas, 1);
+    assert.strictEqual(completoComContexto.encargos_sociais_sintese.composicoes_com_encargo, 1);
+    assert.strictEqual(completoComContexto.encargos_sociais_sintese.grupos[0].fonte, 'SINAPI');
+    assert.strictEqual(completoComContexto.encargos_sociais_sintese.grupos[0].percentual, 88.55);
+
+    // O vínculo automático deve revalidar também composições já vinculadas,
+    // e não somente preencher linhas com id_composicao vazio.
+    await exec(db, `
+      UPDATE orcamentos
+      SET uf_referencia='DF', regime_previdenciario='Onerado', id_data_base=1
+      WHERE id_orcamento=3
+    `);
+    const vinculosRevalidados = await repo.vincularComposicoesAutomaticamente(db, 3);
+    assert.strictEqual(vinculosRevalidados.remapeadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '1');
+    assert.strictEqual(vinculosRevalidados.totais.total, 240);
+
+    // O recálculo deve trabalhar apenas com as composições vinculadas e voltar
+    // ao contexto vigente, sem carregar todo o catálogo.
+    await exec(db, `
+      UPDATE orcamentos
+      SET uf_referencia='CE', regime_previdenciario='Desonerado', id_data_base=1
+      WHERE id_orcamento=3;
+      UPDATE orcamento_sintetico SET custo_unitario=999 WHERE id_item=11;
+    `);
+    const recalculadoNoContexto = await repo.recalcularCustos(db, 3);
+    assert.strictEqual(recalculadoNoContexto.composicoes_remapeadas, 1);
+    assert.strictEqual((await one(db, 'SELECT id_composicao FROM orcamento_sintetico WHERE id_item=11')).id_composicao, '8');
+    assert.strictEqual((await one(db, 'SELECT custo_unitario FROM orcamento_sintetico WHERE id_item=11')).custo_unitario, 75);
+    assert.strictEqual(recalculadoNoContexto.totais.total, 180);
 
     await exec(db, `
       INSERT INTO orcamento_sintetico
@@ -380,7 +431,8 @@ async function main() {
     assert(!orcamentosJs.includes('id="f_bdi"'));
     const sinteticoJs = fs.readFileSync(path.join(__dirname, '..', 'js', 'orcamentoSintetico.js'), 'utf8');
     assert(sinteticoJs.includes('Descrição da obra'));
-    assert(sinteticoJs.includes('Encargos sociais aplicados'));
+    assert(sinteticoJs.includes('SÍNTESE DOS ENCARGOS SOCIAIS'));
+    assert(sinteticoJs.includes('composicoes_analisadas'));
     assert(sinteticoJs.includes('Regime previdenciário'));
     assert(sinteticoJs.includes('UF do orçamento'));
 

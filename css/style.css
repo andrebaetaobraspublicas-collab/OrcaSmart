@@ -86,6 +86,181 @@ body {
   visibility: hidden;
   pointer-events: none;
 }
+
+/* Orçamento sintético — contexto técnico e síntese de encargos */
+.os-summary-hero {
+  margin-bottom: 14px;
+  padding: 18px;
+  border: 1px solid var(--c-border);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, .055), transparent 38%),
+    var(--c-surface);
+  box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
+}
+.os-summary-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--c-border);
+}
+.os-summary-eyebrow,
+.os-context-label {
+  color: var(--c-text-3);
+  font-size: .66rem;
+  font-weight: 750;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+.os-summary-title-row h1 {
+  margin: 3px 0 2px;
+  color: var(--c-text);
+  font-size: 1.32rem;
+  line-height: 1.25;
+}
+.os-summary-version {
+  color: var(--c-text-2);
+  font-size: .76rem;
+}
+.os-total-card {
+  min-width: 220px;
+  padding: 11px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  text-align: right;
+}
+.os-total-card #totalGeralDisplay {
+  margin-top: 3px;
+  color: var(--c-primary);
+  font-size: 1.42rem;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+.os-context-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 1.5fr 1fr 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.os-context-card {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--c-border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .78);
+}
+.os-context-wide {
+  grid-column: span 1;
+}
+.os-context-value {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--c-text);
+  font-size: .82rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.os-charge-summary {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #f8faff;
+}
+.os-charge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.os-charge-help,
+.os-bdi-help {
+  margin-top: 2px;
+  color: var(--c-text-2);
+  font-size: .72rem;
+}
+.os-charge-count {
+  flex: none;
+  color: #3730a3;
+  font-size: .7rem;
+  font-weight: 700;
+}
+.os-charge-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+.os-charge-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: .73rem;
+}
+.os-charge-chip span {
+  color: #3f6f51;
+  font-size: .67rem;
+  line-height: 1.35;
+}
+.os-charge-chip-warning {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+.os-charge-chip-warning span {
+  color: #b45309;
+}
+.os-charge-empty {
+  padding: 8px 10px;
+  border: 1px dashed var(--c-border);
+  border-radius: 8px;
+  color: var(--c-text-2);
+  font-size: .74rem;
+}
+.os-charge-applied {
+  margin-top: 8px;
+  color: #3730a3;
+  font-size: .71rem;
+}
+.os-bdi-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  background: var(--c-surface);
+}
+.os-bdi-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 1050px) {
+  .os-context-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .os-summary-title-row,
+  .os-charge-header,
+  .os-bdi-card { align-items: stretch; flex-direction: column; }
+  .os-total-card { min-width: 0; text-align: left; }
+  .os-context-grid { grid-template-columns: 1fr 1fr; }
+  .os-bdi-controls { flex-wrap: wrap; }
+  .os-bdi-controls select { width: 100%; }
+}
+@media (max-width: 460px) {
+  .os-context-grid { grid-template-columns: 1fr; }
+}
 a { text-decoration: none; color: inherit; }
 button { cursor: pointer; border: none; background: none; font-family: inherit; }
 input, select, textarea { font-family: inherit; }

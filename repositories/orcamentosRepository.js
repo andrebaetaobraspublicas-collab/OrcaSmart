@@ -373,42 +373,47 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
   }
   if (!selects.length) return cache;
 
-  const chunks = buscarTodoContexto ? [[]] : chunkArray(codigos, 500);
-  for (const chunk of chunks) {
-    const where = [];
-    const params = [];
-    if (!buscarTodoContexto) {
-      where.push(`codigo IN (${chunk.map(() => '?').join(',')})`);
-      params.push(...chunk);
-    }
-    const uf = String(contexto?.uf || '').trim().toUpperCase();
-    const mesRef = String(contexto?.mes_ref || '').trim();
-    if (uf) {
-      where.push("UPPER(COALESCE(uf_referencia,''))=?");
-      params.push(uf);
-    }
-    if (mesRef) {
-      where.push("COALESCE(mes_referencia,'')=?");
-      params.push(mesRef);
-    }
-    let rows = [];
-    try {
-      rows = await all(db, `
-        SELECT *
-        FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_candidatas
-        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`, params);
-    } catch (error) {
-      if (contexto) {
-        const err = new Error(
-          `Não foi possível consultar as composições de ${uf || 'UF não informada'}`
-          + `${mesRef ? ` na data-base ${mesRef}` : ''}: ${error.message}`,
-        );
-        err.cause = error;
-        throw err;
+  const chunks = buscarTodoContexto ? [[]] : chunkArray(codigos, 350);
+  for (const select of selects) {
+    for (const chunk of chunks) {
+      const where = [];
+      const params = [];
+      if (!buscarTodoContexto) {
+        where.push(`c.codigo IN (${chunk.map(() => '?').join(',')})`);
+        params.push(...chunk);
       }
-    }
+      const uf = String(contexto?.uf || '').trim().toUpperCase();
+      const mesRef = String(contexto?.mes_ref || '').trim();
+      if (uf) {
+        where.push("UPPER(COALESCE(c.uf_referencia,''))=?");
+        params.push(uf);
+      }
+      if (mesRef) {
+        where.push("COALESCE(c.mes_referencia,'')=?");
+        params.push(mesRef);
+      }
+      let rows = [];
+      try {
+        // Consultar catálogo e overrides do tenant separadamente evita que o
+        // adaptador MySQL aplique o filtro de tenant no nível errado de um
+        // UNION derivado. Também mantém o índice de UF/data-base utilizável.
+        rows = await all(
+          db,
+          `${select}${where.length ? ` AND ${where.join(' AND ')}` : ''}`,
+          params,
+        );
+      } catch (error) {
+        if (contexto) {
+          const err = new Error(
+            `Não foi possível consultar as composições de ${uf || 'UF não informada'}`
+            + `${mesRef ? ` na data-base ${mesRef}` : ''}: ${error.message}`,
+          );
+          err.cause = error;
+          throw err;
+        }
+      }
 
-    for (const row of rows) {
+      for (const row of rows) {
       row.scope = row._tenant_scope || row.scope || '';
       const key = String(row.codigo || '').trim().toUpperCase();
       if (!key) continue;
@@ -429,6 +434,7 @@ async function buildComposicaoCandidatesForAutoLink(db, itens, options = {}) {
         cache.get(descriptionKey).push(row);
       }
     }
+    }
   }
 
   return cache;
@@ -439,53 +445,63 @@ function idComposicaoComparavel(value) {
 }
 
 async function buscarIdentidadesComposicoesVinculadas(db, itens = []) {
-  const ids = [...new Set(
-    itens
-      .map(item => idComposicaoComparavel(item.id_composicao))
-      .filter(Boolean),
-  )];
+  const ids = [...new Set(itens.map(item => String(item.id_composicao || '').trim()).filter(Boolean))];
   const identidades = new Map();
   if (!ids.length) return identidades;
 
   const hasTenant = await tableExists(db, 'tenant_composicoes');
   const hasCatalog = await tableExists(db, 'composicoes', 'catalog');
   const hasOverrides = await tableExists(db, 'tenant_referential_overrides');
-  const selects = [];
+  const catalogIds = [...new Set(
+    ids
+      .filter(id => !/^tenant:/i.test(id))
+      .map(id => id.replace(/^(?:catalog|main):/i, ''))
+      .filter(Boolean),
+  )];
+  const tenantIds = [...new Set(
+    ids
+      .filter(id => /^tenant:/i.test(id))
+      .map(id => id.replace(/^tenant:/i, ''))
+      .filter(Boolean),
+  )];
+
   if (hasCatalog) {
-    selects.push(compSelectForAuto(
-      'CAST(c.id_composicao AS TEXT)',
-      "'catalog'",
-      'catalog.composicoes',
-      hasOverrides,
-    ));
+    for (const chunk of chunkArray(catalogIds, 350)) {
+      const rows = await all(db, `
+        ${compSelectForAuto(
+          'CAST(c.id_composicao AS TEXT)',
+          "'catalog'",
+          'catalog.composicoes',
+          hasOverrides,
+        )}
+        AND CAST(c.id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
+      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+    }
   }
-  if (hasTenant) {
+  if (hasTenant && tenantIds.length) {
     const tenantPk = tenantSyntheticPk('tenant_composicoes');
     const tenantIdExpr = isMysqlRuntime()
       ? `CONCAT('tenant:', c.${tenantPk})`
       : "'tenant:' || c.rowid";
-    selects.push(compSelectForAuto(tenantIdExpr, "'tenant'", 'tenant_composicoes'));
+    for (const chunk of chunkArray(tenantIds, 350)) {
+      const rows = await all(db, `
+        ${compSelectForAuto(tenantIdExpr, "'tenant'", 'tenant_composicoes')}
+        AND CAST(c.${tenantPk} AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
+      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+    }
   }
   if (!hasCatalog && (await tableExists(db, 'composicoes'))) {
-    selects.push(compSelectForAuto(
-      'CAST(c.id_composicao AS TEXT)',
-      "'main'",
-      'composicoes',
-      false,
-    ));
-  }
-  if (!selects.length) return identidades;
-
-  for (const chunk of chunkArray(ids, 500)) {
-    const rows = await all(db, `
-      SELECT *
-      FROM (${selects.join('\nUNION ALL\n')}) AS composicoes_vinculadas
-      WHERE id_composicao IN (${chunk.map(() => '?').join(',')})`, chunk).catch(() => []);
-    rows.forEach((row) => {
-      const key = idComposicaoComparavel(row.id_composicao);
-      if (!key) return;
-      identidades.set(key, row);
-    });
+    for (const chunk of chunkArray(catalogIds, 350)) {
+      const rows = await all(db, `
+        ${compSelectForAuto(
+          'CAST(c.id_composicao AS TEXT)',
+          "'main'",
+          'composicoes',
+          false,
+        )}
+        AND CAST(c.id_composicao AS TEXT) IN (${chunk.map(() => '?').join(',')})`, chunk);
+      rows.forEach(row => identidades.set(idComposicaoComparavel(row.id_composicao), row));
+    }
   }
   return identidades;
 }
@@ -928,7 +944,244 @@ async function listOrcamentos(db, query = {}) {
   return all(db, sql, params);
 }
 
-async function getOrcamento(db, id) {
+function fonteEncargoCanonica(value) {
+  const fonte = normalizarFonte(value);
+  return fonte === 'SICOR' ? 'SICOR' : fonte;
+}
+
+function perfilEncargoCompativelComContexto(perfil, contexto) {
+  const fontePerfil = fonteEncargoCanonica(perfil?.fonte_referencia);
+  if (!fontePerfil || fontePerfil !== fonteEncargoCanonica(contexto?.fonte)) return false;
+  const ufPerfil = String(perfil?.uf_referencia || '').trim().toUpperCase();
+  const ufContexto = String(contexto?.uf || '').trim().toUpperCase();
+  if (ufPerfil && ufContexto && ufPerfil !== ufContexto) return false;
+
+  const regimePerfil = normalizarRegime(perfil?.regime);
+  const regimeContexto = normalizarRegime(contexto?.regime);
+  if (regimeContexto && regimePerfil && regimePerfil !== regimeContexto) return false;
+  const categoriaPerfil = String(perfil?.categoria || '').trim().toLowerCase();
+  const categoriaContexto = String(contexto?.categoria || '').trim().toLowerCase();
+  if (categoriaContexto && categoriaPerfil && categoriaPerfil !== categoriaContexto) return false;
+
+  const referencia = parseMesRef(contexto?.mes_referencia);
+  if (!referencia) return true;
+  const alvo = `${referencia.ano}-${String(referencia.mes).padStart(2, '0')}-01`;
+  const inicio = String(perfil?.vigencia_inicio || '').trim();
+  const fim = String(perfil?.vigencia_fim || '').trim();
+  if (inicio && inicio > alvo) return false;
+  if (fim && fim < alvo) return false;
+  if (!inicio && !fim && perfil?.vigencia) {
+    const vigencia = parseMesRef(perfil.vigencia);
+    if (vigencia && vigencia.index !== referencia.index) return false;
+  }
+  return true;
+}
+
+async function carregarPerfisEncargosParaSintese(db) {
+  const rows = [];
+  const campos = `
+    id_perfil, nome_perfil, categoria, regime, uf_referencia,
+    fonte_referencia, encargo_total, encargo_original_percentual,
+    vigencia, vigencia_inicio, vigencia_fim`;
+  const hasCatalog = await tableExists(db, 'perfis_encargos', 'catalog');
+  if (hasCatalog) {
+    rows.push(...await all(db, `
+      SELECT ${campos}, 'catalog' AS _scope
+      FROM catalog.perfis_encargos
+      WHERE COALESCE(situacao,'Ativo')='Ativo'`).catch(() => []));
+  } else if (await tableExists(db, 'perfis_encargos')) {
+    rows.push(...await all(db, `
+      SELECT ${campos}, 'main' AS _scope
+      FROM perfis_encargos
+      WHERE COALESCE(situacao,'Ativo')='Ativo'`).catch(() => []));
+  }
+  if (await tableExists(db, 'tenant_perfis_encargos')) {
+    rows.push(...await all(db, `
+      SELECT ${campos}, 'tenant' AS _scope
+      FROM tenant_perfis_encargos
+      WHERE COALESCE(situacao,'Ativo')='Ativo'
+        AND COALESCE(tenant_override_status,'active')='active'`).catch(() => []));
+  }
+  return rows;
+}
+
+function escolherPerfilEncargoParaContexto(perfis, contexto) {
+  const candidatos = (perfis || [])
+    .filter(perfil => perfilEncargoCompativelComContexto(perfil, contexto))
+    .sort((a, b) => {
+      const catA = String(a.categoria || '').toLowerCase().includes('hor') ? 0 : 1;
+      const catB = String(b.categoria || '').toLowerCase().includes('hor') ? 0 : 1;
+      if (catA !== catB) return catA - catB;
+      const scopeA = a._scope === 'tenant' ? 0 : 1;
+      const scopeB = b._scope === 'tenant' ? 0 : 1;
+      if (scopeA !== scopeB) return scopeA - scopeB;
+      const originalA = a.encargo_original_percentual !== null && a.encargo_original_percentual !== undefined ? 0 : 1;
+      const originalB = b.encargo_original_percentual !== null && b.encargo_original_percentual !== undefined ? 0 : 1;
+      if (originalA !== originalB) return originalA - originalB;
+      return Number(b.id_perfil || 0) - Number(a.id_perfil || 0);
+    });
+  return candidatos[0] || null;
+}
+
+async function mapearCategoriasEncargosDasComposicoes(db, linhas = []) {
+  const categorias = new Map();
+  const idsCatalogo = [...new Set(
+    linhas
+      .map(linha => String(linha.id_composicao || '').trim())
+      .filter(id => id && !/^tenant:/i.test(id))
+      .map(id => id.replace(/^(?:catalog|main):/i, '')),
+  )];
+  const idsTenant = [...new Set(
+    linhas
+      .map(linha => String(linha.id_composicao || '').trim())
+      .filter(id => /^tenant:/i.test(id))
+      .map(id => id.replace(/^tenant:/i, '')),
+  )];
+  const unidadesMensalistas = "UPPER(TRIM(COALESCE(unidade,''))) IN ('MES','MÊS','MESISTA','MENSALISTA')";
+  const marcar = (rows, tenant = false) => {
+    rows.forEach(row => {
+      const id = tenant ? `tenant:${row.id_composicao}` : String(row.id_composicao);
+      categorias.set(idComposicaoComparavel(id), 'Mensalista');
+    });
+  };
+
+  for (const chunk of chunkArray(idsCatalogo, 350)) {
+    if (await tableExists(db, 'itens_composicao', 'catalog')) {
+      marcar(await all(db, `
+        SELECT DISTINCT id_composicao
+        FROM catalog.itens_composicao
+        WHERE id_composicao IN (${chunk.map(() => '?').join(',')})
+          AND ${unidadesMensalistas}`, chunk).catch(() => []));
+    } else if (await tableExists(db, 'itens_composicao')) {
+      marcar(await all(db, `
+        SELECT DISTINCT id_composicao
+        FROM itens_composicao
+        WHERE id_composicao IN (${chunk.map(() => '?').join(',')})
+          AND ${unidadesMensalistas}`, chunk).catch(() => []));
+    }
+    if (await tableExists(db, 'composicoes_secao_itens', 'catalog')) {
+      marcar(await all(db, `
+        SELECT DISTINCT id_composicao
+        FROM catalog.composicoes_secao_itens
+        WHERE id_composicao IN (${chunk.map(() => '?').join(',')})
+          AND ${unidadesMensalistas}`, chunk).catch(() => []));
+    }
+  }
+  for (const chunk of chunkArray(idsTenant, 350)) {
+    if (await tableExists(db, 'tenant_itens_composicao')) {
+      marcar(await all(db, `
+        SELECT DISTINCT id_composicao
+        FROM tenant_itens_composicao
+        WHERE id_composicao IN (${chunk.map(() => '?').join(',')})
+          AND ${unidadesMensalistas}
+          AND COALESCE(tenant_override_status,'active')='active'`, chunk).catch(() => []), true);
+    }
+    if (await tableExists(db, 'tenant_composicoes_secao_itens')) {
+      marcar(await all(db, `
+        SELECT DISTINCT id_composicao
+        FROM tenant_composicoes_secao_itens
+        WHERE id_composicao IN (${chunk.map(() => '?').join(',')})
+          AND ${unidadesMensalistas}
+          AND COALESCE(tenant_override_status,'active')='active'`, chunk).catch(() => []), true);
+    }
+  }
+  return categorias;
+}
+
+async function sintetizarEncargosSociaisDoOrcamento(db, idOrcamento, orcamento) {
+  const linhas = await all(db, `
+    SELECT id_item, id_composicao, codigo, fonte
+    FROM orcamento_sintetico
+    WHERE id_orcamento=? AND tipo_linha='item'
+      AND COALESCE(tipo_item,'composicao') <> 'insumo'`, [idOrcamento]).catch(() => []);
+  const vinculadas = linhas.filter(linha => String(linha.id_composicao || '').trim());
+  const identidades = await buscarIdentidadesComposicoesVinculadas(db, vinculadas);
+  const categorias = await mapearCategoriasEncargosDasComposicoes(db, vinculadas);
+  const perfis = vinculadas.length ? await carregarPerfisEncargosParaSintese(db) : [];
+  const contextoPadrao = {
+    uf: orcamento?.uf_referencia || orcamento?.obra_uf || '',
+    mes_referencia: mesReferencia({
+      mes: orcamento?.data_base_mes,
+      ano: orcamento?.data_base_ano,
+    }),
+    regime: normalizarRegime(orcamento?.regime_previdenciario),
+  };
+  const grupos = new Map();
+  let comPerfil = 0;
+  let semInformacao = 0;
+
+  for (const linha of vinculadas) {
+    const comp = identidades.get(idComposicaoComparavel(linha.id_composicao));
+    const contexto = {
+      fonte: comp?.fonte || linha.fonte,
+      uf: comp?.uf_referencia || contextoPadrao.uf,
+      mes_referencia: comp?.mes_referencia || contextoPadrao.mes_referencia,
+      regime: normalizarRegime(comp?.situacao_ref) || contextoPadrao.regime,
+      categoria: categorias.get(idComposicaoComparavel(linha.id_composicao)) || 'Horista',
+    };
+    const perfil = escolherPerfilEncargoParaContexto(perfis, contexto);
+    const percentual = perfil
+      ? toNum(perfil.encargo_original_percentual ?? perfil.encargo_total, null)
+      : null;
+    const fonte = fonteEncargoCanonica(contexto.fonte) || 'Não informada';
+    if (!perfil || percentual === null) {
+      semInformacao += 1;
+      const key = `sem:${fonte}`;
+      if (!grupos.has(key)) {
+        grupos.set(key, {
+          fonte,
+          quantidade: 0,
+          sem_informacao: true,
+          percentual: null,
+          nome_perfil: null,
+          categoria: null,
+          regime: contexto.regime || null,
+          uf: contexto.uf || null,
+        });
+      }
+      grupos.get(key).quantidade += 1;
+      continue;
+    }
+
+    comPerfil += 1;
+    const key = [
+      perfil._scope,
+      perfil.id_perfil,
+      fonte,
+      Number(percentual).toFixed(8),
+    ].join(':');
+    if (!grupos.has(key)) {
+      grupos.set(key, {
+        fonte,
+        quantidade: 0,
+        sem_informacao: false,
+        id_perfil: perfil.id_perfil,
+        nome_perfil: perfil.nome_perfil || null,
+        categoria: perfil.categoria || 'Horista',
+        percentual: Number(percentual),
+        percentual_calculado: toNum(perfil.encargo_total, null),
+        regime: normalizarRegime(perfil.regime) || contexto.regime || null,
+        uf: perfil.uf_referencia || contexto.uf || null,
+      });
+    }
+    grupos.get(key).quantidade += 1;
+  }
+
+  return {
+    composicoes_analisadas: vinculadas.length,
+    composicoes_com_encargo: comPerfil,
+    composicoes_sem_informacao: semInformacao,
+    linhas_sem_vinculo: linhas.length - vinculadas.length,
+    grupos: [...grupos.values()].sort((a, b) => (
+      Number(a.sem_informacao) - Number(b.sem_informacao)
+      || String(a.fonte).localeCompare(String(b.fonte))
+      || Number(b.quantidade) - Number(a.quantidade)
+    )),
+    criterio: 'Síntese inferida das composições vinculadas por fonte, UF, data-base e regime previdenciário.',
+  };
+}
+
+async function getOrcamento(db, id, options = {}) {
   let orcamento = await one(db, `${selectBase} WHERE o.id_orcamento = ?`, [id]);
   if (orcamento?.id_obra) {
     const obra = await one(
@@ -938,7 +1191,14 @@ async function getOrcamento(db, id) {
     ).catch(() => null);
     orcamento = { ...orcamento, descricao_obra: obra?.descricao_obra || null };
   }
-  if (!orcamento || !await tableExists(db, 'encargos_orcamento_aplicacoes')) return orcamento;
+  if (!orcamento) return orcamento;
+  if (options.incluirSinteseEncargos !== false) {
+    orcamento = {
+      ...orcamento,
+      encargos_sociais_sintese: await sintetizarEncargosSociaisDoOrcamento(db, id, orcamento),
+    };
+  }
+  if (!await tableExists(db, 'encargos_orcamento_aplicacoes')) return orcamento;
   const aplicacao = await one(db, `
     SELECT id_perfil, encargo_novo_percentual, observacoes, data_aplicacao
     FROM encargos_orcamento_aplicacoes
@@ -1076,7 +1336,7 @@ async function updateOrcamento(db, id, data = {}) {
       atualizacaoComposicoes.selecionar_novo_bdi = alteracoesContexto.includes('regime_previdenciario');
     }
 
-    const atualizado = await getOrcamento(db, id);
+    const atualizado = await getOrcamento(db, id, { incluirSinteseEncargos: false });
     await run(db, 'COMMIT');
     return atualizacaoComposicoes
       ? { ...atualizado, atualizacao_composicoes: atualizacaoComposicoes }
@@ -1270,7 +1530,7 @@ async function duplicarOrcamento(db, id) {
       );
     }
 
-    const duplicado = await getOrcamento(db, result.lastID);
+    const duplicado = await getOrcamento(db, result.lastID, { incluirSinteseEncargos: false });
     await run(db, 'COMMIT');
     return duplicado;
   } catch (err) {
@@ -1638,152 +1898,164 @@ async function persistirCustoTenantComposicao(db, idComposicao, custo) {
 }
 
 async function recalcularCustos(db, idOrcamento) {
-  const contexto = await getOrcamentoContexto(db, idOrcamento);
-  const compCache = await buildComposicaoCacheForAbc(db);
-  const itensCompCache = await buildItensComposicaoCacheForAbc(db);
-  const itensSecaoCompCache = await buildItensSecaoComposicaoCacheForAbc(db);
-  const insumoPriceCache = await buildInsumoPriceCacheForAbc(db, contexto);
-  const memo = new Map();
-
-  async function calcularCustoComposicao(idComposicao, visitados = new Set()) {
-    const id = String(idComposicao || '').trim();
-    if (!id) return null;
-    if (memo.has(id)) return memo.get(id);
-    if (visitados.has(id)) return null;
-    visitados.add(id);
-
-    let itensComp = await getItensComposicaoForAbc(db, id, itensCompCache);
-    if (!itensComp.length) itensComp = itensSecaoCompCache.get(id) || [];
-    if (!itensComp.length) {
-      const direto = await custoComposicaoDiretoPorId(db, id);
-      if (direto !== null) memo.set(id, direto);
-      return direto;
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const contexto = await getOrcamentoContexto(db, idOrcamento);
+    if (!contexto) {
+      const err = new Error('Orçamento não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    const diagnostico = await diagnosticarDuplicatasSintetico(db, idOrcamento);
+    if (diagnostico?.linhas_duplicadas_excedentes) {
+      const err = new Error(
+        `O recálculo foi bloqueado porque existem ${diagnostico.linhas_duplicadas_excedentes} `
+        + 'linha(s) duplicada(s) exata(s). Corrija as duplicatas antes de recalcular.',
+      );
+      err.status = 409;
+      err.codigo = 'ORCAMENTO_COM_LINHAS_DUPLICADAS';
+      throw err;
     }
 
-    let total = 0;
-    let possuiPreco = false;
-    for (const item of itensComp) {
-      const coef = toNum(item.coeficiente, 0);
-      if (!coef) continue;
-      let preco = 0;
+    // Antes de atualizar valores, restabelece os vínculos no contexto cadastral
+    // atual. A busca é restrita à UF, data-base e regime do orçamento.
+    const remapeamento = await remapearComposicoesVinculadas(db, idOrcamento, []);
+    const itens = await all(db, `
+      SELECT id_item, id_composicao, custo_unitario
+      FROM orcamento_sintetico
+      WHERE id_orcamento=? AND tipo_linha='item'
+        AND id_composicao IS NOT NULL
+        AND TRIM(CAST(id_composicao AS TEXT)) <> ''`, [idOrcamento]);
+    const identidades = await buscarIdentidadesComposicoesVinculadas(db, itens);
 
-      if (isComposicaoItemRobusto(item)) {
-        let sub = null;
-        const codigos = codigoVariantesComposicao(item.codigo_item || item.codigo, item.fonte);
-        for (const codigo of codigos) {
-          sub = escolherComposicaoCandidata(compCache.get(String(codigo).toUpperCase()), contexto);
-          if (sub) break;
-        }
-        const custoSub = sub
-          ? await calcularCustoComposicao(sub.id_composicao, new Set(visitados))
-          : null;
-        preco = custoSub ?? (toNum(item.preco_unitario, 0) || (coef > 0 ? toNum(item.custo_parcial, 0) / coef : 0));
-      } else {
-        const resolvido = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
-        preco = toNum(resolvido.preco, 0) || toNum(item.preco_unitario, 0) || (coef > 0 ? toNum(item.custo_parcial, 0) / coef : 0);
+    let custosAtualizados = 0;
+    let semReferencia = 0;
+    for (const item of itens) {
+      const comp = identidades.get(idComposicaoComparavel(item.id_composicao));
+      const custo = toNum(comp?.custo_unitario, 0);
+      if (!comp || custo <= 0) {
+        semReferencia += 1;
+        continue;
       }
-
-      if (Number.isFinite(preco) && preco > 0) {
-        total += coef * preco;
-        possuiPreco = true;
-      }
+      if (Math.abs(custo - toNum(item.custo_unitario, 0)) <= 0.00000001) continue;
+      await run(
+        db,
+        'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=? AND id_orcamento=?',
+        [custo, item.id_item, idOrcamento],
+      );
+      custosAtualizados += 1;
     }
 
-    const custo = possuiPreco ? Number(total.toFixed(4)) : await custoComposicaoDiretoPorId(db, id);
-    if (custo !== null && Number.isFinite(custo) && custo > 0) {
-      memo.set(id, custo);
-      await persistirCustoTenantComposicao(db, id, custo);
-      return custo;
-    }
-    return null;
+    const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    const atualizados = Number(remapeamento.linhas_modificadas || 0) + custosAtualizados;
+    await run(db, 'COMMIT');
+    return {
+      atualizados,
+      custos_atualizados: custosAtualizados,
+      composicoes_remapeadas: Number(remapeamento.composicoes_atualizadas || 0),
+      composicoes_ja_compativeis: Number(remapeamento.composicoes_ja_compativeis || 0),
+      sem_correspondencia: Number(remapeamento.sem_correspondencia || 0),
+      linhas_sem_referencia: semReferencia,
+      totais,
+      mensagem: atualizados
+        ? `${atualizados} linha(s) atualizada(s) e orçamento recalculado no contexto ${contexto.uf || 'sem UF'} / ${contexto.mes_ref || 'sem data-base'} / ${contexto.regime || 'sem regime'}.`
+        : `Os vínculos já estavam atualizados. Os totais foram conferidos no contexto ${contexto.uf || 'sem UF'} / ${contexto.mes_ref || 'sem data-base'} / ${contexto.regime || 'sem regime'}.`,
+    };
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
   }
-
-  const itens = await all(db, `
-    SELECT id_item, id_composicao, custo_unitario
-    FROM orcamento_sintetico
-    WHERE id_orcamento=? AND tipo_linha='item' AND id_composicao IS NOT NULL`, [idOrcamento]);
-  let atualizados = 0;
-  for (const item of itens) {
-    const custo = await calcularCustoComposicao(item.id_composicao);
-    if (Number.isFinite(custo) && custo > 0 && Math.abs(custo - toNum(item.custo_unitario, 0)) > 0.0001) {
-      await run(db, 'UPDATE orcamento_sintetico SET custo_unitario=? WHERE id_item=?', [custo, item.id_item]);
-      atualizados += 1;
-    }
-  }
-  const rows = await listSintetico(db, idOrcamento);
-  return { atualizados, mensagem: `${atualizados} item(ns) recalculado(s).`, itens: rows || [] };
 }
 
 async function vincularComposicoesAutomaticamente(db, idOrcamento) {
   await ensureBdiLinha(db);
-  const contexto = await getOrcamentoContexto(db, idOrcamento);
-  if (!contexto) return null;
-
-  const itens = await all(db, `
-    SELECT *
-    FROM orcamento_sintetico
-    WHERE id_orcamento=?
-      AND tipo_linha='item'
-      AND COALESCE(tipo_item,'composicao') <> 'insumo'
-      AND (id_composicao IS NULL OR id_composicao = '')
-      AND TRIM(COALESCE(codigo,'')) <> ''
-      AND TRIM(COALESCE(fonte,'')) <> ''`, [idOrcamento]);
-
-  let vinculados = 0;
-  let semCorrespondencia = 0;
-  const detalhes = [];
-  const candidatosCache = await buildComposicaoCandidatesForAutoLink(db, itens);
-
-  for (const item of itens) {
-    const comp = escolherComposicaoParaItemNoCache(item, contexto, candidatosCache);
-    if (!comp) {
-      semCorrespondencia += 1;
-      if (detalhes.length < 100) detalhes.push({ id_item: item.id_item, codigo: item.codigo, fonte: item.fonte, status: 'nao_encontrada' });
-      continue;
+  await run(db, 'BEGIN IMMEDIATE');
+  try {
+    const contexto = await getOrcamentoContexto(db, idOrcamento);
+    if (!contexto) {
+      await run(db, 'COMMIT');
+      return null;
     }
-    const custoAtual = toNum(item.custo_unitario, 0);
-    const custoComp = toNum(comp.custo_unitario, 0);
-    const custo = custoComp > 0 ? custoComp : custoAtual;
-    await run(db, `
-      UPDATE orcamento_sintetico
-      SET tipo_item='composicao',
-          id_composicao=?,
-          id_insumo=NULL,
-          codigo=?,
-          fonte=?,
-          descricao=?,
-          unidade=?,
-          custo_unitario=?
-      WHERE id_item=?`, [
-      comp.id_composicao,
-      comp.codigo || item.codigo,
-      comp.fonte || item.fonte,
-      comp.descricao || item.descricao,
-      comp.unidade || item.unidade,
-      custo,
-      item.id_item,
-    ]);
-    vinculados += 1;
-    if (detalhes.length < 100) detalhes.push({
-      id_item: item.id_item,
-      codigo: item.codigo,
-      fonte: item.fonte,
-      id_composicao: comp.id_composicao,
-      codigo_composicao: comp.codigo,
-      fonte_composicao: comp.fonte,
-      status: 'vinculada',
-    });
-  }
 
-  return {
-    vinculados,
-    sem_correspondencia: semCorrespondencia,
-    verificados: itens.length,
-    detalhes,
-    mensagem: vinculados
-      ? `${vinculados} linha(s) vinculada(s) a composicoes cadastradas. O sistema priorizou a data-base ${contexto.mes_ref} e aceitou referencias compativeis quando nao havia mes exato.`
-      : `Nenhuma composicao correspondente foi encontrada para os codigos informados, mesmo buscando referencias compativeis a partir da data-base ${contexto.mes_ref}.`,
-  };
+    // "Vincular automático" também revalida vínculos existentes. Isso é
+    // essencial quando o cadastro do orçamento já mudou de UF/data-base/regime.
+    const remapeamento = await remapearComposicoesVinculadas(db, idOrcamento, []);
+    const itens = await all(db, `
+      SELECT *
+      FROM orcamento_sintetico
+      WHERE id_orcamento=?
+        AND tipo_linha='item'
+        AND COALESCE(tipo_item,'composicao') <> 'insumo'
+        AND (id_composicao IS NULL OR TRIM(CAST(id_composicao AS TEXT)) = '')
+        AND TRIM(COALESCE(codigo,'')) <> ''
+        AND TRIM(COALESCE(fonte,'')) <> ''`, [idOrcamento]);
+
+    let vinculados = 0;
+    let semCorrespondencia = 0;
+    const detalhes = [];
+    const candidatosCache = await buildComposicaoCandidatesForAutoLink(db, itens, { contexto });
+
+    for (const item of itens) {
+      const comp = escolherComposicaoEstritaParaItem(item, contexto, candidatosCache, []);
+      if (!comp) {
+        semCorrespondencia += 1;
+        if (detalhes.length < 100) detalhes.push({ id_item: item.id_item, codigo: item.codigo, fonte: item.fonte, status: 'nao_encontrada' });
+        continue;
+      }
+      const custoAtual = toNum(item.custo_unitario, 0);
+      const custoComp = toNum(comp.custo_unitario, 0);
+      const custo = custoComp > 0 ? custoComp : custoAtual;
+      await run(db, `
+        UPDATE orcamento_sintetico
+        SET tipo_item='composicao',
+            id_composicao=?,
+            id_insumo=NULL,
+            codigo=?,
+            fonte=?,
+            descricao=?,
+            unidade=?,
+            custo_unitario=?
+        WHERE id_item=? AND id_orcamento=?`, [
+        comp.id_composicao,
+        comp.codigo || item.codigo,
+        comp.fonte || item.fonte,
+        comp.descricao || item.descricao,
+        comp.unidade || item.unidade,
+        custo,
+        item.id_item,
+        idOrcamento,
+      ]);
+      vinculados += 1;
+      if (detalhes.length < 100) detalhes.push({
+        id_item: item.id_item,
+        codigo: item.codigo,
+        fonte: item.fonte,
+        id_composicao: comp.id_composicao,
+        codigo_composicao: comp.codigo,
+        fonte_composicao: comp.fonte,
+        status: 'vinculada',
+      });
+    }
+
+    const totais = await recalcularTotaisDoOrcamento(db, idOrcamento);
+    const remapeadas = Number(remapeamento.composicoes_atualizadas || 0);
+    await run(db, 'COMMIT');
+    return {
+      vinculados,
+      remapeadas,
+      atualizados: vinculados + Number(remapeamento.linhas_modificadas || 0),
+      sem_correspondencia: semCorrespondencia + Number(remapeamento.sem_correspondencia || 0),
+      verificados: itens.length + Number(remapeamento.vinculadas_verificadas || 0),
+      detalhes,
+      totais,
+      mensagem: vinculados || remapeadas
+        ? `${vinculados} nova(s) linha(s) vinculada(s) e ${remapeadas} composição(ões) remapeada(s) para ${contexto.uf} / ${contexto.mes_ref} / ${contexto.regime}. Os totais foram recalculados.`
+        : `Todos os vínculos possíveis já foram verificados em ${contexto.uf} / ${contexto.mes_ref} / ${contexto.regime}. Os totais foram recalculados.`,
+    };
+  } catch (err) {
+    await run(db, 'ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 function abcClasse(acumulado) {

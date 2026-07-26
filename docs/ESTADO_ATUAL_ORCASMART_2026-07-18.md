@@ -109,6 +109,14 @@ não usar esse relatório histórico para concluir que a produção está em SQL
 - Ao abrir o orçamento sintético, duplicatas exatas podem ser reparadas mediante
   confirmação: preserva-se uma ocorrência, os vínculos do eventograma são
   remapeados e o total é recalculado na mesma transação.
+- As consultas do catálogo oficial e das composições do tenant são executadas
+  separadamente. Isso mantém o escopo correto no adaptador MySQL, preserva os
+  índices de UF/data-base e evita o falso resultado de zero substituições quando
+  as referências equivalentes estão cadastradas.
+- O botão `Vincular automático` revalida também as linhas já vinculadas:
+  vínculos antigos são remapeados para a UF, data-base e regime atuais, linhas
+  pendentes são vinculadas somente por correspondência estrita e os totais são
+  recalculados na mesma transação.
 
 ### BDI e Reforma Tributária
 
@@ -135,8 +143,16 @@ não usar esse relatório histórico para concluir que a produção está em SQL
   novo total.
 - Custo direto, BDI em reais e total são derivados do orçamento sintético e não
   aparecem nem são aceitos como campos editáveis no cadastro do orçamento.
-- O cabeçalho do orçamento sintético informa obra, descrição da obra, último
-  encargo social aplicado, regime previdenciário, data-base e UF de referência.
+- O cabeçalho do orçamento sintético foi reorganizado em painel técnico compacto
+  com orçamento, obra, descrição, regime, data-base, UF, BDI e total.
+- Os encargos sociais são sintetizados a partir das composições vinculadas,
+  agrupados por fonte e perfil/percentual, com contagem explícita das composições
+  sem informação. Uma aplicação direta registrada no orçamento continua sendo
+  exibida separadamente.
+- O botão `Recalcular custos` usa job assíncrono com progresso. O processamento
+  consulta somente as composições vinculadas ao orçamento, confere os vínculos
+  no contexto vigente e recompõe custo direto, BDI e total; ele não carrega mais
+  todo o catálogo e seus itens analíticos.
 
 ### Regime e encargos das composições
 

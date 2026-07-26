@@ -5,6 +5,7 @@ Object.assign(API, {
   osSint: {
     completo:         (id)    => API.get(`/orcamentos/${id}/completo`),
     recalcularCustos: (id)    => API.post(`/orcamentos/${id}/recalcular-custos`),
+    statusRecalculo:  (id, jobId) => API.get(`/orcamentos/${id}/recalcular-custos/${encodeURIComponent(jobId)}`),
     vincularAuto:     (id)    => API.post(`/orcamentos/${id}/sintetico/vincular-composicoes`),
     diagnosticarDuplicatas: (id) => API.get(`/orcamentos/${id}/sintetico/duplicatas`),
     repararDuplicatas: (id) => API.post(`/orcamentos/${id}/sintetico/reparar-duplicatas`),
@@ -285,40 +286,84 @@ Router.register('orcamento-sintetico', async () => {
     const dataBaseLabel = orc.data_base_mes
       ? `${Utils.nomeMes(orc.data_base_mes)}/${orc.data_base_ano}`
       : 'Não informada';
-    const encargoLabel = orc.encargo_social_percentual !== undefined
+    const sinteseEncargos = orc.encargos_sociais_sintese || {};
+    const gruposEncargos = Array.isArray(sinteseEncargos.grupos) ? sinteseEncargos.grupos : [];
+    const encargosHtml = gruposEncargos.length
+      ? gruposEncargos.map(grupo => {
+        const qtd = Number(grupo.quantidade || 0);
+        const composicoesLabel = qtd === 1 ? 'composição' : 'composições';
+        if (grupo.sem_informacao) {
+          return `<div class="os-charge-chip os-charge-chip-warning">
+            <strong>${qtd} ${composicoesLabel} ${Utils.esc(grupo.fonte || '')}</strong>
+            <span>sem informação de encargos sociais</span>
+          </div>`;
+        }
+        const contexto = [
+          grupo.categoria,
+          grupo.regime,
+          grupo.uf ? `UF ${grupo.uf}` : null,
+        ].filter(Boolean).map(Utils.esc).join(' · ');
+        return `<div class="os-charge-chip">
+          <strong>${qtd} ${composicoesLabel} ${Utils.esc(grupo.fonte || '')} — ${Utils.num(grupo.percentual, 4)}%</strong>
+          <span>${contexto}${grupo.nome_perfil ? ` · ${Utils.esc(grupo.nome_perfil)}` : ''}</span>
+        </div>`;
+      }).join('')
+      : `<div class="os-charge-empty">Nenhuma composição vinculada possui contexto suficiente para identificar encargos sociais.</div>`;
+    const aplicacaoDiretaHtml = orc.encargo_social_percentual !== undefined
       && orc.encargo_social_percentual !== null
-      ? `${orc.encargo_social_nome_perfil ? `${Utils.esc(orc.encargo_social_nome_perfil)} — ` : ''}${Utils.num(orc.encargo_social_percentual, 4)}%`
-      : 'Não aplicado';
-    const contextoCard = (label, value, wide = false) => `
-      <div style="min-width:145px;${wide ? 'grid-column:span 2;' : ''}padding:8px 10px;border:1px solid var(--c-border);border-radius:8px;background:var(--c-surface)">
-        <div class="text-xs text-3" style="font-weight:600;letter-spacing:.3px;text-transform:uppercase">${label}</div>
-        <div class="text-sm" style="margin-top:3px;font-weight:600">${value}</div>
+      ? `<div class="os-charge-applied">
+          Aplicação direta registrada: <strong>${orc.encargo_social_nome_perfil ? `${Utils.esc(orc.encargo_social_nome_perfil)} — ` : ''}${Utils.num(orc.encargo_social_percentual, 4)}%</strong>
+        </div>`
+      : '';
+    const contextoCard = (label, value, extraClass = '') => `
+      <div class="os-context-card ${extraClass}">
+        <div class="os-context-label">${label}</div>
+        <div class="os-context-value">${value}</div>
       </div>`;
 
     document.getElementById('pageContent').innerHTML = `
       <!-- ── Cabeçalho ─────────────────────────────────────────────────────── -->
-      <div class="page-header" style="align-items:flex-start;flex-wrap:wrap;gap:16px;padding-bottom:16px">
-        <div class="page-header-left">
-          <h1 style="font-size:1.25rem">Orçamento Sintético</h1>
-          <p class="text-2" style="margin-top:2px">${Utils.esc(orc.nome_orcamento || '—')}</p>
-          <p class="text-3 text-xs" style="margin-top:4px">
-            v${Utils.esc(orc.versao||'1.0')} · ${Utils.statusBadge(orc.status)}
-          </p>
-          <div style="display:grid;grid-template-columns:repeat(3,minmax(145px,1fr));gap:7px;margin-top:12px;max-width:820px">
-            ${contextoCard('Obra', Utils.esc(orc.nome_obra || '—'))}
-            ${contextoCard('Descrição da obra', Utils.esc(orc.descricao_obra || 'Não informada'), true)}
-            ${contextoCard('Encargos sociais aplicados', encargoLabel, true)}
-            ${contextoCard('Regime previdenciário', Utils.esc(orc.regime_previdenciario || 'Não informado'))}
-            ${contextoCard('Data-base', Utils.esc(dataBaseLabel))}
-            ${contextoCard('UF do orçamento', Utils.esc(orc.uf_referencia || orc.obra_uf || 'Não informada'))}
+      <section class="os-summary-hero">
+        <div class="os-summary-title-row">
+          <div>
+            <div class="os-summary-eyebrow">ORÇAMENTO SINTÉTICO</div>
+            <h1>${Utils.esc(orc.nome_orcamento || 'Orçamento')}</h1>
+            <div class="os-summary-version">Versão ${Utils.esc(orc.versao || '1.0')} · ${Utils.statusBadge(orc.status)}</div>
+          </div>
+          <div class="os-total-card">
+            <div class="os-context-label">TOTAL DO ORÇAMENTO</div>
+            <div id="totalGeralDisplay">${Utils.moeda(gt)}</div>
           </div>
         </div>
 
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-left:auto">
-          <!-- BDI -->
-          <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--radius);padding:10px 14px">
-            <div class="text-xs text-3" style="font-weight:600;letter-spacing:.5px;margin-bottom:6px">BDI APLICADO</div>
-            <div style="display:flex;gap:6px;align-items:center">
+        <div class="os-context-grid">
+          ${contextoCard('Obra', Utils.esc(orc.nome_obra || '—'))}
+          ${contextoCard('Descrição da obra', Utils.esc(orc.descricao_obra || 'Não informada'), 'os-context-wide')}
+          ${contextoCard('Regime previdenciário', Utils.esc(orc.regime_previdenciario || 'Não informado'))}
+          ${contextoCard('Data-base', Utils.esc(dataBaseLabel))}
+          ${contextoCard('UF do orçamento', Utils.esc(orc.uf_referencia || orc.obra_uf || 'Não informada'))}
+        </div>
+
+        <div class="os-charge-summary">
+          <div class="os-charge-header">
+            <div>
+              <div class="os-context-label">SÍNTESE DOS ENCARGOS SOCIAIS</div>
+              <div class="os-charge-help">Análise das composições vinculadas por fonte, UF, data-base e regime.</div>
+            </div>
+            <div class="os-charge-count">
+              ${Number(sinteseEncargos.composicoes_analisadas || 0)} composição(ões) analisada(s)
+            </div>
+          </div>
+          <div class="os-charge-list">${encargosHtml}</div>
+          ${aplicacaoDiretaHtml}
+        </div>
+
+        <div class="os-bdi-card">
+          <div>
+            <div class="os-context-label">BDI APLICADO</div>
+            <div class="os-bdi-help">O BDI incide após a consolidação dos custos diretos.</div>
+          </div>
+          <div class="os-bdi-controls">
               <select id="selBdiPerfilOS" class="form-control" style="height:30px;padding:0 8px;font-size:.8rem;min-width:170px">
                 <option value="">— Manual —</option>${bdiOpts}
               </select>
@@ -328,16 +373,9 @@ Router.register('orcamento-sintetico', async () => {
                 title="BDI (%)">
               <span class="text-2" style="font-size:.8rem">%</span>
               <button class="btn btn-primary btn-sm" onclick="window._osAplicarBdi()">✓ Aplicar</button>
-            </div>
-          </div>
-
-          <!-- Total -->
-          <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--radius);padding:10px 16px;text-align:right">
-            <div class="text-xs text-3" style="letter-spacing:.5px;margin-bottom:2px">TOTAL DO ORÇAMENTO</div>
-            <div id="totalGeralDisplay" style="font-size:1.35rem;font-weight:700;color:var(--c-primary)">${Utils.moeda(gt)}</div>
           </div>
         </div>
-      </div>
+      </section>
 
       <!-- ── Barra de ferramentas ──────────────────────────────────────────── -->
       <div class="section-card" style="padding:9px 12px;margin-bottom:12px">
@@ -367,12 +405,12 @@ Router.register('orcamento-sintetico', async () => {
 
           <div class="ml-auto" style="display:flex;gap:6px">
             <button class="btn btn-sm" id="btnRecalc"
-              title="Recalcula custo unitário de composições com valor zerado"
+              title="Confere os vínculos no contexto atual, atualiza custos e recalcula o orçamento"
               style="background:#faf5ff;color:#7c3aed;border:1px solid #c4b5fd;font-size:.77rem">
               ⟳ Recalcular custos
             </button>
             <button class="btn btn-sm" id="btnVincularAuto"
-              title="Vincula automaticamente linhas com codigo e fonte a composicoes cadastradas na mesma data-base"
+              title="Vincula linhas pendentes e remapeia vínculos existentes para a UF, data-base e regime atuais"
               style="background:#eff6ff;color:#1d4ed8;border:1px solid #93c5fd;font-size:.77rem">
               Vincular automatico
             </button>
@@ -895,20 +933,61 @@ Router.register('orcamento-sintetico', async () => {
         if (btn) { btn.disabled = false; btn.innerHTML = orig; }
       }
     }
+    async function acompanharRecalculo(jobInicial) {
+      if (!jobInicial?.job_id) return jobInicial;
+      Modal.open({
+        title: 'Recalculando orçamento',
+        body: `
+          <div style="padding:8px 2px">
+            <div id="osRecalcFase" style="font-weight:750;color:#1e3a8a">Preparando recálculo...</div>
+            <div id="osRecalcMensagem" class="text-sm text-2" style="margin-top:5px">Aguarde enquanto os vínculos e os custos são conferidos.</div>
+            <div style="height:8px;background:#dbeafe;border-radius:999px;overflow:hidden;margin-top:14px">
+              <div id="osRecalcBarra" style="height:100%;width:5%;background:#2563eb;border-radius:999px;transition:width .25s ease"></div>
+            </div>
+            <div class="text-xs text-3" style="margin-top:9px">Esta janela será fechada automaticamente ao concluir.</div>
+          </div>`,
+        footer: '',
+      });
+      let ultimo = jobInicial;
+      for (let tentativa = 0; tentativa < 900; tentativa += 1) {
+        const fase = document.getElementById('osRecalcFase');
+        const mensagem = document.getElementById('osRecalcMensagem');
+        const barra = document.getElementById('osRecalcBarra');
+        if (fase) fase.textContent = ultimo.fase || 'Recalculando';
+        if (mensagem) mensagem.textContent = ultimo.mensagem || 'Processamento em andamento.';
+        if (barra) barra.style.width = `${Math.max(5, Math.min(100, Number(ultimo.percent || 5)))}%`;
+        if (ultimo.status === 'done') {
+          Modal.close();
+          return ultimo.result || {};
+        }
+        if (ultimo.status === 'error') {
+          Modal.close();
+          throw new Error(ultimo.erro || ultimo.mensagem || 'Falha ao recalcular o orçamento.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 800));
+        ultimo = await API.osSint.statusRecalculo(id_orc, jobInicial.job_id);
+      }
+      Modal.close();
+      throw new Error('O recálculo continua além do tempo esperado. Aguarde alguns instantes e tente abrir o orçamento novamente.');
+    }
+
     document.getElementById('btnRecalc')?.addEventListener('click', async () => {
       const btn = document.getElementById('btnRecalc');
-      btn.disabled = true; btn.textContent = '⟳ Calculando…';
+      const before = JSON.parse(JSON.stringify(itens));
+      btn.disabled = true; btn.textContent = '⟳ Iniciando…';
       try {
-      const res = await API.osSint.recalcularCustos(id_orc);
-      if (res.atualizados > 0) {
-        guardarUndo('recalculo');
-        Toast.success(res.mensagem);
-          // Recarregar itens do servidor para refletir novos valores
-          itens = await API.osSint.list(id_orc);
-          rebuildTable();
-        } else {
-          Toast.info('Nenhum item com custo zerado encontrado.');
+        const job = await API.osSint.recalcularCustos(id_orc);
+        const res = await acompanharRecalculo(job);
+        if (Number(res.atualizados || 0) > 0) {
+          undoState = { label: 'recalculo', itens: before, bdiPct };
         }
+        [orc, itens] = await Promise.all([
+          API.osSint.completo(id_orc),
+          API.osSint.list(id_orc),
+        ]);
+        bdiPct = parseFloat(orc.bdi_percentual) || 0;
+        renderPage();
+        Toast.success(res.mensagem || 'Orçamento conferido e recalculado.');
       } catch(e) { Toast.error(e.message); }
       finally {
         if (btn) { btn.disabled = false; btn.textContent = '⟳ Recalcular custos'; }
@@ -1929,32 +2008,22 @@ Router.register('orcamento-sintetico', async () => {
 
   /* ═══════════════════ IMPORTAR EXCEL DIRETO (SEM IA) ═══════════════════════ */
   async function vincularAutomaticamente() {
-    const pendentes = itens.filter(i =>
-      i.tipo_linha === 'item'
-      && !i.id_composicao
-      && String(i.codigo || '').trim()
-      && String(i.fonte || '').trim()
-      && (i.tipo_item || 'composicao') !== 'insumo'
-    ).length;
-    if (!pendentes) {
-      Toast.info('Nao ha linhas de composicao pendentes com codigo e fonte.');
-      return;
-    }
     const btn = document.getElementById('btnVincularAuto');
     const old = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Vinculando...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Conferindo vínculos...'; }
     try {
       const before = JSON.parse(JSON.stringify(itens));
       const res = await API.osSint.vincularAuto(id_orc);
-      if (res?.vinculados > 0) {
+      if (Number(res?.atualizados || 0) > 0) {
         undoState = { label: 'vinculo automatico', itens: before, bdiPct };
-        itens = await API.osSint.list(id_orc);
-        rebuildTable();
-        atualizarUndoBtn();
-        Toast.success(res.mensagem || `${res.vinculados} linha(s) vinculada(s).`);
-      } else {
-        Toast.info(res?.mensagem || 'Nenhuma composicao correspondente foi encontrada.');
       }
+      [orc, itens] = await Promise.all([
+        API.osSint.completo(id_orc),
+        API.osSint.list(id_orc),
+      ]);
+      bdiPct = parseFloat(orc.bdi_percentual) || 0;
+      renderPage();
+      Toast.success(res?.mensagem || 'Vínculos conferidos e totais recalculados.');
     } catch(e) {
       Toast.error(e.message);
     } finally {

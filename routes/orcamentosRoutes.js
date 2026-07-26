@@ -1,9 +1,33 @@
 /**
  * routes/orcamentosRoutes.js
  */
+const crypto = require('crypto');
 const express = require('express');
 const orcamentosService = require('../services/orcamentosService');
 const { catalogFallbackReadDb } = require('../utils/catalogFallbackReadDb');
+
+const RECALC_JOBS = new Map();
+const RECALC_JOB_TTL = 60 * 60 * 1000;
+
+function cleanupRecalcJobs() {
+  const limite = Date.now() - RECALC_JOB_TTL;
+  for (const [id, job] of RECALC_JOBS.entries()) {
+    if (job.updated_at_ms < limite) RECALC_JOBS.delete(id);
+  }
+}
+
+function publicRecalcJob(job) {
+  return {
+    job_id: job.id,
+    id_orcamento: job.id_orcamento,
+    status: job.status,
+    percent: job.percent,
+    fase: job.fase,
+    mensagem: job.mensagem,
+    result: job.result,
+    erro: job.erro,
+  };
+}
 
 module.exports = function(db) {
   const router = express.Router();
@@ -24,7 +48,10 @@ module.exports = function(db) {
   }));
 
   router.get('/:id/completo', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.getOrcamento(readDb, req.params.id));
+    const row = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(readConnection => orcamentosService.getOrcamento(readConnection, req.params.id))
+      : await orcamentosService.getOrcamento(readDb, req.params.id);
+    res.json(row);
   }));
 
   router.put('/:id/bdi', asyncHandler(async (req, res) => {
@@ -36,7 +63,10 @@ module.exports = function(db) {
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.getOrcamento(readDb, req.params.id));
+    const row = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(readConnection => orcamentosService.getOrcamento(readConnection, req.params.id))
+      : await orcamentosService.getOrcamento(readDb, req.params.id);
+    res.json(row);
   }));
 
   router.post('/', asyncHandler(async (req, res) => {
@@ -109,11 +139,82 @@ module.exports = function(db) {
   }));
 
   router.post('/:id/recalcular-custos', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.recalcularCustos(db, req.params.id));
+    cleanupRecalcJobs();
+    const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      return res.status(400).json({ erro: 'Tenant do usuário não identificado.' });
+    }
+    const idOrcamento = String(req.params.id);
+    const ativo = [...RECALC_JOBS.values()].find(job => (
+      job.tenant_id === tenantId
+      && job.id_orcamento === idOrcamento
+      && job.status === 'running'
+    ));
+    if (ativo) return res.status(202).json(publicRecalcJob(ativo));
+
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+    const job = {
+      id,
+      tenant_id: tenantId,
+      id_orcamento: idOrcamento,
+      status: 'running',
+      percent: 5,
+      fase: 'Preparando',
+      mensagem: 'Verificando os vínculos e o contexto do orçamento.',
+      result: null,
+      erro: null,
+      updated_at_ms: Date.now(),
+    };
+    RECALC_JOBS.set(id, job);
+    setImmediate(async () => {
+      try {
+        Object.assign(job, {
+          percent: 30,
+          fase: 'Conferindo composições',
+          mensagem: 'Aplicando UF, data-base e regime previdenciário aos vínculos.',
+          updated_at_ms: Date.now(),
+        });
+        const result = db && typeof db.withConnection === 'function'
+          ? await db.withConnection(writeDb => orcamentosService.recalcularCustos(writeDb, idOrcamento))
+          : await orcamentosService.recalcularCustos(db, idOrcamento);
+        Object.assign(job, {
+          status: 'done',
+          percent: 100,
+          fase: 'Concluído',
+          mensagem: result.mensagem,
+          result,
+          updated_at_ms: Date.now(),
+        });
+      } catch (err) {
+        console.error('Falha ao recalcular orçamento:', err);
+        Object.assign(job, {
+          status: 'error',
+          percent: 100,
+          fase: 'Erro',
+          mensagem: err.message || 'Falha ao recalcular o orçamento.',
+          erro: err.message || 'Falha ao recalcular o orçamento.',
+          updated_at_ms: Date.now(),
+        });
+      }
+    });
+    return res.status(202).json(publicRecalcJob(job));
   }));
 
+  router.get('/:id/recalcular-custos/:jobId', (req, res) => {
+    cleanupRecalcJobs();
+    const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+    const job = RECALC_JOBS.get(req.params.jobId);
+    if (!job || job.tenant_id !== tenantId || job.id_orcamento !== String(req.params.id)) {
+      return res.status(404).json({ erro: 'Recálculo não encontrado.' });
+    }
+    return res.json(publicRecalcJob(job));
+  });
+
   router.post('/:id/sintetico/vincular-composicoes', asyncHandler(async (req, res) => {
-    res.json(await orcamentosService.vincularComposicoesAutomaticamente(db, req.params.id));
+    const resultado = db && typeof db.withConnection === 'function'
+      ? await db.withConnection(writeDb => orcamentosService.vincularComposicoesAutomaticamente(writeDb, req.params.id))
+      : await orcamentosService.vincularComposicoesAutomaticamente(db, req.params.id);
+    res.json(resultado);
   }));
 
   router.get('/:id/curva-abc-servicos', asyncHandler(async (req, res) => {
