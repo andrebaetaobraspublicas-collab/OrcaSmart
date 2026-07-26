@@ -244,10 +244,57 @@ async function main() {
     }));
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.composicoes_atualizadas, 0);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.linhas_modificadas, 0);
-    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 0);
-    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_ausente, 1);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_regime, 1);
+    assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.sem_correspondencia_ausente, 0);
     assert.strictEqual(regimeSemReferencia.atualizacao_composicoes.recalculado, false);
     assert.strictEqual(regimeSemReferencia.valor_total, 114);
+
+    // Reproduz a falha observada em produção: 234 linhas SINAPI legadas,
+    // 876 referências candidatas na nova UF/data-base e nenhuma substituição.
+    // O módulo Composições classifica "COM CUSTO" legado como Desonerado; o
+    // orçamento precisa aplicar exatamente a mesma classificação.
+    const composicoesEmLote = [];
+    const linhasEmLote = [];
+    let proximoIdCandidato = 20000;
+    let totalCandidatas = 0;
+    for (let index = 0; index < 234; index += 1) {
+      const codigo = `SINAPI.${900000 + index}`;
+      const custo = 10 + index;
+      composicoesEmLote.push(
+        `(${10000 + index},'${codigo}','SINAPI','UNITARIO','Servico ${index}','UN','04/2026','DF','COM CUSTO',${custo})`,
+      );
+      const repeticoes = index < 174 ? 4 : 3;
+      for (let repeticao = 0; repeticao < repeticoes; repeticao += 1) {
+        composicoesEmLote.push(
+          `(${proximoIdCandidato},'${codigo}','SINAPI','UNITARIO','Servico ${index}','UN','04/2026','AL','COM CUSTO',${custo + 1})`,
+        );
+        proximoIdCandidato += 1;
+        totalCandidatas += 1;
+      }
+      linhasEmLote.push(
+        `(${1000 + index},7,'${index + 1}','item',1,${index + 1},'composicao','${10000 + index}',NULL,`
+        + `'${codigo}','SINAPI','Servico ${index}','UN',1,${custo},NULL)`,
+      );
+    }
+    assert.strictEqual(totalCandidatas, 876);
+    await exec(db, `
+      INSERT INTO orcamentos VALUES (
+        7,1,'Orcamento lote legado','',1,'DF','1.0','Em elaboracao',
+        'Desonerado',0,0,0,'2026-07-26','',NULL,20
+      );
+      INSERT INTO composicoes VALUES ${composicoesEmLote.join(',')};
+      INSERT INTO orcamento_sintetico VALUES ${linhasEmLote.join(',')};
+    `);
+    const loteAlagoas = await repo.updateOrcamento(db, 7, payload({
+      nome_orcamento: 'Orcamento lote legado',
+      uf_referencia: 'AL',
+      regime_previdenciario: 'Desonerado',
+      confirmar_atualizacao_composicoes: true,
+    }));
+    assert.strictEqual(loteAlagoas.atualizacao_composicoes.referencias_candidatas, 876);
+    assert.strictEqual(loteAlagoas.atualizacao_composicoes.composicoes_atualizadas, 234);
+    assert.strictEqual(loteAlagoas.atualizacao_composicoes.linhas_modificadas, 234);
+    assert.strictEqual(loteAlagoas.atualizacao_composicoes.sem_correspondencia, 0);
 
     await exec(db, `
       ATTACH DATABASE ':memory:' AS catalog;

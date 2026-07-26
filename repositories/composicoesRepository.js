@@ -1,4 +1,5 @@
 const { databaseEngine } = require('../utils/mysqlRuntime');
+const { regimePrevidenciarioComposicao: classificarRegimeComposicao } = require('../utils/composicaoRegime');
 
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -161,18 +162,7 @@ function regimePrevidenciarioSql(alias = 'c') {
 }
 
 function regimePrevidenciarioComposicao(comp = {}) {
-  const raw = String(comp.regime_previdenciario || comp.situacao_ref || '').trim().toLowerCase();
-  if (raw.includes('sem desoner') || raw === 'onerado' || raw === 'normal') return 'Onerado';
-  if (raw.includes('desoner')) return 'Desonerado';
-  if (String(comp.fonte || '').trim().toUpperCase() === 'SINAPI'
-      && (!raw || raw === 'com custo' || raw === 'sem custo')) {
-    // O importador SINAPI vigente calcula o custo persistido priorizando a
-    // coluna de preços desonerados. Registros anteriores guardavam "COM CUSTO"
-    // no campo que deveria identificar o regime.
-    return 'Desonerado';
-  }
-  if (String(comp.fonte || '').trim().toUpperCase() === 'SICRO' && !raw) return 'Onerado';
-  return null;
+  return classificarRegimeComposicao(comp);
 }
 
 function compSelectColumns(idExpr, scopeExpr, catalogIdExpr) {

@@ -1,4 +1,5 @@
 const eventogramasRepository = require('./eventogramasRepository');
+const { regimePrevidenciarioComposicao: classificarRegimeComposicao } = require('../utils/composicaoRegime');
 
 function one(db, sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -162,6 +163,10 @@ function normalizarRegime(value) {
   return '';
 }
 
+function regimePrevidenciarioComposicao(comp = {}) {
+  return classificarRegimeComposicao(comp) || '';
+}
+
 function mesReferencia(row) {
   const mes = Number(row?.mes || row?.data_base_mes || 0);
   const ano = Number(row?.ano || row?.data_base_ano || 0);
@@ -178,26 +183,17 @@ function parseMesRef(ref) {
   return { mes, ano, index: ano * 12 + mes };
 }
 
-function regimeCompativel(situacaoRef, regime) {
+function regimeCompativel(situacaoRef, regime, fonte = '') {
   if (!regime) return true;
-  const s = String(situacaoRef || '').toLowerCase();
-  if (!s) return true;
-  if (regime === 'Desonerado') {
-    return s.includes('desoner') && !s.includes('sem desoner');
-  }
-  if (regime === 'Onerado') {
-    return s === 'onerado'
-      || s.includes('sem desoner')
-      || (s.includes('onerado') && !s.includes('desonerado'));
-  }
-  return true;
+  const regimeComposicao = regimePrevidenciarioComposicao({ situacao_ref: situacaoRef, fonte });
+  return !regimeComposicao || regimeComposicao === regime;
 }
 
-function scoreRegime(situacaoRef, regime) {
+function scoreRegime(situacaoRef, regime, fonte = '') {
   if (!regime) return 2;
-  const s = String(situacaoRef || '').toLowerCase();
-  if (!s) return 1;
-  return regimeCompativel(situacaoRef, regime) ? 0 : 9;
+  const regimeComposicao = regimePrevidenciarioComposicao({ situacao_ref: situacaoRef, fonte });
+  if (!regimeComposicao) return 1;
+  return regimeComposicao === regime ? 0 : 9;
 }
 
 function scoreMesRef(mesRef, contextoMesRef) {
@@ -313,7 +309,7 @@ async function buscarComposicaoParaItem(db, item, contexto) {
   const candidatos = await all(db, sql, params).catch(() => []);
   if (!candidatos.length) return null;
 
-  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime));
+  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime, c.fonte));
   const base = compativeis.length ? compativeis : candidatos;
   base.sort((a, b) => {
     const ufA = String(a.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (a.uf_referencia ? 2 : 1);
@@ -322,8 +318,8 @@ async function buscarComposicaoParaItem(db, item, contexto) {
     const dataA = scoreMesRef(a.mes_referencia, contexto?.mes_ref);
     const dataB = scoreMesRef(b.mes_referencia, contexto?.mes_ref);
     if (dataA !== dataB) return dataA - dataB;
-    const regA = scoreRegime(a.situacao_ref, contexto?.regime);
-    const regB = scoreRegime(b.situacao_ref, contexto?.regime);
+    const regA = scoreRegime(a.situacao_ref, contexto?.regime, a.fonte);
+    const regB = scoreRegime(b.situacao_ref, contexto?.regime, b.fonte);
     if (regA !== regB) return regA - regB;
     const scopeA = a._tenant_scope === 'tenant' ? 0 : 1;
     const scopeB = b._tenant_scope === 'tenant' ? 0 : 1;
@@ -616,7 +612,7 @@ function composicaoCompativelEstrita(candidato, contexto, options = {}) {
   if (!dataAlvo || !dataCandidato || dataAlvo.index !== dataCandidato.index) return false;
 
   const regimeAlvo = normalizarRegime(contexto?.regime);
-  const regimeCandidato = normalizarRegime(candidato?.situacao_ref);
+  const regimeCandidato = regimePrevidenciarioComposicao(candidato);
   if (regimeCandidato) return !!regimeAlvo && regimeCandidato === regimeAlvo;
   return options.permitirRegimeNeutro === true;
 }
@@ -652,9 +648,10 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterado
   candidatosItem.forEach((row) => {
     if (mesmaReferenciaComposicao(row.id_composicao, item.id_composicao)) composicaoAtual = row;
   });
-  const regimeAtual = normalizarRegime(
-    item._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
-  );
+  const regimeAtual = regimePrevidenciarioComposicao({
+    situacao_ref: item._situacao_ref_vinculada || composicaoAtual?.situacao_ref,
+    fonte: item.fonte || composicaoAtual?.fonte,
+  });
   const permitirRegimeNeutro = !camposAlterados.includes('regime_previdenciario') && !regimeAtual;
   candidatosItem.forEach((row) => {
     if (composicaoCompativelEstrita(row, contexto, { permitirRegimeNeutro })) candidatos.push(row);
@@ -939,7 +936,7 @@ async function remapearComposicoesVinculadas(db, idOrcamento, camposAlterados = 
       const candidatasItem = candidatosParaItemNoCache(itemBusca, cache);
       const regimeAlvo = normalizarRegime(contexto?.regime);
       const regimesCandidatos = new Set(
-        candidatasItem.map(row => normalizarRegime(row.situacao_ref)).filter(Boolean),
+        candidatasItem.map(row => regimePrevidenciarioComposicao(row)).filter(Boolean),
       );
       const rejeitadaPorRegime = candidatasItem.length > 0
         && regimeAlvo
@@ -1219,7 +1216,7 @@ async function sintetizarEncargosSociaisDoOrcamento(db, idOrcamento, orcamento) 
       fonte: comp?.fonte || linha.fonte,
       uf: comp?.uf_referencia || contextoPadrao.uf,
       mes_referencia: comp?.mes_referencia || contextoPadrao.mes_referencia,
-      regime: normalizarRegime(comp?.situacao_ref) || contextoPadrao.regime,
+      regime: regimePrevidenciarioComposicao(comp) || contextoPadrao.regime,
       categoria: categorias.get(chaveCategoria) || 'Horista',
     };
     const perfil = escolherPerfilEncargoParaContexto(perfis, contexto);
@@ -2846,7 +2843,7 @@ async function buildInsumoPriceCacheForAbc(db, contexto, codigos = []) {
 
 function escolherComposicaoCandidata(candidatos, contexto) {
   if (!Array.isArray(candidatos) || !candidatos.length) return null;
-  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime));
+  const compativeis = candidatos.filter(c => regimeCompativel(c.situacao_ref, contexto?.regime, c.fonte));
   const base = compativeis.length ? compativeis : candidatos;
   base.sort((a, b) => {
     const ufA = String(a.uf_referencia || '') === String(contexto?.uf || '') ? 0 : (a.uf_referencia ? 2 : 1);
@@ -2855,8 +2852,8 @@ function escolherComposicaoCandidata(candidatos, contexto) {
     const dataA = scoreMesRef(a.mes_referencia, contexto?.mes_ref);
     const dataB = scoreMesRef(b.mes_referencia, contexto?.mes_ref);
     if (dataA !== dataB) return dataA - dataB;
-    const regA = scoreRegime(a.situacao_ref, contexto?.regime);
-    const regB = scoreRegime(b.situacao_ref, contexto?.regime);
+    const regA = scoreRegime(a.situacao_ref, contexto?.regime, a.fonte);
+    const regB = scoreRegime(b.situacao_ref, contexto?.regime, b.fonte);
     if (regA !== regB) return regA - regB;
     const scopeA = a.scope === 'tenant' ? 0 : 1;
     const scopeB = b.scope === 'tenant' ? 0 : 1;
