@@ -749,11 +749,28 @@ function escolherComposicaoEstruturalParaAbc(item, contexto, cache) {
       const custoB = toNum(b.custo_unitario, 0) > 0 ? 0 : 1;
       return custoA - custoB;
     });
-  if (!candidatos.length) return null;
+  if (candidatos.length) {
+    return {
+      ...candidatos[0],
+      _abc_regime_contexto: regimeHerdado,
+      _abc_fallback_estrutural: true,
+    };
+  }
+
+  // Cargas antigas podem ter conservado a memória analítica em outra
+  // referência do mesmo código e fonte. O preço das folhas continua sendo
+  // resolvido no contexto do orçamento; esta escolha recupera somente a
+  // estrutura para não promover uma composição detalhada a insumo terminal.
+  const aproximada = escolherComposicaoCandidata(
+    candidatosParaItemNoCache(item, cache),
+    contexto,
+  );
+  if (!aproximada) return null;
   return {
-    ...candidatos[0],
+    ...aproximada,
     _abc_regime_contexto: regimeHerdado,
     _abc_fallback_estrutural: true,
+    _abc_fallback_referencia: true,
   };
 }
 
@@ -2852,12 +2869,16 @@ function adicionarComposicaoAoCache(cache, row) {
 function contextoAbcDaComposicao(composicao, contexto = {}) {
   const regimeEstruturalHerdado = normalizarRegime(composicao?._abc_regime_contexto);
   const regimeEfetivo = regimePrevidenciarioComposicao(composicao);
+  const ufComposicao = String(composicao?.uf_referencia || '').trim().toUpperCase();
+  const mesReferenciaComposicao = String(composicao?.mes_referencia || '').trim();
   return {
     ...contexto,
     // A Curva ABC deve decompor a memória da composição efetivamente
-    // vinculada. Orçamentos legados podem ter um regime no cabeçalho diferente
-    // do registro vinculado; trocar para o cabeçalho no meio do grafo transforma
-    // composições auxiliares válidas em folhas artificiais.
+    // vinculada. Orçamentos legados podem ter UF, data-base ou regime no
+    // cabeçalho diferentes do registro vinculado; trocar para o cabeçalho no
+    // meio do grafo transforma composições auxiliares em folhas artificiais.
+    uf: ufComposicao || contexto?.uf || '',
+    mes_ref: mesReferenciaComposicao || contexto?.mes_ref || '',
     regime: regimeEstruturalHerdado || regimeEfetivo || contexto?.regime || '',
   };
 }
@@ -2887,7 +2908,7 @@ async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
     fronteira.push(id);
   }
 
-  for (let nivel = 0; nivel < 24 && fronteira.length; nivel += 1) {
+  while (fronteira.length) {
     const idsNivel = [...new Set(fronteira)].filter(id => !itens.has(id) && !secoes.has(id));
     if (!idsNivel.length) break;
     const itensNivel = await buildItensComposicaoCacheForAbc(db, idsNivel);
@@ -2920,7 +2941,7 @@ async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
 
     const candidatas = await buildComposicaoCandidatesForAutoLink(db, auxiliares, {
       includeUsuario: true,
-      contexto,
+      contexto: null,
     });
     mesclarCachesDeListas(cache, candidatas);
     const proxima = [];

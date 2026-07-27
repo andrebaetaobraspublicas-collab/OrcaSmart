@@ -189,6 +189,28 @@ async function main() {
 
     await exec(db, `
       INSERT INTO orcamentos VALUES
+        (6,1,1,'SP','Onerado',0,'ABC com vínculo legado em outra referência','1.0','Em elaboracao');
+      INSERT INTO orcamento_sintetico VALUES
+        (6,6,'1.1','item',1,'ROOT-LEGADO','SINAPI','Raiz vinculada em RJ/05-2026','h',3,40,'12');
+      INSERT INTO catalog.composicoes VALUES
+        (12,'ROOT-LEGADO','SINAPI','Unitário','Raiz vinculada em RJ/05-2026','h','RJ','05/2026','Onerado',40),
+        (13,'SINAPI.88309','SINAPI','Unitário','PEDREIRO SEM MEMÓRIA NO CONTEXTO DO CABEÇALHO','h','SP','04/2026','Onerado',20),
+        (14,'SINAPI.88309','SINAPI','Unitário','PEDREIRO COM MEMÓRIA DA COMPOSIÇÃO-PAI','h','RJ','05/2026','Onerado',20);
+      INSERT INTO catalog.itens_composicao VALUES
+        (16,12,'88309','PEDREIRO COM ENCARGOS COMPLEMENTARES','h',2,'COMPOSICAO',20,40,1),
+        (17,14,'MAT-B','Folha analítica persistida','kg',4,'MATERIAL',5,20,1);
+    `);
+    const curvaVinculoLegado = await repo.curvaAbcInsumos(db, 6);
+    assert.deepStrictEqual(
+      curvaVinculoLegado.itens.map(item => item.codigo),
+      ['MAT-B'],
+      'a auxiliar 88309 deve herdar UF/data-base da composição-pai vinculada e ser explodida',
+    );
+    assert.strictEqual(curvaVinculoLegado.itens[0].quantidade_total, 24);
+    assert.strictEqual(curvaVinculoLegado.total_geral, 120);
+
+    await exec(db, `
+      INSERT INTO orcamentos VALUES
         (4,1,1,'SP','Onerado',0,'ABC em lote','1.0','Em elaboracao');
       WITH RECURSIVE numeros(n) AS (
         SELECT 1
