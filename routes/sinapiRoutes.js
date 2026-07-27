@@ -10,6 +10,53 @@ const SINAPI_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
 const SINAPI_ACTIVE_IMPORT_TTL_MS = 20 * 60 * 1000;
 let sinapiActiveImportId = null;
 
+function isRetryableMysqlConnectionError(err) {
+  const code = String(err?.code || '').toUpperCase();
+  if ([
+    'EPIPE',
+    'ECONNRESET',
+    'ECONNABORTED',
+    'ETIMEDOUT',
+    'PROTOCOL_CONNECTION_LOST',
+    'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+  ].includes(code)) return true;
+  return /write\s+EPIPE|connection.*(?:closed|lost|reset)|closed state|socket.*(?:closed|destroyed)|fatal/i
+    .test(String(err?.message || ''));
+}
+
+function isSafelyReplayableSinapiSql(sql) {
+  return /^\s*(?:SELECT|WITH|SHOW|DESCRIBE|EXPLAIN|UPDATE|DELETE|SET)\b/i.test(String(sql || ''));
+}
+
+function normalizeDirectCatalogSql(sql) {
+  return String(sql || '')
+    .replace(/\bcatalog\./gi, '')
+    .replace(/\bmain\./gi, '')
+    .replace(/\bINSERT\s+OR\s+IGNORE\b/gi, 'INSERT IGNORE')
+    .replace(/\bBEGIN\s+IMMEDIATE\b/gi, 'START TRANSACTION');
+}
+
+async function executeSinapiSqlWithRecovery({
+  state,
+  recoveryEnabled,
+  method,
+  sql,
+  primary,
+  fallback,
+}) {
+  if (!recoveryEnabled || !state.broken) {
+    try {
+      return await primary();
+    } catch (err) {
+      if (!recoveryEnabled || !isRetryableMysqlConnectionError(err)) throw err;
+      state.broken = true;
+      state.lastError = err;
+      if (method === 'run' && !isSafelyReplayableSinapiSql(sql)) throw err;
+    }
+  }
+  return fallback();
+}
+
 function normalizarRegimeSinapi(value) {
   const raw = String(value || '')
     .normalize('NFD')
@@ -116,12 +163,15 @@ function finishSinapiJob(id, result) {
 function failSinapiJob(id, err) {
   const job = SINAPI_IMPORT_JOBS.get(id);
   if (!job) return null;
+  const message = isRetryableMysqlConnectionError(err)
+    ? 'A conexão com o banco foi interrompida durante a importação SINAPI. Reexecute a mesma referência: o processo retomará os registros já gravados sem duplicá-los.'
+    : (err?.message || 'Falha na importacao SINAPI.');
   Object.assign(job, {
     status: 'error',
     percent: Math.max(job.percent || 1, 1),
     fase: 'Erro',
-    mensagem: err?.message || 'Falha na importacao SINAPI.',
-    erro: err?.message || String(err),
+    mensagem: message,
+    erro: message,
     updated_at: new Date().toISOString(),
     updated_at_ms: Date.now(),
   });
@@ -934,9 +984,77 @@ module.exports = function sinapiRoutes(db) {
       const mesRef = `${String(mes).padStart(2, '0')}/${ano}`;
 
       return db.withConnection(async (conn) => {
-      const getC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
-      const allC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
-      const runC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+      const primaryGetC = (sql, params = []) => new Promise((resolve, reject) => conn.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
+      const primaryAllC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
+      const primaryRunC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
+      const mysqlRecoveryState = { broken: false, warned: false, lastError: null };
+      let catalogRecoveryEnabled = false;
+      let executeDirectMysqlReusable;
+      const recoverCatalogMysql = async (method, sql, params = []) => {
+        const directSql = normalizeDirectCatalogSql(sql);
+        const replayable = method !== 'run' || isSafelyReplayableSinapiSql(directSql);
+        let result;
+        let lastError = null;
+        for (let attempt = 1; attempt <= (replayable ? 2 : 1); attempt += 1) {
+          try {
+            result = await executeDirectMysqlReusable(
+              directSql,
+              params,
+              `Recuperacao da importacao SINAPI (${method})`,
+              120000,
+            );
+            lastError = null;
+            break;
+          } catch (err) {
+            lastError = err;
+            if (!isRetryableMysqlConnectionError(err) || attempt === 2) break;
+          }
+        }
+        if (lastError) throw lastError;
+        if (method === 'get') return Array.isArray(result) ? (result[0] || null) : null;
+        if (method === 'all') return Array.isArray(result) ? result : [];
+        return {
+          lastID: result?.insertId || null,
+          changes: Number(result?.affectedRows || 0),
+        };
+      };
+      const withMysqlRecovery = async (method, sql, params, primary) => {
+        const wasBroken = mysqlRecoveryState.broken;
+        const result = await executeSinapiSqlWithRecovery({
+          state: mysqlRecoveryState,
+          recoveryEnabled: catalogRecoveryEnabled,
+          method,
+          sql,
+          primary,
+          fallback: () => recoverCatalogMysql(method, sql, params),
+        });
+        if (!wasBroken && mysqlRecoveryState.broken && !mysqlRecoveryState.warned) {
+          mysqlRecoveryState.warned = true;
+          console.warn('[SINAPI_IMPORT_MYSQL_RECOVERED]', JSON.stringify({
+            code: mysqlRecoveryState.lastError?.code || null,
+            message: mysqlRecoveryState.lastError?.message || null,
+          }));
+        }
+        return result;
+      };
+      const getC = (sql, params = []) => withMysqlRecovery(
+        'get',
+        sql,
+        params,
+        () => primaryGetC(sql, params),
+      );
+      const allC = (sql, params = []) => withMysqlRecovery(
+        'all',
+        sql,
+        params,
+        () => primaryAllC(sql, params),
+      );
+      const runC = (sql, params = []) => withMysqlRecovery(
+        'run',
+        sql,
+        params,
+        () => primaryRunC(sql, params),
+      );
       const withTimeout = (promise, ms, label) => new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${label} excedeu ${Math.round(ms / 1000)}s.`)), ms);
         promise.then(
@@ -955,6 +1073,8 @@ module.exports = function sinapiRoutes(db) {
       const directMysqlTable = table => String(table || '').replace(/^catalog\./i, '');
       let directMysqlReusableConn = null;
       let directMysqlReusableUses = 0;
+      let directMysqlItemsConn = null;
+      let directMysqlItemsUses = 0;
       const closeDirectMysqlReusable = async () => {
         if (directMysqlReusableConn && typeof directMysqlReusableConn.end === 'function') {
           await directMysqlReusableConn.end().catch(() => {});
@@ -962,13 +1082,58 @@ module.exports = function sinapiRoutes(db) {
         directMysqlReusableConn = null;
         directMysqlReusableUses = 0;
       };
-      const executeDirectMysqlReusable = async (sql, params, label, ms = 5000) => {
+      const closeDirectMysqlItems = async (destroy = false) => {
+        if (directMysqlItemsConn) {
+          if (destroy && typeof directMysqlItemsConn.destroy === 'function') {
+            directMysqlItemsConn.destroy();
+          } else if (typeof directMysqlItemsConn.end === 'function') {
+            await directMysqlItemsConn.end().catch(() => {});
+          }
+        }
+        directMysqlItemsConn = null;
+        directMysqlItemsUses = 0;
+      };
+      const getDirectMysqlItems = async () => {
+        if (!directMysqlItemsConn || directMysqlItemsUses >= 100) {
+          await closeDirectMysqlItems();
+          directMysqlItemsConn = await createMysqlConnection();
+          await directMysqlItemsConn.query('SET SESSION lock_wait_timeout=5').catch(() => {});
+          await directMysqlItemsConn.query('SET SESSION max_statement_time=90').catch(() => {});
+        }
+        return directMysqlItemsConn;
+      };
+      const withDirectMysqlItemsTransaction = async (task, label) => {
+        let lastError = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          const directConn = await getDirectMysqlItems();
+          try {
+            await directConn.beginTransaction();
+            const result = await task(directConn);
+            await directConn.commit();
+            directMysqlItemsUses += 1;
+            return result;
+          } catch (err) {
+            lastError = err;
+            await directConn.rollback().catch(() => {});
+            await closeDirectMysqlItems(isRetryableMysqlConnectionError(err));
+            if (!isRetryableMysqlConnectionError(err) || attempt === 2) break;
+            console.warn('[SINAPI_IMPORT_ITEMS_RETRY]', JSON.stringify({
+              label,
+              attempt,
+              code: err?.code || null,
+              message: err?.message || String(err),
+            }));
+          }
+        }
+        throw lastError || new Error(`${label} falhou.`);
+      };
+      executeDirectMysqlReusable = async (sql, params, label, ms = 5000) => {
         if (!directMysqlReusableConn || directMysqlReusableUses >= 25) {
           await closeDirectMysqlReusable();
           directMysqlReusableConn = await createMysqlConnection();
           directMysqlReusableUses = 0;
           await directMysqlReusableConn.query('SET SESSION lock_wait_timeout=3').catch(() => {});
-          await directMysqlReusableConn.query('SET SESSION max_statement_time=20').catch(() => {});
+          await directMysqlReusableConn.query('SET SESSION max_statement_time=90').catch(() => {});
         }
         let timedOut = false;
         const execution = directMysqlReusableConn.execute(sql, params);
@@ -989,7 +1154,10 @@ module.exports = function sinapiRoutes(db) {
           return result;
         } catch (err) {
           if (timeoutHandle) clearTimeout(timeoutHandle);
-          if (timedOut || /closed|destroyed|fatal/i.test(err.message || '')) {
+          if (timedOut || isRetryableMysqlConnectionError(err) || /closed|destroyed|fatal/i.test(err.message || '')) {
+            if (directMysqlReusableConn && typeof directMysqlReusableConn.destroy === 'function') {
+              directMysqlReusableConn.destroy();
+            }
             directMysqlReusableConn = null;
             directMysqlReusableUses = 0;
           }
@@ -1071,7 +1239,7 @@ module.exports = function sinapiRoutes(db) {
       const useLongTransaction = databaseEngine() !== 'mysql';
       if (databaseEngine() === 'mysql') {
         await runC('SET SESSION lock_wait_timeout=5').catch(() => {});
-        await runC('SET SESSION max_statement_time=15').catch(() => {});
+        await runC('SET SESSION max_statement_time=90').catch(() => {});
       }
       if (useLongTransaction) await runC('BEGIN IMMEDIATE');
       try {
@@ -1079,6 +1247,7 @@ module.exports = function sinapiRoutes(db) {
         const adminImport = req.user && req.user.role === 'admin';
         const hasCatalogComps = databaseEngine() === 'mysql' ? true : await tableC('catalog', 'composicoes');
         const useCatalogReferencial = adminImport && hasCatalogComps;
+        catalogRecoveryEnabled = databaseEngine() === 'mysql' && useCatalogReferencial;
         const refPrefix = useCatalogReferencial ? 'catalog.' : '';
         const dataBaseTable = `${refPrefix}datas_base`;
         const fonteTable = `${refPrefix}fontes_referencia`;
@@ -1831,43 +2000,91 @@ module.exports = function sinapiRoutes(db) {
             grupos.set(key, r.lastID);
             return r.lastID;
           }
-          async function inserirItensComposicao(idComp, itens) {
-            if (!itens.length) return 0;
-            let inseridos = 0;
-            const batchSize = 250;
-            for (let offset = 0; offset < itens.length; offset += batchSize) {
-              const batch = itens.slice(offset, offset + batchSize);
-              const params = [];
-              const values = batch.map((item, idx) => {
-                params.push(
-                  idComp,
-                  item.tipo_item,
-                  item.codigo_item,
-                  item.descricao,
-                  item.unidade,
-                  item.coeficiente,
-                  item.situacao,
-                  offset + idx,
-                );
-                return useTenantComps
-                  ? "(?,?,?,?,?,?,?,?,'create','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
-                  : '(?,?,?,?,?,?,?,?)';
-              }).join(',');
-              if (useTenantComps) {
-                await runC(`
-                  INSERT INTO tenant_itens_composicao
-                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
-                     tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-                  VALUES ${values}`, params);
-              } else {
-                await runC(`
-                  INSERT INTO ${itemTable}
+          async function substituirItensCatalogMysql(alvos) {
+            const ids = [...new Set(alvos.map(alvo => Number(alvo.idComp)).filter(Number.isFinite))];
+            const rows = [];
+            for (const alvo of alvos) {
+              for (let ordem = 0; ordem < alvo.itens.length; ordem += 1) {
+                rows.push({ idComp: alvo.idComp, item: alvo.itens[ordem], ordem });
+              }
+            }
+            if (!ids.length) return 0;
+            const tableName = directMysqlTable(itemTable);
+            return withDirectMysqlItemsTransaction(async directConn => {
+              await directConn.execute(
+                `DELETE FROM ${tableName} WHERE id_composicao IN (${ids.map(() => '?').join(',')})`,
+                ids,
+              );
+              const batchSize = 300;
+              for (let offset = 0; offset < rows.length; offset += batchSize) {
+                const batch = rows.slice(offset, offset + batchSize);
+                const params = [];
+                const values = batch.map(({ idComp, item, ordem }) => {
+                  params.push(
+                    idComp,
+                    item.tipo_item,
+                    item.codigo_item,
+                    item.descricao,
+                    item.unidade,
+                    item.coeficiente,
+                    item.situacao,
+                    ordem,
+                  );
+                  return '(?,?,?,?,?,?,?,?)';
+                }).join(',');
+                await directConn.execute(`
+                  INSERT INTO ${tableName}
                     (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
                   VALUES ${values}`, params);
               }
-              inseridos += batch.length;
+              return rows.length;
+            }, `Substituicao exata de itens de ${ids.length} composicao(oes)`);
+          }
+          async function inserirItensComposicao(idComp, itens) {
+            if (!itens.length) return 0;
+            if (catalogRecoveryEnabled && mysqlRecoveryState.broken && !useTenantComps) {
+              return substituirItensCatalogMysql([{ idComp, itens }]);
             }
-            return inseridos;
+            let inseridos = 0;
+            const batchSize = 250;
+            try {
+              for (let offset = 0; offset < itens.length; offset += batchSize) {
+                const batch = itens.slice(offset, offset + batchSize);
+                const params = [];
+                const values = batch.map((item, idx) => {
+                  params.push(
+                    idComp,
+                    item.tipo_item,
+                    item.codigo_item,
+                    item.descricao,
+                    item.unidade,
+                    item.coeficiente,
+                    item.situacao,
+                    offset + idx,
+                  );
+                  return useTenantComps
+                    ? "(?,?,?,?,?,?,?,?,'create','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
+                    : '(?,?,?,?,?,?,?,?)';
+                }).join(',');
+                if (useTenantComps) {
+                  await runC(`
+                    INSERT INTO tenant_itens_composicao
+                      (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem,
+                       tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+                    VALUES ${values}`, params);
+                } else {
+                  await runC(`
+                    INSERT INTO ${itemTable}
+                      (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
+                    VALUES ${values}`, params);
+                }
+                inseridos += batch.length;
+              }
+              return inseridos;
+            } catch (err) {
+              if (!catalogRecoveryEnabled || useTenantComps || !isRetryableMysqlConnectionError(err)) throw err;
+              return substituirItensCatalogMysql([{ idComp, itens }]);
+            }
           }
 
           const compKey = (codigo, uf, ref, regime) => [
@@ -1924,29 +2141,37 @@ module.exports = function sinapiRoutes(db) {
                 rows.push({ idComp: alvo.idComp, item: alvo.itens[ordem], ordem });
               }
             }
-            const batchSize = 300;
-            for (let offset = 0; offset < rows.length; offset += batchSize) {
-              const batch = rows.slice(offset, offset + batchSize);
-              const params = [];
-              const values = batch.map(({ idComp, item, ordem }) => {
-                params.push(
-                  idComp,
-                  item.tipo_item,
-                  item.codigo_item,
-                  item.descricao,
-                  item.unidade,
-                  item.coeficiente,
-                  item.situacao,
-                  ordem,
-                );
-                return '(?,?,?,?,?,?,?,?)';
-              }).join(',');
-              await runC(`
-                INSERT INTO ${itemTable}
-                  (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
-                VALUES ${values}`, params);
+            if (catalogRecoveryEnabled && mysqlRecoveryState.broken) {
+              return substituirItensCatalogMysql(alvos);
             }
-            return rows.length;
+            const batchSize = 300;
+            try {
+              for (let offset = 0; offset < rows.length; offset += batchSize) {
+                const batch = rows.slice(offset, offset + batchSize);
+                const params = [];
+                const values = batch.map(({ idComp, item, ordem }) => {
+                  params.push(
+                    idComp,
+                    item.tipo_item,
+                    item.codigo_item,
+                    item.descricao,
+                    item.unidade,
+                    item.coeficiente,
+                    item.situacao,
+                    ordem,
+                  );
+                  return '(?,?,?,?,?,?,?,?)';
+                }).join(',');
+                await runC(`
+                  INSERT INTO ${itemTable}
+                    (id_composicao,tipo_item,codigo_item,descricao,unidade,coeficiente,situacao_item,ordem)
+                  VALUES ${values}`, params);
+              }
+              return rows.length;
+            } catch (err) {
+              if (!catalogRecoveryEnabled || !isRetryableMysqlConnectionError(err)) throw err;
+              return substituirItensCatalogMysql(alvos);
+            }
           }
 
           for (let compIndex = 0; compIndex < comps.length; compIndex += 1) {
@@ -2260,11 +2485,13 @@ module.exports = function sinapiRoutes(db) {
 
         reportProgress(99, 'Finalizando', 'Consolidando resultado da importacao.');
         await closeDirectMysqlReusable();
+        await closeDirectMysqlItems();
         if (useLongTransaction) await runC('COMMIT');
         out.mensagem = `SINAPI ${mesRef} importado. Insumos: ${out.insumos_inseridos} inseridos, ${out.insumos_atualizados} atualizados. Precos: ${out.precos_inseridos} inseridos, ${out.precos_atualizados} atualizados. Encargos sociais associados: ${out.encargos_sociais_associados}. Composicoes: ${out.composicoes_inseridas} inseridas, ${out.composicoes_atualizadas} atualizadas. Recalculadas: ${out.composicoes_recalculadas}.`;
         return out;
       } catch (err) {
         await closeDirectMysqlReusable();
+        await closeDirectMysqlItems(isRetryableMysqlConnectionError(err));
         if (useLongTransaction) await runC('ROLLBACK').catch(() => {});
         throw err;
       }
@@ -2344,4 +2571,10 @@ module.exports = function sinapiRoutes(db) {
 
 module.exports.normalizarRegimeSinapi = normalizarRegimeSinapi;
 module.exports.expandirComposicoesSinapiPorRegime = expandirComposicoesSinapiPorRegime;
+module.exports._test = {
+  executeSinapiSqlWithRecovery,
+  isRetryableMysqlConnectionError,
+  isSafelyReplayableSinapiSql,
+  normalizeDirectCatalogSql,
+};
 

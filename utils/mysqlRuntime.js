@@ -24,6 +24,8 @@ function mysqlConfig() {
     ssl: String(envValue('MYSQL_SSL')).toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
     multipleStatements: true,
     connectTimeout: Number(envValue('MYSQL_CONNECT_TIMEOUT_MS') || 10000),
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
   };
 }
 
