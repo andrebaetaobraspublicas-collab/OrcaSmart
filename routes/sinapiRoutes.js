@@ -24,6 +24,25 @@ function isRetryableMysqlConnectionError(err) {
     .test(String(err?.message || ''));
 }
 
+function isMysqlPermissionError(err) {
+  const code = String(err?.code || '').toUpperCase();
+  if ([
+    'ER_TABLEACCESS_DENIED_ERROR',
+    'ER_DBACCESS_DENIED_ERROR',
+    'ER_ACCESS_DENIED_ERROR',
+    'ER_SPECIFIC_ACCESS_DENIED_ERROR',
+  ].includes(code)) return true;
+  if ([1044, 1045, 1142, 1227].includes(Number(err?.errno))) return true;
+  return /(?:command|access)\s+denied|permission denied/i.test(String(err?.message || ''));
+}
+
+function isBatchWideSinapiError(err) {
+  if (isMysqlPermissionError(err) || isRetryableMysqlConnectionError(err)) return true;
+  const code = String(err?.code || '').toUpperCase();
+  if (['ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK'].includes(code)) return true;
+  return /excedeu\s+\d+s|lock wait timeout|deadlock/i.test(String(err?.message || ''));
+}
+
 function isSafelyReplayableSinapiSql(sql) {
   return /^\s*(?:SELECT|WITH|SHOW|DESCRIBE|EXPLAIN|UPDATE|DELETE|SET)\b/i.test(String(sql || ''));
 }
@@ -163,7 +182,9 @@ function finishSinapiJob(id, result) {
 function failSinapiJob(id, err) {
   const job = SINAPI_IMPORT_JOBS.get(id);
   if (!job) return null;
-  const message = isRetryableMysqlConnectionError(err)
+  const message = isMysqlPermissionError(err)
+    ? 'A importação SINAPI foi interrompida porque o usuário MySQL não possui permissão para gravar no catálogo referencial. Nenhuma repetição automática foi iniciada.'
+    : isRetryableMysqlConnectionError(err)
     ? 'A conexão com o banco foi interrompida durante a importação SINAPI. Reexecute a mesma referência: o processo retomará os registros já gravados sem duplicá-los.'
     : (err?.message || 'Falha na importacao SINAPI.');
   Object.assign(job, {
@@ -1893,6 +1914,11 @@ module.exports = function sinapiRoutes(db) {
               }
               return rows.length;
             } catch (err) {
+              // Dividir o lote só ajuda quando existe uma linha de dados
+              // inválida. Falhas de conexão ou permissão afetam o lote inteiro
+              // e a divisão recursiva gerava milhares de tentativas, aparentando
+              // travamento no navegador.
+              if (isBatchWideSinapiError(err)) throw err;
               if (rows.length === 1) {
                 out.alertas.push(`Preco ${rows[0].key} nao importado: ${err.message}`);
                 reportProgress(
@@ -2574,6 +2600,8 @@ module.exports.expandirComposicoesSinapiPorRegime = expandirComposicoesSinapiPor
 module.exports._test = {
   executeSinapiSqlWithRecovery,
   isRetryableMysqlConnectionError,
+  isMysqlPermissionError,
+  isBatchWideSinapiError,
   isSafelyReplayableSinapiSql,
   normalizeDirectCatalogSql,
 };

@@ -355,16 +355,22 @@ async function importarAnalitico(db, fonte, files = {}, fields = {}) {
         throw err;
       }
     }
-    const perfis = [];
-    let profissionaisImportados = 0;
-    let insumosAtualizados = 0;
     const codigosPorRegime = new Map();
-    let idDataBase;
-    await repository.run(db, 'BEGIN');
-    try {
-      idDataBase = await repository.resolveCatalogDataBase(db, mesReferencia, `SICRO ${mesReferencia}`);
+    for (const [regime, profissionais] of entradasSicro) {
+      codigosPorRegime.set(regime, new Set(profissionais.map(p => p.codigo_profissional)));
+    }
+
+    const persistir = async (escopo) => {
+      const perfis = [];
+      let profissionaisImportados = 0;
+      let insumosAtualizados = 0;
+      const avisos = [];
+      const idDataBase = await repository.resolveCatalogDataBase(
+        db,
+        mesReferencia,
+        `SICRO ${mesReferencia}`,
+      );
       for (const [regime, profissionais] of entradasSicro) {
-        codigosPorRegime.set(regime, new Set(profissionais.map(p => p.codigo_profissional)));
         const perfilPorCategoria = {};
         for (const categoria of ['Horista', 'Mensalista']) {
           const subset = profissionais.filter(p => p.categoria === categoria);
@@ -376,7 +382,7 @@ async function importarAnalitico(db, fonte, files = {}, fields = {}) {
             D: average(subset.map(p => p.total_grupo_d)),
           };
           const regimeTxt = regime === 'Desonerado' ? 'Com Desoneracao' : 'Sem Desoneracao';
-          const perfil = await repository.upsertCatalogPerfilComTotais(db, {
+          const perfilData = {
             nome_perfil: `SICRO/${uf} - ${mesReferencia} - ${categoria} - ${regimeTxt}`,
             categoria,
             regime,
@@ -387,25 +393,84 @@ async function importarAnalitico(db, fonte, files = {}, fields = {}) {
             vigencia_inicio: null,
             vigencia_fim: null,
             observacoes: 'Conjunto analitico SICRO por profissional. Os percentuais individuais, e nao a media do perfil, sao a fonte de calculo.',
-          }, medias);
-          const inseridos = await repository.replaceCatalogProfissionais(db, table, perfil.id_perfil, subset);
+          };
+          const perfil = escopo === 'catalogo'
+            ? await repository.upsertCatalogPerfilComTotais(db, perfilData, medias)
+            : await repository.upsertPerfilComTotais(db, perfilData, medias);
+          const inseridos = escopo === 'catalogo'
+            ? await repository.replaceCatalogProfissionais(db, table, perfil.id_perfil, subset)
+            : await repository.replaceTenantProfissionais(db, perfil.id_perfil, subset);
           profissionaisImportados += inseridos;
-          perfilPorCategoria[categoria] = perfil.id_perfil;
+          // IDs privados não podem ser gravados em uma FK do catálogo global.
+          // O percentual individual continua sendo sincronizado; o vínculo do
+          // perfil fica representado pelo registro privado consultável.
+          perfilPorCategoria[categoria] = escopo === 'catalogo' ? perfil.id_perfil : null;
           perfis.push(perfil);
         }
-        insumosAtualizados += await repository.syncCatalogEncargosInsumosSicro(
-          db,
-          uf,
-          idDataBase,
-          regime,
-          profissionais,
-          perfilPorCategoria,
-        );
+        try {
+          insumosAtualizados += await repository.syncCatalogEncargosInsumosSicro(
+            db,
+            uf,
+            idDataBase,
+            regime,
+            profissionais,
+            perfilPorCategoria,
+          );
+        } catch (syncErr) {
+          const syncPermissionDenied = syncErr?.code === 'ER_TABLEACCESS_DENIED_ERROR'
+            || Number(syncErr?.errno) === 1142
+            || /(?:insert|update|delete)\s+command\s+denied/i.test(String(syncErr?.message || ''));
+          if (escopo !== 'tenant_override' || !syncPermissionDenied) throw syncErr;
+          avisos.push(
+            'Os perfis profissionais foram importados no escopo privado, mas o usuário MySQL '
+            + 'não possui UPDATE no catálogo de preços; os percentuais dos insumos não foram sincronizados.',
+          );
+        }
       }
+      return {
+        idDataBase,
+        perfis,
+        profissionaisImportados,
+        insumosAtualizados,
+        avisos,
+        escopo,
+      };
+    };
+
+    let persisted;
+    await repository.run(db, 'BEGIN');
+    try {
+      persisted = await persistir('catalogo');
       await repository.run(db, 'COMMIT');
     } catch (err) {
       await repository.run(db, 'ROLLBACK').catch(() => {});
-      throw err;
+      const permissionDenied = err?.code === 'ER_TABLEACCESS_DENIED_ERROR'
+        || Number(err?.errno) === 1142
+        || /(?:insert|update|delete)\s+command\s+denied/i.test(String(err?.message || ''));
+      if (!permissionDenied) throw err;
+
+      await repository.run(db, 'BEGIN');
+      try {
+        persisted = await persistir('tenant_override');
+        await repository.run(db, 'COMMIT');
+      } catch (fallbackErr) {
+        await repository.run(db, 'ROLLBACK').catch(() => {});
+        if (
+          fallbackErr?.code === 'ER_TABLEACCESS_DENIED_ERROR'
+          || Number(fallbackErr?.errno) === 1142
+          || /(?:insert|update|delete)\s+command\s+denied/i.test(String(fallbackErr?.message || ''))
+        ) {
+          const permissionError = new Error(
+            'A importacao SICRO foi interrompida porque o usuario MySQL da aplicacao nao possui '
+            + 'permissão para atualizar o catalogo referencial. Nenhum dado parcial foi mantido. '
+            + 'Conceda INSERT/UPDATE/DELETE nas tabelas de encargos e tente novamente.',
+          );
+          permissionError.status = 503;
+          permissionError.code = fallbackErr.code;
+          throw permissionError;
+        }
+        throw fallbackErr;
+      }
     }
 
     const onerados = codigosPorRegime.get('Normal') || new Set();
@@ -417,16 +482,23 @@ async function importarAnalitico(db, fonte, files = {}, fields = {}) {
     return {
       mensagem: `Encargos SICRO/${uf} de ${mesReferencia} importados por profissional.`,
       mes_referencia: mesReferencia,
-      id_data_base: idDataBase,
-      perfis_atualizados: perfis.length,
-      profissionais_importados: profissionaisImportados,
+      id_data_base: persisted.idDataBase,
+      perfis_atualizados: persisted.perfis.length,
+      profissionais_importados: persisted.profissionaisImportados,
       profissionais_por_regime: {
         onerado: onerados.size,
         desonerado: desonerados.size,
       },
       codigos_divergentes_entre_planilhas: divergentes,
-      insumos_atualizados: insumosAtualizados,
-      perfis,
+      insumos_atualizados: persisted.insumosAtualizados,
+      escopo_persistencia: persisted.escopo,
+      aviso: [
+        ...(persisted.escopo === 'tenant_override'
+          ? ['O usuário MySQL não pode inserir no catálogo global; os perfis foram gravados com segurança no escopo privado do tenant.']
+          : []),
+        ...(persisted.avisos || []),
+      ].join(' ') || null,
+      perfis: persisted.perfis,
     };
   }
 

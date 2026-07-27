@@ -4,6 +4,8 @@ const sinapiRoutes = require('../routes/sinapiRoutes');
 const {
   executeSinapiSqlWithRecovery,
   isRetryableMysqlConnectionError,
+  isMysqlPermissionError,
+  isBatchWideSinapiError,
   isSafelyReplayableSinapiSql,
   normalizeDirectCatalogSql,
 } = sinapiRoutes._test;
@@ -12,6 +14,15 @@ async function run() {
   assert.strictEqual(isRetryableMysqlConnectionError({ code: 'EPIPE', message: 'write EPIPE' }), true);
   assert.strictEqual(isRetryableMysqlConnectionError({ code: 'ECONNRESET', message: 'socket reset' }), true);
   assert.strictEqual(isRetryableMysqlConnectionError({ code: 'ER_PARSE_ERROR', message: 'syntax error' }), false);
+  assert.strictEqual(isMysqlPermissionError({
+    code: 'ER_TABLEACCESS_DENIED_ERROR',
+    errno: 1142,
+    message: 'INSERT command denied to user for table perfis_encargos',
+  }), true);
+  assert.strictEqual(isMysqlPermissionError({ code: 'EPIPE', message: 'write EPIPE' }), false);
+  assert.strictEqual(isBatchWideSinapiError({ code: 'EPIPE', message: 'write EPIPE' }), true);
+  assert.strictEqual(isBatchWideSinapiError({ message: 'Gravacao excedeu 15s.' }), true);
+  assert.strictEqual(isBatchWideSinapiError({ code: 'ER_BAD_NULL_ERROR', message: 'Column cannot be null' }), false);
 
   assert.strictEqual(isSafelyReplayableSinapiSql('SELECT * FROM catalog.composicoes'), true);
   assert.strictEqual(isSafelyReplayableSinapiSql('UPDATE catalog.composicoes SET custo_unitario=?'), true);

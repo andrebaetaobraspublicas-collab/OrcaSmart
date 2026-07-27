@@ -936,6 +936,134 @@ async function replaceCatalogProfissionais(db, table, idPerfil, profissionais = 
   return inseridos;
 }
 
+const TENANT_PROFISSIONAL_MARKER = 'SICRO_PROFISSIONAL_V1';
+
+async function replaceTenantProfissionais(db, idPerfil, profissionais = []) {
+  const scoped = scopedId(idPerfil);
+  if (scoped.scope !== 'tenant') {
+    throw new Error('Perfil privado invalido para os encargos profissionais SICRO.');
+  }
+  const grupo = await one(db, `
+    SELECT rowid AS id_grupo_enc
+    FROM tenant_grupos_encargos
+    WHERE id_perfil=? AND letra='A'
+      AND COALESCE(tenant_override_status,'active')='active'
+    ORDER BY rowid
+    LIMIT 1`, [scoped.value]);
+  if (!grupo?.id_grupo_enc) {
+    throw new Error('Grupo de armazenamento do perfil SICRO nao encontrado.');
+  }
+  await run(db, `
+    UPDATE tenant_itens_encargo
+    SET tenant_override_status='deleted',tenant_updated_at=?
+    WHERE id_grupo_enc=? AND base_legal=?
+      AND COALESCE(tenant_override_status,'active')='active'`, [
+    new Date().toISOString(),
+    grupo.id_grupo_enc,
+    TENANT_PROFISSIONAL_MARKER,
+  ]);
+  let inseridos = 0;
+  for (const profissional of profissionais) {
+    const codigo = String(profissional.codigo_profissional || '').trim();
+    const descricao = String(profissional.descricao || '').trim();
+    if (!codigo || !descricao) continue;
+    const payload = {
+      version: 1,
+      codigo_profissional: codigo,
+      descricao,
+      unidade: profissional.unidade || null,
+      total_grupo_a: toNum(profissional.total_grupo_a),
+      total_grupo_b: toNum(profissional.total_grupo_b),
+      total_grupo_c: toNum(profissional.total_grupo_c),
+      total_grupo_d: toNum(profissional.total_grupo_d),
+      encargo_total: toNum(profissional.encargo_total),
+      parcelas: profissional.parcelas || [],
+      total_calculado: profissional.total_calculado ?? null,
+      divergencia_total: profissional.divergencia_total ?? null,
+    };
+    await insertTenantItem(db, {
+      id_grupo_enc: grupo.id_grupo_enc,
+      descricao: `${codigo} - ${descricao}`,
+      base_legal: TENANT_PROFISSIONAL_MARKER,
+      percentual: 0,
+      observacoes: JSON.stringify(payload),
+      ordem: 1000 + inseridos,
+    });
+    inseridos += 1;
+  }
+  return inseridos;
+}
+
+function parseTenantProfissional(row) {
+  try {
+    const payload = JSON.parse(row.observacoes || '{}');
+    if (!payload.codigo_profissional) return null;
+    return {
+      ...payload,
+      id_profissional_enc: `tenantitem:${row.tenant_item_id}`,
+      id_perfil: `tenant:${row.tenant_perfil_id}`,
+      categoria: row.categoria,
+      regime: row.regime,
+      uf_referencia: row.uf_referencia,
+      id_data_base: row.id_data_base,
+      fonte_referencia: row.fonte_referencia,
+      vigencia: row.vigencia,
+      vigencia_inicio: row.vigencia_inicio,
+      vigencia_fim: row.vigencia_fim,
+      db_mes: row.db_mes,
+      db_ano: row.db_ano,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function listTenantProfissionais(db, query = {}) {
+  if (!(await hasTenantEncargosOverrides(db))) return [];
+  const where = [
+    "COALESCE(ti.tenant_override_status,'active')='active'",
+    "COALESCE(tg.tenant_override_status,'active')='active'",
+    "COALESCE(tp.tenant_override_status,'active')='active'",
+    'ti.base_legal=?',
+  ];
+  const params = [TENANT_PROFISSIONAL_MARKER];
+  if (query.uf) { where.push('tp.uf_referencia=?'); params.push(query.uf); }
+  if (query.categoria) { where.push('tp.categoria=?'); params.push(query.categoria); }
+  if (query.regime) { where.push('tp.regime=?'); params.push(query.regime); }
+  if (query.id_perfil) {
+    const scoped = scopedId(query.id_perfil);
+    if (scoped.scope !== 'tenant') return [];
+    where.push('tp.rowid=?');
+    params.push(scoped.value);
+  }
+  const mesFiltro = parseMesReferencia(query.mes_referencia || query.vigencia_inicio_mes);
+  if (mesFiltro) {
+    where.push('db2.mes=? AND db2.ano=?');
+    params.push(mesFiltro.mes, mesFiltro.ano);
+  }
+  const rows = await all(db, `
+    SELECT ti.rowid AS tenant_item_id,ti.observacoes,
+           tp.rowid AS tenant_perfil_id,tp.categoria,tp.regime,tp.uf_referencia,
+           tp.id_data_base,tp.fonte_referencia,tp.vigencia,tp.vigencia_inicio,tp.vigencia_fim,
+           db2.mes AS db_mes,db2.ano AS db_ano
+    FROM tenant_itens_encargo ti
+    JOIN tenant_grupos_encargos tg ON tg.rowid=ti.id_grupo_enc
+    JOIN tenant_perfis_encargos tp ON tp.rowid=tg.id_perfil
+    LEFT JOIN datas_base db2 ON db2.id_data_base=tp.id_data_base
+    WHERE ${where.join(' AND ')}
+    ORDER BY tp.uf_referencia,db2.ano DESC,db2.mes DESC,tp.categoria,ti.ordem
+    LIMIT 10000`, params);
+  const parsed = rows.map(parseTenantProfissional).filter(Boolean);
+  return parsed.filter((row) => {
+    if (query.profissional && String(row.codigo_profissional) !== String(query.profissional)) return false;
+    if (query.q) {
+      const term = String(query.q).toLowerCase();
+      if (!`${row.codigo_profissional} ${row.descricao}`.toLowerCase().includes(term)) return false;
+    }
+    return true;
+  });
+}
+
 async function syncCatalogEncargosInsumosSicro(
   db,
   uf,
@@ -1174,7 +1302,7 @@ async function listProfissionais(db, table, query = {}) {
     where.push('db2.mes=? AND db2.ano=?');
     params.push(mesFiltro.mes, mesFiltro.ano);
   }
-  return all(db, `
+  const catalogRows = await all(db, `
     SELECT ep.codigo_profissional, ep.descricao, ep.unidade,
            pe.uf_referencia, pe.categoria, pe.id_data_base, pe.fonte_referencia,
            pe.vigencia, pe.vigencia_inicio, pe.vigencia_fim,
@@ -1202,11 +1330,51 @@ async function listProfissionais(db, table, query = {}) {
              pe.vigencia_inicio,pe.vigencia_fim,db2.mes,db2.ano
     ORDER BY pe.uf_referencia,db2.ano DESC,db2.mes DESC,pe.categoria,ep.codigo_profissional
     LIMIT 5000`, params);
+  if (table !== 'encargos_sicro_profissionais') return catalogRows;
+  const tenantRows = await listTenantProfissionais(db, query);
+  const grouped = new Map();
+  for (const row of tenantRows) {
+    const key = [
+      row.codigo_profissional,row.descricao,row.unidade,row.uf_referencia,
+      row.categoria,row.id_data_base,row.fonte_referencia,row.vigencia,
+    ].join('|');
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        codigo_profissional: row.codigo_profissional,
+        descricao: row.descricao,
+        unidade: row.unidade,
+        uf_referencia: row.uf_referencia,
+        categoria: row.categoria,
+        id_data_base: row.id_data_base,
+        fonte_referencia: row.fonte_referencia,
+        vigencia: row.vigencia,
+        vigencia_inicio: row.vigencia_inicio,
+        vigencia_fim: row.vigencia_fim,
+        db_mes: row.db_mes,
+        db_ano: row.db_ano,
+      });
+    }
+    const target = grouped.get(key);
+    const prefix = row.regime === 'Desonerado' ? 'desonerado' : 'normal';
+    target[`${prefix}_profissional_id`] = row.id_profissional_enc;
+    target[`${prefix}_perfil_id`] = row.id_perfil;
+    target[`${prefix}_total`] = row.encargo_total;
+    target[`${prefix}_a`] = row.total_grupo_a;
+    target[`${prefix}_b`] = row.total_grupo_b;
+    target[`${prefix}_c`] = row.total_grupo_c;
+    target[`${prefix}_d`] = row.total_grupo_d;
+  }
+  return [...grouped.values(), ...catalogRows].slice(0, 5000);
 }
 
 async function getCatalogProfissional(db, table, idProfissional) {
   if (!['encargos_sicro_profissionais', 'encargos_goinfra_profissionais'].includes(table)) {
     throw new Error('Tabela analitica de encargos invalida.');
+  }
+  const tenantMatch = /^tenantitem:(\d+)$/.exec(String(idProfissional || ''));
+  if (tenantMatch && table === 'encargos_sicro_profissionais') {
+    const rows = await listTenantProfissionais(db);
+    return rows.find(row => row.id_profissional_enc === `tenantitem:${tenantMatch[1]}`) || null;
   }
   const schema = await catalogSchema(db);
   if (!schema) await ensureSchema(db);
@@ -1232,6 +1400,52 @@ async function updateCatalogProfissional(db, table, idProfissional, data = {}) {
     D: toNum(data.total_grupo_d, toNum(atual.total_grupo_d)),
   };
   valores.total = Number((valores.A + valores.B + valores.C + valores.D).toFixed(8));
+  const tenantMatch = /^tenantitem:(\d+)$/.exec(String(idProfissional || ''));
+  if (tenantMatch && table === 'encargos_sicro_profissionais') {
+    const payload = {
+      version: 1,
+      codigo_profissional: atual.codigo_profissional,
+      descricao: valores.descricao,
+      unidade: valores.unidade,
+      total_grupo_a: valores.A,
+      total_grupo_b: valores.B,
+      total_grupo_c: valores.C,
+      total_grupo_d: valores.D,
+      encargo_total: valores.total,
+      parcelas: atual.parcelas || [],
+      total_calculado: valores.total,
+      divergencia_total: 0,
+    };
+    await run(db, `
+      UPDATE tenant_itens_encargo
+      SET descricao=?,observacoes=?,tenant_updated_at=?
+      WHERE rowid=? AND base_legal=?
+        AND COALESCE(tenant_override_status,'active')='active'`, [
+      `${atual.codigo_profissional} - ${valores.descricao}`,
+      JSON.stringify(payload),
+      new Date().toISOString(),
+      Number(tenantMatch[1]),
+      TENANT_PROFISSIONAL_MARKER,
+    ]);
+    await syncCatalogEncargosInsumosSicro(
+      db,
+      atual.uf_referencia,
+      atual.id_data_base,
+      atual.regime,
+      [{
+        codigo_profissional: atual.codigo_profissional,
+        categoria: atual.categoria,
+        encargo_total: valores.total,
+      }],
+      {},
+    ).catch((err) => {
+      const denied = err?.code === 'ER_TABLEACCESS_DENIED_ERROR'
+        || Number(err?.errno) === 1142
+        || /update\s+command\s+denied/i.test(String(err?.message || ''));
+      if (!denied) throw err;
+    });
+    return getCatalogProfissional(db, table, idProfissional);
+  }
   const schema = await catalogSchema(db);
   if (!schema) await ensureSchema(db);
   await run(db, `
@@ -1268,6 +1482,45 @@ async function updateCatalogProfissional(db, table, idProfissional, data = {}) {
 async function deleteCatalogProfissional(db, table, idProfissional) {
   const atual = await getCatalogProfissional(db, table, idProfissional);
   if (!atual) return { changes: 0 };
+  const tenantMatch = /^tenantitem:(\d+)$/.exec(String(idProfissional || ''));
+  if (tenantMatch && table === 'encargos_sicro_profissionais') {
+    const result = await run(db, `
+      UPDATE tenant_itens_encargo
+      SET tenant_override_status='deleted',tenant_updated_at=?
+      WHERE rowid=? AND base_legal=?
+        AND COALESCE(tenant_override_status,'active')='active'`, [
+      new Date().toISOString(),
+      Number(tenantMatch[1]),
+      TENANT_PROFISSIONAL_MARKER,
+    ]);
+    const schema = await catalogSchema(db);
+    const desonerado = atual.regime === 'Desonerado';
+    const percentualColuna = desonerado
+      ? 'encargos_sociais_desonerado_percentual'
+      : 'encargos_sociais_onerado_percentual';
+    const perfilColuna = desonerado
+      ? 'id_perfil_encargo_desonerado'
+      : 'id_perfil_encargo_onerado';
+    await run(db, `
+      UPDATE ${schema}precos_insumos
+      SET ${percentualColuna}=NULL,${perfilColuna}=NULL
+      WHERE id_data_base=?
+        AND UPPER(COALESCE(uf_referencia,''))=UPPER(?)
+        AND id_insumo IN (
+          SELECT id_insumo FROM ${schema}insumos
+          WHERE UPPER(COALESCE(origem,''))='SICRO' AND codigo_insumo=?
+        )`, [
+      atual.id_data_base,
+      atual.uf_referencia,
+      atual.codigo_profissional,
+    ]).catch((err) => {
+      const denied = err?.code === 'ER_TABLEACCESS_DENIED_ERROR'
+        || Number(err?.errno) === 1142
+        || /update\s+command\s+denied/i.test(String(err?.message || ''));
+      if (!denied) throw err;
+    });
+    return result;
+  }
   const schema = await catalogSchema(db);
   if (!schema) await ensureSchema(db);
   const result = await run(
@@ -1686,6 +1939,7 @@ module.exports = {
   resolveCatalogDataBase,
   upsertCatalogPerfilComTotais,
   replaceCatalogProfissionais,
+  replaceTenantProfissionais,
   syncCatalogEncargosInsumosSicro,
   replaceProfissionais,
   syncEncargosInsumosMaoObra,
