@@ -1009,6 +1009,11 @@ module.exports = function sinapiRoutes(db) {
       const primaryAllC = (sql, params = []) => new Promise((resolve, reject) => conn.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || [])));
       const primaryRunC = (sql, params = []) => new Promise((resolve, reject) => conn.run(sql, params, function(err) { err ? reject(err) : resolve({ lastID: this.lastID, changes: this.changes }); }));
       const mysqlRecoveryState = { broken: false, warned: false, lastError: null };
+      // O importador estável usa uma única conexão controlada pelo runtime.
+      // A recuperação por conexões paralelas foi introduzida para contornar
+      // quedas pontuais do MySQL, mas passou a deixar transações e cursores em
+      // estados diferentes durante cargas grandes. Mantemos o código atrás de
+      // uma opção explícita para diagnóstico, sem ativá-lo em produção.
       let catalogRecoveryEnabled = false;
       let executeDirectMysqlReusable;
       const recoverCatalogMysql = async (method, sql, params = []) => {
@@ -1154,7 +1159,7 @@ module.exports = function sinapiRoutes(db) {
           directMysqlReusableConn = await createMysqlConnection();
           directMysqlReusableUses = 0;
           await directMysqlReusableConn.query('SET SESSION lock_wait_timeout=3').catch(() => {});
-          await directMysqlReusableConn.query('SET SESSION max_statement_time=90').catch(() => {});
+          await directMysqlReusableConn.query('SET SESSION max_statement_time=20').catch(() => {});
         }
         let timedOut = false;
         const execution = directMysqlReusableConn.execute(sql, params);
@@ -1260,7 +1265,7 @@ module.exports = function sinapiRoutes(db) {
       const useLongTransaction = databaseEngine() !== 'mysql';
       if (databaseEngine() === 'mysql') {
         await runC('SET SESSION lock_wait_timeout=5').catch(() => {});
-        await runC('SET SESSION max_statement_time=90').catch(() => {});
+        await runC('SET SESSION max_statement_time=15').catch(() => {});
       }
       if (useLongTransaction) await runC('BEGIN IMMEDIATE');
       try {
@@ -1268,7 +1273,9 @@ module.exports = function sinapiRoutes(db) {
         const adminImport = req.user && req.user.role === 'admin';
         const hasCatalogComps = databaseEngine() === 'mysql' ? true : await tableC('catalog', 'composicoes');
         const useCatalogReferencial = adminImport && hasCatalogComps;
-        catalogRecoveryEnabled = databaseEngine() === 'mysql' && useCatalogReferencial;
+        catalogRecoveryEnabled = databaseEngine() === 'mysql'
+          && useCatalogReferencial
+          && String(process.env.SINAPI_IMPORT_MULTI_CONNECTION_RECOVERY || '') === '1';
         const refPrefix = useCatalogReferencial ? 'catalog.' : '';
         const dataBaseTable = `${refPrefix}datas_base`;
         const fonteTable = `${refPrefix}fontes_referencia`;

@@ -57,8 +57,11 @@ async function main() {
     assert(profileLookup, 'a busca do perfil existente deve ser executada');
     assert(
       profileLookup.sql.includes("CAST(COALESCE(uf_referencia,'') AS BINARY)")
+        && profileLookup.sql.includes("CAST(COALESCE(fonte_referencia,'') AS BINARY)")
+        && profileLookup.sql.includes("CAST(COALESCE(categoria,'') AS BINARY)")
+        && profileLookup.sql.includes("CAST(COALESCE(regime,'') AS BINARY)")
         && profileLookup.sql.includes("CAST(COALESCE(?,'') AS BINARY)"),
-      'a UF do perfil deve ser comparada com collation binaria explicita no MySQL',
+      'fonte, UF, categoria e regime devem usar collation binaria explicita no MySQL',
     );
 
     await repository.syncCatalogEncargosInsumosSicro(

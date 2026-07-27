@@ -791,16 +791,25 @@ async function upsertCatalogPerfilComTotais(db, data = {}, totais = {}) {
   const schema = await catalogSchema(db);
   if (!schema) await ensureSchema(db);
   const fonte = normFonte(data.fonte_referencia || 'SICRO');
+  const fonteComparison = isMysqlRuntime()
+    ? "CAST(COALESCE(fonte_referencia,'') AS BINARY)=CAST(COALESCE(?,'') AS BINARY)"
+    : "COALESCE(fonte_referencia,'')=COALESCE(?,'')";
   const ufComparison = isMysqlRuntime()
     ? "CAST(COALESCE(uf_referencia,'') AS BINARY)=CAST(COALESCE(?,'') AS BINARY)"
     : "COALESCE(uf_referencia,'')=COALESCE(?,'')";
+  const categoriaComparison = isMysqlRuntime()
+    ? "CAST(COALESCE(categoria,'') AS BINARY)=CAST(COALESCE(?,'') AS BINARY)"
+    : "COALESCE(categoria,'')=COALESCE(?,'')";
+  const regimeComparison = isMysqlRuntime()
+    ? "CAST(COALESCE(regime,'') AS BINARY)=CAST(COALESCE(?,'') AS BINARY)"
+    : "COALESCE(regime,'')=COALESCE(?,'')";
   const existente = await one(db, `
     SELECT id_perfil
     FROM ${schema}perfis_encargos
-    WHERE fonte_referencia=?
+    WHERE ${fonteComparison}
       AND ${ufComparison}
-      AND categoria=?
-      AND regime=?
+      AND ${categoriaComparison}
+      AND ${regimeComparison}
       AND COALESCE(id_data_base,0)=COALESCE(?,0)
     ORDER BY id_perfil DESC
     LIMIT 1`, [
