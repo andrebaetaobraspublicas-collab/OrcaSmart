@@ -142,6 +142,59 @@ async function main() {
       'arestas cíclicas devem ser interrompidas sem gerar folhas artificiais ou duplicidade',
     );
     assert.strictEqual(curvaCiclica.total_geral, 5);
+
+    await exec(db, `
+      INSERT INTO orcamentos VALUES
+        (3,1,1,'SP','Onerado',0,'ABC com regime legado divergente','1.0','Em elaboracao');
+      INSERT INTO orcamento_sintetico VALUES
+        (3,3,'1.1','item',1,'LEG-ROOT','SINAPI','Raiz legada desonerada','h',1,20,'7');
+      INSERT INTO catalog.composicoes VALUES
+        (7,'LEG-ROOT','SINAPI','Unitário','Raiz legada desonerada','h','SP','04/2026','COM CUSTO',20),
+        (8,'LEG-AUX','SINAPI','Unitário','Auxiliar desonerada','h','SP','04/2026','COM CUSTO',10),
+        (9,'LEG-AUX','SINAPI','Unitário','Auxiliar onerada','h','SP','04/2026','Onerado',10);
+      INSERT INTO catalog.itens_composicao VALUES
+        (11,7,'LEG-AUX','Auxiliar do mesmo regime da raiz','h',2,'COMPOSICAO',10,20,1),
+        (12,8,'MAT-A','Folha desonerada correta','kg',1,'MATERIAL',10,10,1),
+        (13,9,'MAT-B','Folha onerada incorreta para este ramo','kg',2,'MATERIAL',5,10,1);
+    `);
+    const curvaLegada = await repo.curvaAbcInsumos(db, 3);
+    assert.deepStrictEqual(
+      curvaLegada.itens.map(item => item.codigo),
+      ['MAT-A'],
+      'cada ramo deve herdar o regime da composição vinculada, mesmo se o cabeçalho legado divergir',
+    );
+    assert.strictEqual(curvaLegada.itens[0].quantidade_total, 2);
+    assert.strictEqual(curvaLegada.total_geral, 20);
+
+    await exec(db, `
+      INSERT INTO orcamentos VALUES
+        (4,1,1,'SP','Onerado',0,'ABC em lote','1.0','Em elaboracao');
+      WITH RECURSIVE numeros(n) AS (
+        SELECT 1
+        UNION ALL
+        SELECT n + 1 FROM numeros WHERE n < 250
+      )
+      INSERT INTO orcamento_sintetico
+        (id_item,id_orcamento,item_num,tipo_linha,ordem,codigo,fonte,descricao,
+         unidade,quantidade,custo_unitario,id_composicao)
+      SELECT 1000+n,4,'1.'||n,'item',n,'100','SINAPI','Servico repetido',
+             'm2',1,140,'1'
+      FROM numeros;
+    `);
+    const traceInicioLote = traces.length;
+    const inicioLote = Date.now();
+    const curvaLote = await repo.curvaAbcInsumos(db, 4);
+    const duracaoLoteMs = Date.now() - inicioLote;
+    const tracesLote = traces.slice(traceInicioLote);
+    assert.strictEqual(curvaLote.total_geral, 35000);
+    assert(
+      tracesLote.filter(sql => /FROM catalog\.itens_composicao/i.test(sql)).length <= 3,
+      'serviços repetidos devem compartilhar o mesmo grafo carregado em lote',
+    );
+    assert(
+      duracaoLoteMs < 1500,
+      `a curva em lote deve permanecer rápida; duração observada: ${duracaoLoteMs} ms`,
+    );
     console.log('orcamentoCurvaAbcInsumos.test.js: OK');
   } finally {
     await new Promise(resolve => db.close(resolve));

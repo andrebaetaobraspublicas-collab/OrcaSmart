@@ -2806,6 +2806,18 @@ function adicionarComposicaoAoCache(cache, row) {
   });
 }
 
+function contextoAbcDaComposicao(composicao, contexto = {}) {
+  const regimeEfetivo = regimePrevidenciarioComposicao(composicao);
+  return {
+    ...contexto,
+    // A Curva ABC deve decompor a memória da composição efetivamente
+    // vinculada. Orçamentos legados podem ter um regime no cabeçalho diferente
+    // do registro vinculado; trocar para o cabeçalho no meio do grafo transforma
+    // composições auxiliares válidas em folhas artificiais.
+    regime: regimeEfetivo || contexto?.regime || '',
+  };
+}
+
 async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
   const composicoes = new Map();
   const itens = new Map();
@@ -2853,6 +2865,7 @@ async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
           fonte: linha.fonte || pai?.fonte || '',
           descricao: linha.descricao,
           unidade: linha.unidade,
+          _abc_contexto: contextoAbcDaComposicao(pai, contexto),
         });
       });
     }
@@ -2868,7 +2881,12 @@ async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
     mesclarCachesDeListas(cache, candidatas);
     const proxima = [];
     auxiliares.forEach((auxiliar) => {
-      const escolhida = escolherComposicaoEstritaParaItem(auxiliar, contexto, cache, []);
+      const escolhida = escolherComposicaoEstritaParaItem(
+        auxiliar,
+        auxiliar._abc_contexto || contexto,
+        cache,
+        [],
+      );
       const id = String(escolhida?.id_composicao || '').trim();
       if (!id || composicoes.has(id)) return;
       adicionarComposicaoAoCache(cache, escolhida);
@@ -3246,12 +3264,13 @@ async function curvaAbcInsumos(db, idOrcamento) {
       const qtd = fator * coef;
       if (!qtd) continue;
       if (isComposicaoItemRobusto(item)) {
+        const contextoFilho = contextoAbcDaComposicao(composicaoPai, contexto);
         const sub = escolherComposicaoEstritaParaItem({
           codigo: item.codigo_item,
           fonte: item.fonte || item._fonte_pai || composicaoPai?.fonte || '',
           descricao: item.descricao,
           unidade: item.unidade,
-        }, contexto, compCache, []);
+        }, contextoFilho, compCache, []);
         if (sub) {
           const subId = String(sub.id_composicao || '').trim();
           // Uma aresta cíclica não é uma folha analítica e não deve reaparecer
