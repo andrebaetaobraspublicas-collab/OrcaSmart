@@ -161,6 +161,51 @@ async function main() {
     assert.strictEqual(tabela.length, 2);
     assert.strictEqual(tabela[0].normal_total, 30.2);
     assert.strictEqual(tabela[0].desonerado_total, 20.2);
+    assert(tabela[0].normal_profissional_id);
+    assert(tabela[0].desonerado_profissional_id);
+
+    const filtrada = await repository.listProfissionais(db, 'encargos_sicro_profissionais', {
+      uf: 'SP',
+      mes_referencia: '04/2026',
+      profissional: 'P1001',
+    });
+    assert.strictEqual(filtrada.length, 1);
+    assert.strictEqual(filtrada[0].codigo_profissional, 'P1001');
+
+    const atualizado = await repository.updateCatalogProfissional(
+      db,
+      'encargos_sicro_profissionais',
+      filtrada[0].normal_profissional_id,
+      {
+        descricao: 'Ajudante revisado',
+        unidade: 'h',
+        total_grupo_a: 21,
+        total_grupo_b: 6,
+        total_grupo_c: 3,
+        total_grupo_d: 2,
+      },
+    );
+    assert.strictEqual(atualizado.descricao, 'Ajudante revisado');
+    assert.strictEqual(atualizado.encargo_total, 32);
+    const precoAtualizado = await all(db, `
+      SELECT p.encargos_sociais_onerado_percentual AS onerado
+      FROM precos_insumos p
+      JOIN insumos i ON i.id_insumo=p.id_insumo
+      WHERE p.uf_referencia='SP' AND i.codigo_insumo='P1001'`);
+    assert.strictEqual(precoAtualizado[0].onerado, 32);
+
+    const excluido = await repository.deleteCatalogProfissional(
+      db,
+      'encargos_sicro_profissionais',
+      filtrada[0].desonerado_profissional_id,
+    );
+    assert.strictEqual(excluido.changes, 1);
+    const precoAposExclusao = await all(db, `
+      SELECT p.encargos_sociais_desonerado_percentual AS desonerado
+      FROM precos_insumos p
+      JOIN insumos i ON i.id_insumo=p.id_insumo
+      WHERE p.uf_referencia='SP' AND i.codigo_insumo='P1001'`);
+    assert.strictEqual(precoAposExclusao[0].desonerado, null);
 
     const novamente = await service.importarAnalitico(db, 'SICRO', files, {
       uf: 'SP',

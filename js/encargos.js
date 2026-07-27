@@ -33,6 +33,9 @@ Object.assign(API, {
       recalcD:    (id)    => API.post(`/encargos/perfis/${id}/recalcular-d`),
       aplicarOrcamento: (id,d) => API.post(`/encargos/perfis/${id}/aplicar-orcamento`, d),
       sicroAnalitico: (p={}) => API.get('/encargos/sicro-profissionais?'+new URLSearchParams(p).toString()),
+      sicroProfissional: (id) => API.get(`/encargos/sicro-profissionais/${id}`),
+      updateSicroProfissional: (id,d) => API.put(`/encargos/sicro-profissionais/${id}`, d),
+      deleteSicroProfissional: (id) => API.delete(`/encargos/sicro-profissionais/${id}`),
       goinfraAnalitico: (p={}) => API.get('/encargos/goinfra-profissionais?'+new URLSearchParams(p).toString()),
       importarReferenciais: () => API.post('/encargos/importar-referenciais', {}),
       importarSeinfra: (formData) => fetch(`${API.BASE}/encargos/importar-seinfra`, { method:'POST', body:formData }).then(async r => {
@@ -83,7 +86,8 @@ Router.register('encargos', async () => {
 
   let perfis = [], datasBase = [], sicroAnalitico = [], goinfraAnalitico = [];
   let perfilAtivo = null, gruposAtivos = [];
-  const filtros = { fonte:'', uf:'', categoria:'', regime:'', vigencia_inicio_mes:'', vigencia_fim_mes:'', q:'' };
+  const filtros = { fonte:'', uf:'', categoria:'', regime:'', profissional:'', vigencia_inicio_mes:'', vigencia_fim_mes:'', q:'' };
+  let opcoesProfissionaisSicro = [];
 
   async function carregar() {
     try {
@@ -99,6 +103,17 @@ Router.register('encargos', async () => {
           API.encargos.perfis.list(filtros),
           API.encargos.perfis.sicroAnalitico(filtros),
         ]);
+        if (!filtros.profissional) {
+          opcoesProfissionaisSicro = [...new Map(
+            sicroAnalitico.map(row => [
+              String(row.codigo_profissional || ''),
+              {
+                codigo: String(row.codigo_profissional || ''),
+                descricao: String(row.descricao || ''),
+              },
+            ]),
+          ).values()].filter(item => item.codigo);
+        }
         goinfraAnalitico = [];
       } else if (filtros.fonte === 'GOINFRA') {
         [perfis, goinfraAnalitico] = await Promise.all([
@@ -143,7 +158,7 @@ Router.register('encargos', async () => {
         <div class="toolbar" style="flex-wrap:wrap;gap:10px">
           <div class="search-box" style="min-width:220px">
             ${Utils.icons.search}
-            <input type="text" id="filtroQ" placeholder="Buscar perfil..." value="${Utils.esc(filtros.q)}">
+            <input type="text" id="filtroQ" placeholder="${mostrandoSicro ? 'Buscar código ou profissional SICRO...' : 'Buscar perfil...'}" value="${Utils.esc(filtros.q)}">
           </div>
           <select class="filter-select" id="filtroFonte" style="min-width:170px">
             <option value="">Todas as fontes</option>
@@ -160,6 +175,14 @@ Router.register('encargos', async () => {
             <option value="Profissional SICRO" ${filtros.categoria==='Profissional SICRO'?'selected':''}>SICRO por profissional</option>
             <option value="Profissional GOINFRA" ${filtros.categoria==='Profissional GOINFRA'?'selected':''}>GOINFRA por profissional</option>
           </select>
+          ${mostrandoSicro ? `
+          <select class="filter-select" id="filtroProfissional" style="min-width:240px">
+            <option value="">Todos os profissionais SICRO</option>
+            ${opcoesProfissionaisSicro.map(item => `
+              <option value="${Utils.esc(item.codigo)}" ${filtros.profissional===item.codigo?'selected':''}>
+                ${Utils.esc(item.codigo)} — ${Utils.esc(item.descricao)}
+              </option>`).join('')}
+          </select>` : ''}
           <select class="filter-select" id="filtroReg">
             <option value="">Com + Sem Desoneração</option>
             <option value="Normal"     ${filtros.regime==='Normal'?'selected':''}>Sem Desoneração (Normal)</option>
@@ -216,11 +239,12 @@ Router.register('encargos', async () => {
     document.getElementById('filtroFonte').addEventListener('change', e=>{ filtros.fonte=e.target.value; carregarPerfis(); });
     document.getElementById('filtroUF').addEventListener('change', e=>{ filtros.uf=e.target.value; carregarPerfis(); });
     document.getElementById('filtroCat').addEventListener('change', e=>{ filtros.categoria=e.target.value; carregarPerfis(); });
+    document.getElementById('filtroProfissional')?.addEventListener('change', e=>{ filtros.profissional=e.target.value; carregarPerfis(); });
     document.getElementById('filtroReg').addEventListener('change', e=>{ filtros.regime=e.target.value; carregarPerfis(); });
     document.getElementById('filtroVigIni').addEventListener('change', e=>{ filtros.vigencia_inicio_mes=e.target.value; carregarPerfis(); });
     document.getElementById('filtroVigFim').addEventListener('change', e=>{ filtros.vigencia_fim_mes=e.target.value; carregarPerfis(); });
     document.getElementById('btnLimparFiltros').addEventListener('click', ()=>{
-      filtros.fonte=''; filtros.uf=''; filtros.categoria=''; filtros.regime='';
+      filtros.fonte=''; filtros.uf=''; filtros.categoria=''; filtros.regime=''; filtros.profissional='';
       filtros.vigencia_inicio_mes=''; filtros.vigencia_fim_mes=''; filtros.q='';
       carregarPerfis();
     });
@@ -234,6 +258,16 @@ Router.register('encargos', async () => {
         else if (action==='edit')    abrirFormPerfil(pid);
         else if (action==='dup')     duplicarPerfil(pid);
         else if (action==='del')     excluirPerfil(pid);
+      });
+    });
+    document.querySelectorAll('[data-sicro-action]').forEach(btn=>{
+      const indice=Number(btn.dataset.indice), action=btn.dataset.sicroAction;
+      btn.addEventListener('click', ()=>{
+        const registro=sicroAnalitico[indice];
+        if (!registro) return;
+        if (action==='view') consultarSicroProfissional(registro);
+        else if (action==='edit') editarSicroProfissional(registro);
+        else if (action==='delete') excluirSicroProfissional(registro);
       });
     });
   }
@@ -459,7 +493,7 @@ Router.register('encargos', async () => {
           </div>
         </div>
         <div class="table-wrapper">
-          <table style="min-width:1280px">
+          <table style="min-width:1360px">
             <thead><tr>
               <th>Codigo</th>
               <th>Profissional</th>
@@ -477,9 +511,10 @@ Router.register('encargos', async () => {
               <th style="text-align:right">B</th>
               <th style="text-align:right">C</th>
               <th style="text-align:right">D</th>
+              <th>Ações</th>
             </tr></thead>
             <tbody>
-              ${sicroAnalitico.map(r => `
+              ${sicroAnalitico.map((r, indice) => `
                 <tr>
                   <td class="fw-700 text-xs text-2">${Utils.esc(r.codigo_profissional || '')}</td>
                   <td><div class="fw-600">${Utils.esc(r.descricao || '')}</div></td>
@@ -497,12 +532,192 @@ Router.register('encargos', async () => {
                   <td style="text-align:right;color:${COR_G.B}">${fmt(r.desonerado_b)}</td>
                   <td style="text-align:right;color:${COR_G.C}">${fmt(r.desonerado_c)}</td>
                   <td style="text-align:right;color:${COR_G.D}">${fmt(r.desonerado_d)}</td>
+                  <td>
+                    <div class="td-actions">
+                      <button class="btn-icon" style="color:var(--c-primary)" title="Consultar"
+                        data-sicro-action="view" data-indice="${indice}">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="1.8"/></svg>
+                      </button>
+                      <button class="btn-icon edit" title="Editar"
+                        data-sicro-action="edit" data-indice="${indice}">${Utils.icons.edit}</button>
+                      <button class="btn-icon delete" title="Excluir"
+                        data-sicro-action="delete" data-indice="${indice}">${Utils.icons.delete}</button>
+                    </div>
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
         <div class="table-info">${sicroAnalitico.length} profissional(is) SICRO</div>
       </div>`;
+  }
+
+  function sicroResumoRegime(registro, prefixo, titulo, cor) {
+    const id = registro[`${prefixo}_profissional_id`];
+    if (!id) {
+      return `
+        <div style="border:1px solid var(--c-border);border-radius:8px;padding:12px;background:#f8fafc">
+          <div class="fw-700">${titulo}</div>
+          <div class="text-sm text-2" style="margin-top:5px">Sem registro para este regime.</div>
+        </div>`;
+    }
+    return `
+      <div style="border:1px solid var(--c-border);border-radius:8px;padding:12px;background:#fff">
+        <div class="fw-700" style="color:${cor};margin-bottom:9px">${titulo}</div>
+        <div style="display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:8px">
+          ${[
+            ['Total', registro[`${prefixo}_total`]],
+            ['Grupo A', registro[`${prefixo}_a`]],
+            ['Grupo B', registro[`${prefixo}_b`]],
+            ['Grupo C', registro[`${prefixo}_c`]],
+            ['Grupo D', registro[`${prefixo}_d`]],
+          ].map(([rotulo, valor]) => `
+            <div style="background:#f8fafc;border-radius:6px;padding:8px">
+              <div class="text-xs text-2">${rotulo}</div>
+              <div class="fw-700" style="margin-top:3px">${Utils.num(valor || 0, 4)}%</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function consultarSicroProfissional(registro) {
+    const dataBase = registro.db_mes && registro.db_ano
+      ? `${String(registro.db_mes).padStart(2, '0')}/${registro.db_ano}`
+      : (registro.vigencia || '-');
+    Modal.open({
+      title: `Encargos SICRO - ${Utils.esc(registro.codigo_profissional || '')}`,
+      size: 'modal-lg',
+      body: `
+        <div class="form-grid form-grid-2" style="margin-bottom:14px">
+          <div class="form-group">
+            <label class="form-label">Profissional</label>
+            <div class="form-control" style="height:auto;min-height:38px">${Utils.esc(registro.descricao || '')}</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Codigo</label>
+            <div class="form-control">${Utils.esc(registro.codigo_profissional || '')}</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">UF / Data-base</label>
+            <div class="form-control">${Utils.esc(registro.uf_referencia || '-')} / ${Utils.esc(dataBase)}</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Categoria / Unidade</label>
+            <div class="form-control">${Utils.esc(registro.categoria || '-')} / ${Utils.esc(registro.unidade || '-')}</div>
+          </div>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${sicroResumoRegime(registro, 'normal', 'Onerado', 'var(--c-primary)')}
+          ${sicroResumoRegime(registro, 'desonerado', 'Desonerado', '#d97706')}
+        </div>`,
+      footer: '<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>',
+    });
+  }
+
+  function sicroCamposRegime(registro, prefixo, titulo, cor) {
+    const id = registro[`${prefixo}_profissional_id`];
+    if (!id) return '';
+    return `
+      <div style="border:1px solid var(--c-border);border-radius:8px;padding:12px">
+        <div class="fw-700" style="color:${cor};margin-bottom:10px">${titulo}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
+          ${['a', 'b', 'c', 'd'].map(grupo => `
+            <div class="form-group">
+              <label class="form-label">Grupo ${grupo.toUpperCase()} (%)</label>
+              <input class="form-control" id="sicro_${prefixo}_${grupo}" type="number" min="0" step="0.0001"
+                value="${Utils.esc(registro[`${prefixo}_${grupo}`] ?? 0)}">
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function lerPercentualSicro(id) {
+    const valor = document.getElementById(id)?.value ?? '0';
+    const numero = Number.parseFloat(String(valor).replace(',', '.'));
+    return Number.isFinite(numero) ? numero : 0;
+  }
+
+  function editarSicroProfissional(registro) {
+    Modal.open({
+      title: `Editar encargos SICRO - ${Utils.esc(registro.codigo_profissional || '')}`,
+      size: 'modal-lg',
+      body: `
+        <div class="form-grid form-grid-2" style="margin-bottom:14px">
+          <div class="form-group">
+            <label class="form-label">Descricao</label>
+            <input class="form-control" id="sicro_descricao" value="${Utils.esc(registro.descricao || '')}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unidade</label>
+            <input class="form-control" id="sicro_unidade" value="${Utils.esc(registro.unidade || '')}">
+          </div>
+        </div>
+        <div style="display:grid;gap:10px">
+          ${sicroCamposRegime(registro, 'normal', 'Onerado', 'var(--c-primary)')}
+          ${sicroCamposRegime(registro, 'desonerado', 'Desonerado', '#d97706')}
+        </div>
+        <div class="text-xs text-2" style="margin-top:10px">
+          O total sera recalculado pela soma dos grupos A, B, C e D, e os insumos SICRO correspondentes serao sincronizados.
+        </div>`,
+      footer: `
+        <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
+        <button class="btn btn-primary" id="btnSalvarSicroProfissional">Salvar</button>`,
+    });
+    document.getElementById('btnSalvarSicroProfissional').addEventListener('click', async () => {
+      const descricao = document.getElementById('sicro_descricao').value.trim();
+      const unidade = document.getElementById('sicro_unidade').value.trim();
+      if (!descricao) {
+        Toast.warning('Informe a descricao do profissional.');
+        return;
+      }
+      const operacoes = ['normal', 'desonerado']
+        .filter(prefixo => registro[`${prefixo}_profissional_id`])
+        .map(prefixo => API.encargos.perfis.updateSicroProfissional(
+          registro[`${prefixo}_profissional_id`],
+          {
+            descricao,
+            unidade,
+            total_grupo_a: lerPercentualSicro(`sicro_${prefixo}_a`),
+            total_grupo_b: lerPercentualSicro(`sicro_${prefixo}_b`),
+            total_grupo_c: lerPercentualSicro(`sicro_${prefixo}_c`),
+            total_grupo_d: lerPercentualSicro(`sicro_${prefixo}_d`),
+          },
+        ));
+      const btn = document.getElementById('btnSalvarSicroProfissional');
+      btn.disabled = true;
+      btn.textContent = 'Salvando...';
+      try {
+        await Promise.all(operacoes);
+        Toast.success('Encargos do profissional SICRO atualizados.');
+        Modal.close();
+        await carregarPerfis();
+      } catch (e) {
+        Toast.error(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Salvar';
+      }
+    });
+  }
+
+  async function excluirSicroProfissional(registro) {
+    const ids = [
+      registro.normal_profissional_id,
+      registro.desonerado_profissional_id,
+    ].filter(Boolean);
+    if (!ids.length) return;
+    if (!await Confirm.ask(
+      `Excluir os encargos SICRO de ${registro.codigo_profissional} - ${registro.descricao} nos regimes cadastrados?`,
+      'Excluir encargos SICRO',
+      { okText: 'Excluir', okClass: 'btn btn-danger' },
+    )) return;
+    try {
+      await Promise.all(ids.map(id => API.encargos.perfis.deleteSicroProfissional(id)));
+      Toast.success('Encargos do profissional SICRO excluidos.');
+      await carregarPerfis();
+    } catch (e) {
+      Toast.error(e.message);
+    }
   }
 
   function renderTabelaGoinfraAnalitica() {

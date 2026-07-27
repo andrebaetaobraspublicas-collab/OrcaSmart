@@ -139,6 +139,51 @@ module.exports = function(db, options = {}) {
     res.json(await repository.listProfissionais(readDb, 'encargos_sicro_profissionais', req.query));
   }));
 
+  router.get('/sicro-profissionais/:id', asyncHandler(async (req, res) => {
+    const registro = await repository.getCatalogProfissional(
+      readDb,
+      'encargos_sicro_profissionais',
+      req.params.id,
+    );
+    if (!registro) {
+      const err = new Error('Encargo profissional SICRO nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json(registro);
+  }));
+
+  router.put('/sicro-profissionais/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'A edicao dos encargos profissionais SICRO e permitida apenas para administradores.');
+    const registro = await writeWithSingleConnection(conn => repository.updateCatalogProfissional(
+      conn,
+      'encargos_sicro_profissionais',
+      req.params.id,
+      req.body || {},
+    ));
+    if (!registro) {
+      const err = new Error('Encargo profissional SICRO nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json(registro);
+  }));
+
+  router.delete('/sicro-profissionais/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'A exclusao dos encargos profissionais SICRO e permitida apenas para administradores.');
+    const result = await writeWithSingleConnection(conn => repository.deleteCatalogProfissional(
+      conn,
+      'encargos_sicro_profissionais',
+      req.params.id,
+    ));
+    if (!result.changes) {
+      const err = new Error('Encargo profissional SICRO nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json({ mensagem: 'Encargo profissional SICRO excluido.' });
+  }));
+
   router.get('/goinfra-profissionais', asyncHandler(async (req, res) => {
     res.json(await repository.listProfissionais(readDb, 'encargos_goinfra_profissionais', req.query));
   }));
@@ -159,7 +204,9 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/importar-referenciais', asyncHandler(async (req, res) => {
-    res.json(await service.importarUniforme(db, 'SINAPI', req.body || {}));
+    res.json(await writeWithSingleConnection(
+      conn => service.importarUniforme(conn, 'SINAPI', req.body || {}),
+    ));
   }));
 
   router.post('/importar-seinfra', uploadRaw, asyncHandler(async (req, res) => {

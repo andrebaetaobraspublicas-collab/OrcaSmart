@@ -1149,6 +1149,10 @@ async function listProfissionais(db, table, query = {}) {
     where.push('(ep.codigo_profissional LIKE ? OR ep.descricao LIKE ?)');
     params.push(`%${query.q}%`, `%${query.q}%`);
   }
+  if (query.profissional) {
+    where.push('ep.codigo_profissional = ?');
+    params.push(String(query.profissional));
+  }
   const mesFiltro = parseMesReferencia(query.mes_referencia || query.vigencia_inicio_mes);
   if (mesFiltro) {
     where.push('db2.mes=? AND db2.ano=?');
@@ -1159,11 +1163,15 @@ async function listProfissionais(db, table, query = {}) {
            pe.uf_referencia, pe.categoria, pe.id_data_base, pe.fonte_referencia,
            pe.vigencia, pe.vigencia_inicio, pe.vigencia_fim,
            db2.mes AS db_mes, db2.ano AS db_ano,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.id_profissional_enc END) AS normal_profissional_id,
+           MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN pe.id_perfil END) AS normal_perfil_id,
            MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.encargo_total END) AS normal_total,
            MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_a END) AS normal_a,
            MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_b END) AS normal_b,
            MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_c END) AS normal_c,
            MAX(CASE WHEN pe.regime IN ('Normal','Onerado') THEN ep.total_grupo_d END) AS normal_d,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN ep.id_profissional_enc END) AS desonerado_profissional_id,
+           MAX(CASE WHEN pe.regime='Desonerado' THEN pe.id_perfil END) AS desonerado_perfil_id,
            MAX(CASE WHEN pe.regime='Desonerado' THEN ep.encargo_total END) AS desonerado_total,
            MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_a END) AS desonerado_a,
            MAX(CASE WHEN pe.regime='Desonerado' THEN ep.total_grupo_b END) AS desonerado_b,
@@ -1178,6 +1186,102 @@ async function listProfissionais(db, table, query = {}) {
              pe.vigencia_inicio,pe.vigencia_fim,db2.mes,db2.ano
     ORDER BY pe.uf_referencia,db2.ano DESC,db2.mes DESC,pe.categoria,ep.codigo_profissional
     LIMIT 5000`, params);
+}
+
+async function getCatalogProfissional(db, table, idProfissional) {
+  if (!['encargos_sicro_profissionais', 'encargos_goinfra_profissionais'].includes(table)) {
+    throw new Error('Tabela analitica de encargos invalida.');
+  }
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  return one(db, `
+    SELECT ep.*, pe.categoria, pe.regime, pe.uf_referencia, pe.id_data_base,
+           pe.fonte_referencia, pe.vigencia, db2.mes AS db_mes, db2.ano AS db_ano
+    FROM ${schema}${table} ep
+    JOIN ${schema}perfis_encargos pe ON pe.id_perfil=ep.id_perfil
+    LEFT JOIN ${schema}datas_base db2 ON db2.id_data_base=pe.id_data_base
+    WHERE ep.id_profissional_enc=?
+    LIMIT 1`, [idProfissional]);
+}
+
+async function updateCatalogProfissional(db, table, idProfissional, data = {}) {
+  const atual = await getCatalogProfissional(db, table, idProfissional);
+  if (!atual) return null;
+  const valores = {
+    descricao: String(data.descricao ?? atual.descricao ?? '').trim(),
+    unidade: String(data.unidade ?? atual.unidade ?? '').trim() || null,
+    A: toNum(data.total_grupo_a, toNum(atual.total_grupo_a)),
+    B: toNum(data.total_grupo_b, toNum(atual.total_grupo_b)),
+    C: toNum(data.total_grupo_c, toNum(atual.total_grupo_c)),
+    D: toNum(data.total_grupo_d, toNum(atual.total_grupo_d)),
+  };
+  valores.total = Number((valores.A + valores.B + valores.C + valores.D).toFixed(8));
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  await run(db, `
+    UPDATE ${schema}${table}
+    SET descricao=?,unidade=?,total_grupo_a=?,total_grupo_b=?,
+        total_grupo_c=?,total_grupo_d=?,encargo_total=?
+    WHERE id_profissional_enc=?`, [
+    valores.descricao,
+    valores.unidade,
+    valores.A,
+    valores.B,
+    valores.C,
+    valores.D,
+    valores.total,
+    idProfissional,
+  ]);
+  if (table === 'encargos_sicro_profissionais') {
+    await syncCatalogEncargosInsumosSicro(
+      db,
+      atual.uf_referencia,
+      atual.id_data_base,
+      atual.regime,
+      [{
+        codigo_profissional: atual.codigo_profissional,
+        categoria: atual.categoria,
+        encargo_total: valores.total,
+      }],
+      { [atual.categoria]: atual.id_perfil },
+    );
+  }
+  return getCatalogProfissional(db, table, idProfissional);
+}
+
+async function deleteCatalogProfissional(db, table, idProfissional) {
+  const atual = await getCatalogProfissional(db, table, idProfissional);
+  if (!atual) return { changes: 0 };
+  const schema = await catalogSchema(db);
+  if (!schema) await ensureSchema(db);
+  const result = await run(
+    db,
+    `DELETE FROM ${schema}${table} WHERE id_profissional_enc=?`,
+    [idProfissional],
+  );
+  if (table === 'encargos_sicro_profissionais') {
+    const desonerado = atual.regime === 'Desonerado';
+    const percentualColuna = desonerado
+      ? 'encargos_sociais_desonerado_percentual'
+      : 'encargos_sociais_onerado_percentual';
+    const perfilColuna = desonerado
+      ? 'id_perfil_encargo_desonerado'
+      : 'id_perfil_encargo_onerado';
+    await run(db, `
+      UPDATE ${schema}precos_insumos
+      SET ${percentualColuna}=NULL,${perfilColuna}=NULL
+      WHERE id_data_base=?
+        AND UPPER(COALESCE(uf_referencia,''))=UPPER(?)
+        AND id_insumo IN (
+          SELECT id_insumo FROM ${schema}insumos
+          WHERE UPPER(COALESCE(origem,''))='SICRO' AND codigo_insumo=?
+        )`, [
+      atual.id_data_base,
+      atual.uf_referencia,
+      atual.codigo_profissional,
+    ]);
+  }
+  return result;
 }
 
 function perfilParams(data = {}) {
@@ -1570,5 +1674,8 @@ module.exports = {
   replaceProfissionais,
   syncEncargosInsumosMaoObra,
   listProfissionais,
+  getCatalogProfissional,
+  updateCatalogProfissional,
+  deleteCatalogProfissional,
   aplicarAoOrcamento,
 };

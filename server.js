@@ -559,6 +559,7 @@ const tenantDbProxy = {
       const runtime = tenantMysqlRuntimeFromStore();
       return runtime.withConnection(task);
     }
+    if (mysqlBusinessRuntimeUnavailable()) throw mysqlUnavailableError();
     const store = requestDb.getStore();
     const dbPath = store && store.dbPath;
     if (!dbPath || !path.resolve(dbPath).startsWith(path.resolve(TENANT_DB_DIR))) {
@@ -601,6 +602,20 @@ function businessMysqlRuntimeActive() {
     && !runtime.blocked;
 }
 
+function mysqlBusinessRuntimeUnavailable() {
+  return bootState.mysql.engine === 'mysql' && !businessMysqlRuntimeActive();
+}
+
+function mysqlUnavailableError() {
+  const err = new Error(
+    'O banco MySQL de producao esta temporariamente indisponivel. '
+    + 'A operacao foi interrompida para impedir leitura ou gravacao no banco SQLite legado.',
+  );
+  err.status = 503;
+  err.code = 'MYSQL_RUNTIME_UNAVAILABLE';
+  return err;
+}
+
 function tenantMysqlRuntimeFromStore() {
   const store = requestDb.getStore();
   const tenantId = store && store.tenantId;
@@ -619,6 +634,11 @@ function runTenantMethod(method, sql, params, cb) {
   if (businessMysqlRuntimeActive()) {
     const runtime = tenantMysqlRuntimeFromStore();
     return runtime[method](sql, params, cb);
+  }
+  if (mysqlBusinessRuntimeUnavailable()) {
+    const err = mysqlUnavailableError();
+    if (cb) process.nextTick(() => cb(err));
+    return undefined;
   }
   const store = requestDb.getStore();
   const dbPath = store && store.dbPath;
@@ -688,6 +708,11 @@ function runSharedCatalogReadMethod(method, sql, params, cb) {
   if (businessMysqlRuntimeActive()) {
     const runtime = tenantMysqlRuntimeFromStore();
     return runtime[method](sql, params, cb);
+  }
+  if (mysqlBusinessRuntimeUnavailable()) {
+    const err = mysqlUnavailableError();
+    if (cb) process.nextTick(() => cb(err));
+    return undefined;
   }
 
   if (method === 'run' && isCatalogSchemaEnsure(sql)) {
@@ -875,6 +900,8 @@ app.get('/api/status', (_req, res) => res.json({
   pemPerformanceVersion: 1,
   insumosTributos2026Version: 1,
   sinapiEncargosInsumosVersion: 1,
+  mysqlStrictRuntimeVersion: 1,
+  sicroChargesCrudVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,
@@ -1022,6 +1049,14 @@ app.post('/api/billing/create-portal-session', async (req, res) => {
 });
 
 app.use('/api', requireLogin);
+app.use('/api', (req, res, next) => {
+  if (!mysqlBusinessRuntimeUnavailable()) return next();
+  const err = mysqlUnavailableError();
+  return res.status(err.status).json({
+    erro: err.message,
+    codigo: err.code,
+  });
+});
 
 app.use('/api/obras', require('./routes/obrasRoutes')(tenantDbProxy));
 app.use('/api/orcamentos', require('./routes/orcamentosRoutes')(tenantDbProxy));
