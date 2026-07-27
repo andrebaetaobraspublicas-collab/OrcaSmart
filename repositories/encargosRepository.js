@@ -871,10 +871,13 @@ async function upsertCatalogPerfilComTotais(db, data = {}, totais = {}) {
     D: 'Reincidencias',
   };
   for (const letra of ['A', 'B', 'C', 'D']) {
+    const letraComparison = isMysqlRuntime()
+      ? 'CAST(letra AS BINARY)=CAST(? AS BINARY)'
+      : 'letra=?';
     let grupo = await one(db, `
       SELECT id_grupo_enc
       FROM ${schema}grupos_encargos
-      WHERE id_perfil=? AND letra=?
+      WHERE id_perfil=? AND ${letraComparison}
       LIMIT 1`, [idPerfil, letra]);
     if (!grupo) {
       const criado = await run(db, `

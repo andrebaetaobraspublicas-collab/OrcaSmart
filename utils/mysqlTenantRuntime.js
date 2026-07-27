@@ -282,7 +282,11 @@ async function tableExists(conn, table) {
   const normalized = String(table || '').replace(/[`"'[\]]/g, '');
   if (!normalized) return false;
   const [rows] = await conn.execute(
-    'SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
+    `SELECT TABLE_NAME AS name
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE CAST(TABLE_SCHEMA AS BINARY) = CAST(DATABASE() AS BINARY)
+       AND CAST(TABLE_NAME AS BINARY) = CAST(? AS BINARY)
+     LIMIT 1`,
     [normalized],
   );
   return rows.length > 0;
@@ -295,7 +299,8 @@ async function pragmaTableInfo(conn, sql) {
     SELECT COLUMN_NAME AS name, DATA_TYPE AS type, IS_NULLABLE AS nullable,
            COLUMN_DEFAULT AS dflt_value, COLUMN_KEY AS column_key, ORDINAL_POSITION AS cid
     FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+    WHERE CAST(TABLE_SCHEMA AS BINARY) = CAST(DATABASE() AS BINARY)
+      AND CAST(TABLE_NAME AS BINARY) = CAST(? AS BINARY)
     ORDER BY ORDINAL_POSITION`, [match[1]]);
   return rows.map(row => ({
     cid: row.cid - 1,
@@ -441,7 +446,10 @@ async function checkBusinessRuntimeMysql(config) {
   const connected = await createMysqlConnectionWithMeta(config);
   try {
     const conn = connected.connection;
-    const [rows] = await conn.query('SELECT COUNT(*) AS tables_ready FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()');
+    const [rows] = await conn.query(`
+      SELECT COUNT(*) AS tables_ready
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE CAST(TABLE_SCHEMA AS BINARY) = CAST(DATABASE() AS BINARY)`);
     return {
       ok: true,
       tableCount: rows[0] ? Number(rows[0].tables_ready) : 0,
@@ -459,5 +467,7 @@ module.exports = {
   _test: {
     qualifyTenantSelect,
     normalizeSqlDialect,
+    tableExists,
+    pragmaTableInfo,
   },
 };

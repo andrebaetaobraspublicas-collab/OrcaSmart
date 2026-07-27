@@ -33,6 +33,40 @@ function testTabelaItensSecaoTambemPriorizaNomeCompleto() {
   assert.match(qualified, /tenant_composicoes_secao_itens`?\.tenant_id\s*=\s*11/i);
 }
 
-testTabelaTenantComPrefixoCompartilhado();
-testTabelaItensSecaoTambemPriorizaNomeCompleto();
-console.log('mysqlTenantRuntime.test.js: OK');
+async function testMetadadosNaoDependemDaCollationDoBanco() {
+  const calls = [];
+  const conn = {
+    async execute(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('INFORMATION_SCHEMA.TABLES')) return [[{ name: 'perfis_encargos' }]];
+      if (sql.includes('INFORMATION_SCHEMA.COLUMNS')) return [[{
+        name: 'id_perfil',
+        type: 'int',
+        nullable: 'NO',
+        dflt_value: null,
+        column_key: 'PRI',
+        cid: 1,
+      }]];
+      return [[]];
+    },
+  };
+  assert.strictEqual(await _test.tableExists(conn, 'perfis_encargos'), true);
+  await _test.pragmaTableInfo(conn, 'PRAGMA table_info(perfis_encargos)');
+  assert.strictEqual(calls.length, 2);
+  for (const call of calls) {
+    assert.match(call.sql, /CAST\(TABLE_SCHEMA AS BINARY\)\s*=\s*CAST\(DATABASE\(\) AS BINARY\)/i);
+    assert.match(call.sql, /CAST\(TABLE_NAME AS BINARY\)\s*=\s*CAST\(\? AS BINARY\)/i);
+  }
+}
+
+async function main() {
+  testTabelaTenantComPrefixoCompartilhado();
+  testTabelaItensSecaoTambemPriorizaNomeCompleto();
+  await testMetadadosNaoDependemDaCollationDoBanco();
+  console.log('mysqlTenantRuntime.test.js: OK');
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

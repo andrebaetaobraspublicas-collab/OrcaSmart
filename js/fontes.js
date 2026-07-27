@@ -246,37 +246,13 @@ Router.register('fontes', async () => {
     if (faseEl && faseLabel) faseEl.textContent = faseLabel;
     if (url === '/api/sinapi/importar' && String(formData.get('async') || '').toLowerCase() === 'true') {
       _setProgress(containerId, 1, 'Enviando arquivo SINAPI', 'Enviando planilha para iniciar a importacao.');
-      const uploadResult = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', url, true);
-        xhr.timeout = 10 * 60 * 1000;
-        xhr.upload.addEventListener('progress', event => {
-          if (!event.lengthComputable) return;
-          const percentUpload = Math.max(1, Math.min(5, Math.round((event.loaded / event.total) * 5)));
-          const enviadosMb = (event.loaded / 1024 / 1024).toFixed(1);
-          const totalMb = (event.total / 1024 / 1024).toFixed(1);
-          _setProgress(
-            containerId,
-            percentUpload,
-            'Enviando arquivo SINAPI',
-            `${enviadosMb} de ${totalMb} MB enviados ao servidor.`,
-          );
-        });
-        xhr.addEventListener('load', () => resolve({
-          ok: xhr.status >= 200 && xhr.status < 300,
-          status: xhr.status,
-          text: xhr.responseText || '',
-        }));
-        xhr.addEventListener('error', () => reject(new Error('Falha de rede ao enviar o arquivo SINAPI.')));
-        xhr.addEventListener('timeout', () => reject(new Error('O envio do arquivo SINAPI excedeu 10 minutos.')));
-        xhr.send(formData);
-      });
-      const startText = uploadResult.text;
+      const startResponse = await fetch(url, { method: 'POST', body: formData });
+      const startText = await startResponse.text();
       let startData;
       try { startData = startText ? JSON.parse(startText) : {}; }
       catch (_) { throw new Error('Resposta invalida do servidor: ' + startText.slice(0, 200)); }
-      if (!uploadResult.ok || startData.erro) {
-        throw new Error(startData.erro || `Erro HTTP ${uploadResult.status}`);
+      if (!startResponse.ok || startData.erro) {
+        throw new Error(startData.erro || `Erro HTTP ${startResponse.status}`);
       }
       return startData.job_id ? acompanharSinapiJob(startData.job_id, containerId) : startData;
     }

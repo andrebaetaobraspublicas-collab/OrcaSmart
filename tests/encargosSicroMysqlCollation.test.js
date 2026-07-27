@@ -63,6 +63,14 @@ async function main() {
         && profileLookup.sql.includes("CAST(COALESCE(?,'') AS BINARY)"),
       'fonte, UF, categoria e regime devem usar collation binaria explicita no MySQL',
     );
+    const groupLookups = db.calls.filter(call => (
+      call.method === 'get' && call.sql.includes('SELECT id_grupo_enc')
+    ));
+    assert.strictEqual(groupLookups.length, 4, 'os quatro grupos devem ser consultados');
+    assert(
+      groupLookups.every(call => call.sql.includes('CAST(letra AS BINARY)=CAST(? AS BINARY)')),
+      'a consulta dos grupos também deve ser independente da collation do catálogo',
+    );
 
     await repository.syncCatalogEncargosInsumosSicro(
       db,
