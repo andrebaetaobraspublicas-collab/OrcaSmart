@@ -902,6 +902,7 @@ app.get('/api/status', (_req, res) => res.json({
   sinapiEncargosInsumosVersion: 1,
   mysqlStrictRuntimeVersion: 1,
   sicroChargesCrudVersion: 1,
+  insumosNoRuntimeDdlVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,

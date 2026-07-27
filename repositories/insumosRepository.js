@@ -173,6 +173,11 @@ const sqliteSchemaReady = new WeakMap();
 
 async function ensureSchemaInternal(db) {
   const mysqlRuntime = String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+  // O usuário MySQL da aplicação é deliberadamente restrito a operações de
+  // dados. A evolução e a indexação do esquema pertencem às migrações de
+  // implantação, nunca ao caminho de leitura de /api/insumos.
+  if (mysqlRuntime) return;
+
   const hasMainInsumos = await tableExists(db, 'insumos');
   if (hasMainInsumos) {
     const insCols = new Set((await all(db, 'PRAGMA table_info(insumos)')).map(c => c.name));
@@ -206,7 +211,7 @@ async function ensureSchemaInternal(db) {
     for (const sql of indexes) await run(db, sql);
   }
 
-  if (hasMainInsumos && !mysqlRuntime) {
+  if (hasMainInsumos) {
     const indexes = [
       'CREATE INDEX IF NOT EXISTS idx_insumos_tipo_desc ON insumos(tipo_insumo, descricao)',
       'CREATE INDEX IF NOT EXISTS idx_insumos_origem_desc ON insumos(origem, descricao)',
