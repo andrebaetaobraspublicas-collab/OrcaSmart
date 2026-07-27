@@ -1190,8 +1190,17 @@ async function initializeMysqlPilot() {
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
       await ensureMysqlRiscosSchema(mysqlConfig());
-      const regimesComposicoes = await normalizarMysqlRegimesComposicoes(mysqlConfig());
-      console.log('[composicoes] Regimes SICRO normalizados:', JSON.stringify(regimesComposicoes));
+      setTimeout(() => {
+        normalizarMysqlRegimesComposicoes(mysqlConfig())
+          .then(regimesComposicoes => console.log(
+            '[composicoes] Regimes SICRO normalizados:',
+            JSON.stringify(regimesComposicoes),
+          ))
+          .catch(err => console.warn(
+            '[composicoes] Normalizacao de regimes ignorada no boot:',
+            err.message || err,
+          ));
+      }, 500).unref?.();
       setTimeout(() => {
         bootState.mysql.insumosTributos2026 = {
           status: 'running',

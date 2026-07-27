@@ -251,7 +251,23 @@ async function initializeMasterDatabase(master, adminEmails = []) {
   const emails = [...adminEmails].filter(Boolean);
   if (emails.length) {
     const placeholders = emails.map(() => '?').join(',');
-    await master.run(`UPDATE users SET role = 'admin' WHERE lower(email) IN (${placeholders})`, emails);
+    const configuredUsers = await master.all(
+      `SELECT lower(email) AS email, role
+       FROM users
+       WHERE lower(email) IN (${placeholders})`,
+      emails,
+    );
+    const pending = configuredUsers
+      .filter(user => String(user.role || '').toLowerCase() !== 'admin')
+      .map(user => String(user.email || '').toLowerCase())
+      .filter(Boolean);
+    if (pending.length) {
+      const pendingPlaceholders = pending.map(() => '?').join(',');
+      await master.run(
+        `UPDATE users SET role = 'admin' WHERE lower(email) IN (${pendingPlaceholders})`,
+        pending,
+      );
+    }
   }
 }
 

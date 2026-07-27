@@ -69,16 +69,6 @@ function socketCandidatePaths(config = mysqlConfig()) {
 function connectionCandidates(config = mysqlConfig()) {
   const base = { ...config };
   const candidates = [];
-  for (const socketPath of socketCandidatePaths(config)) {
-    const socketConfig = { ...base, socketPath };
-    delete socketConfig.host;
-    delete socketConfig.port;
-    candidates.push({
-      mode: 'socket',
-      socketPath,
-      config: socketConfig,
-    });
-  }
   if (config.host) {
     const tcpConfig = { ...base };
     delete tcpConfig.socketPath;
@@ -87,6 +77,16 @@ function connectionCandidates(config = mysqlConfig()) {
       host: config.host,
       port: config.port,
       config: tcpConfig,
+    });
+  }
+  for (const socketPath of socketCandidatePaths(config)) {
+    const socketConfig = { ...base, socketPath };
+    delete socketConfig.host;
+    delete socketConfig.port;
+    candidates.push({
+      mode: 'socket',
+      socketPath,
+      config: socketConfig,
     });
   }
   if (!candidates.length) {
