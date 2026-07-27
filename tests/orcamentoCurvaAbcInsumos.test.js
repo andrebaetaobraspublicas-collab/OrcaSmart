@@ -168,6 +168,27 @@ async function main() {
 
     await exec(db, `
       INSERT INTO orcamentos VALUES
+        (5,1,1,'SP','Onerado',0,'ABC com auxiliar SINAPI neutra','1.0','Em elaboracao');
+      INSERT INTO orcamento_sintetico VALUES
+        (5,5,'1.1','item',1,'ROOT-88309','SINAPI','Raiz onerada','h',2,50,'10');
+      INSERT INTO catalog.composicoes VALUES
+        (10,'ROOT-88309','SINAPI','Unitário','Raiz onerada','h','SP','04/2026','Onerado',50),
+        (11,'SINAPI.88309','SINAPI','Unitário','PEDREIRO COM ENCARGOS COMPLEMENTARES','h','SP','04/2026','COM CUSTO',25);
+      INSERT INTO catalog.itens_composicao VALUES
+        (14,10,'88309','PEDREIRO COM ENCARGOS COMPLEMENTARES','h',2,'COMPOSICAO',25,50,1),
+        (15,11,'MAT-A','Folha analítica do pedreiro','kg',2.5,'MATERIAL',10,25,1);
+    `);
+    const curvaAuxiliarNeutra = await repo.curvaAbcInsumos(db, 5);
+    assert.deepStrictEqual(
+      curvaAuxiliarNeutra.itens.map(item => item.codigo),
+      ['MAT-A'],
+      'a composição 88309 não pode virar folha quando sua memória analítica existe com regime legado neutro',
+    );
+    assert.strictEqual(curvaAuxiliarNeutra.itens[0].quantidade_total, 10);
+    assert.strictEqual(curvaAuxiliarNeutra.total_geral, 100);
+
+    await exec(db, `
+      INSERT INTO orcamentos VALUES
         (4,1,1,'SP','Onerado',0,'ABC em lote','1.0','Em elaboracao');
       WITH RECURSIVE numeros(n) AS (
         SELECT 1

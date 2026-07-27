@@ -641,6 +641,16 @@ function composicaoCompativelEstrita(candidato, contexto, options = {}) {
   return options.permitirRegimeNeutro === true;
 }
 
+function composicaoCompativelComReferencia(candidato, contexto) {
+  const ufAlvo = String(contexto?.uf || '').trim().toUpperCase();
+  const ufCandidato = String(candidato?.uf_referencia || '').trim().toUpperCase();
+  if (!ufAlvo || ufCandidato !== ufAlvo) return false;
+
+  const dataAlvo = parseMesRef(contexto?.mes_ref);
+  const dataCandidato = parseMesRef(candidato?.mes_referencia);
+  return !!dataAlvo && !!dataCandidato && dataAlvo.index === dataCandidato.index;
+}
+
 function regimeDesejadoParaItem(item, contexto, camposAlterados = [], composicaoAtual = null) {
   const regimeOrcamento = normalizarRegime(contexto?.regime);
   if (camposAlterados.includes('regime_previdenciario')) return regimeOrcamento;
@@ -712,6 +722,39 @@ function escolherComposicaoEstritaParaItem(item, contexto, cache, camposAlterado
     return custoA - custoB;
   });
   return candidatos[0] || null;
+}
+
+function escolherComposicaoEstruturalParaAbc(item, contexto, cache) {
+  const estrita = escolherComposicaoEstritaParaItem(item, contexto, cache, []);
+  if (estrita) return estrita;
+
+  // Algumas cargas SINAPI antigas registraram a disponibilidade do custo em
+  // situacao_ref ("COM CUSTO"), sem preservar o regime no registro analítico.
+  // A composição continua sendo uma memória estrutural válida para a Curva
+  // ABC: os preços das folhas são resolvidos depois pela UF/data-base/regime
+  // do orçamento e o custo expandido é reconciliado com a linha sintética.
+  // Esta tolerância é exclusiva da decomposição analítica; a substituição de
+  // composições ao editar um orçamento permanece estrita quanto ao regime.
+  const regimeHerdado = normalizarRegime(contexto?.regime);
+  const candidatos = candidatosParaItemNoCache(item, cache)
+    .filter(row => composicaoCompativelComReferencia(row, contexto))
+    .sort((a, b) => {
+      const neutroA = normalizarRegime(a.situacao_ref || a.regime_previdenciario) ? 1 : 0;
+      const neutroB = normalizarRegime(b.situacao_ref || b.regime_previdenciario) ? 1 : 0;
+      if (neutroA !== neutroB) return neutroA - neutroB;
+      const scopeA = (a._tenant_scope || a.scope) === 'tenant' ? 0 : 1;
+      const scopeB = (b._tenant_scope || b.scope) === 'tenant' ? 0 : 1;
+      if (scopeA !== scopeB) return scopeA - scopeB;
+      const custoA = toNum(a.custo_unitario, 0) > 0 ? 0 : 1;
+      const custoB = toNum(b.custo_unitario, 0) > 0 ? 0 : 1;
+      return custoA - custoB;
+    });
+  if (!candidatos.length) return null;
+  return {
+    ...candidatos[0],
+    _abc_regime_contexto: regimeHerdado,
+    _abc_fallback_estrutural: true,
+  };
 }
 
 function assinaturaLinhaSintetico(item = {}) {
@@ -2807,6 +2850,7 @@ function adicionarComposicaoAoCache(cache, row) {
 }
 
 function contextoAbcDaComposicao(composicao, contexto = {}) {
+  const regimeEstruturalHerdado = normalizarRegime(composicao?._abc_regime_contexto);
   const regimeEfetivo = regimePrevidenciarioComposicao(composicao);
   return {
     ...contexto,
@@ -2814,7 +2858,7 @@ function contextoAbcDaComposicao(composicao, contexto = {}) {
     // vinculada. Orçamentos legados podem ter um regime no cabeçalho diferente
     // do registro vinculado; trocar para o cabeçalho no meio do grafo transforma
     // composições auxiliares válidas em folhas artificiais.
-    regime: regimeEfetivo || contexto?.regime || '',
+    regime: regimeEstruturalHerdado || regimeEfetivo || contexto?.regime || '',
   };
 }
 
@@ -2881,11 +2925,10 @@ async function buildGrafoComposicoesForAbc(db, servicos, contexto) {
     mesclarCachesDeListas(cache, candidatas);
     const proxima = [];
     auxiliares.forEach((auxiliar) => {
-      const escolhida = escolherComposicaoEstritaParaItem(
+      const escolhida = escolherComposicaoEstruturalParaAbc(
         auxiliar,
         auxiliar._abc_contexto || contexto,
         cache,
-        [],
       );
       const id = String(escolhida?.id_composicao || '').trim();
       if (!id || composicoes.has(id)) return;
@@ -3265,12 +3308,12 @@ async function curvaAbcInsumos(db, idOrcamento) {
       if (!qtd) continue;
       if (isComposicaoItemRobusto(item)) {
         const contextoFilho = contextoAbcDaComposicao(composicaoPai, contexto);
-        const sub = escolherComposicaoEstritaParaItem({
+        const sub = escolherComposicaoEstruturalParaAbc({
           codigo: item.codigo_item,
           fonte: item.fonte || item._fonte_pai || composicaoPai?.fonte || '',
           descricao: item.descricao,
           unidade: item.unidade,
-        }, contextoFilho, compCache, []);
+        }, contextoFilho, compCache);
         if (sub) {
           const subId = String(sub.id_composicao || '').trim();
           // Uma aresta cíclica não é uma folha analítica e não deve reaparecer
