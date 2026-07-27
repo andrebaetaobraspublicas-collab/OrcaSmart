@@ -903,6 +903,7 @@ app.get('/api/status', (_req, res) => res.json({
   mysqlStrictRuntimeVersion: 1,
   sicroChargesCrudVersion: 1,
   insumosNoRuntimeDdlVersion: 1,
+  sicroChargesMysqlCollationVersion: 1,
   domain: PUBLIC_DOMAIN,
   dataDir: DATA_DIR,
   databaseReady: bootState.databaseReady,

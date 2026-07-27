@@ -39,6 +39,10 @@ function normFonte(fonte) {
   return aliases[f] || f;
 }
 
+function isMysqlRuntime() {
+  return String(process.env.ORCASMART_DB_ENGINE || '').trim().toLowerCase() === 'mysql';
+}
+
 function mesmaFonte(fonteItem, perfil) {
   return normFonte(fonteItem) === normFonte(perfil?.fonte_referencia);
 }
@@ -787,11 +791,14 @@ async function upsertCatalogPerfilComTotais(db, data = {}, totais = {}) {
   const schema = await catalogSchema(db);
   if (!schema) await ensureSchema(db);
   const fonte = normFonte(data.fonte_referencia || 'SICRO');
+  const ufComparison = isMysqlRuntime()
+    ? "CAST(COALESCE(uf_referencia,'') AS BINARY)=CAST(COALESCE(?,'') AS BINARY)"
+    : "COALESCE(uf_referencia,'')=COALESCE(?,'')";
   const existente = await one(db, `
     SELECT id_perfil
     FROM ${schema}perfis_encargos
     WHERE fonte_referencia=?
-      AND COALESCE(uf_referencia,'')=COALESCE(?,'')
+      AND ${ufComparison}
       AND categoria=?
       AND regime=?
       AND COALESCE(id_data_base,0)=COALESCE(?,0)
@@ -956,6 +963,15 @@ async function syncCatalogEncargosInsumosSicro(
   const perfilColuna = desonerado
     ? 'id_perfil_encargo_desonerado'
     : 'id_perfil_encargo_onerado';
+  const ufComparison = isMysqlRuntime()
+    ? "CAST(UPPER(COALESCE(uf_referencia,'')) AS BINARY)=CAST(UPPER(?) AS BINARY)"
+    : "UPPER(COALESCE(uf_referencia,''))=UPPER(?)";
+  const origemComparison = isMysqlRuntime()
+    ? "CAST(UPPER(COALESCE(origem,'')) AS BINARY)=CAST('SICRO' AS BINARY)"
+    : "UPPER(COALESCE(origem,''))='SICRO'";
+  const codigoComparison = isMysqlRuntime()
+    ? 'CAST(codigo_insumo AS BINARY)=CAST(? AS BINARY)'
+    : 'codigo_insumo=?';
   let atualizados = 0;
   for (const profissional of profissionais) {
     const codigo = String(profissional.codigo_profissional || '').trim();
@@ -965,12 +981,12 @@ async function syncCatalogEncargosInsumosSicro(
       UPDATE ${schema}precos_insumos
       SET ${percentualColuna}=?, ${perfilColuna}=?
       WHERE id_data_base=?
-        AND UPPER(COALESCE(uf_referencia,''))=UPPER(?)
+        AND ${ufComparison}
         AND id_insumo IN (
           SELECT id_insumo
           FROM ${schema}insumos
-          WHERE UPPER(COALESCE(origem,''))='SICRO'
-            AND codigo_insumo=?
+          WHERE ${origemComparison}
+            AND ${codigoComparison}
         )`, [
       toNum(profissional.encargo_total),
       idPerfil,
