@@ -119,6 +119,13 @@ function mysqlMasterSchema() {
   ];
 }
 
+function mysqlCreateTableName(sql) {
+  const match = String(sql || '').match(
+    /^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z_][A-Za-z0-9_]*)`?/i,
+  );
+  return match ? match[1] : null;
+}
+
 function sqliteMasterSchema() {
   return [
     `CREATE TABLE IF NOT EXISTS tenants (
@@ -221,7 +228,26 @@ function createMasterDatabase(options = {}) {
 
 async function initializeMasterDatabase(master, adminEmails = []) {
   const schema = master.engine === 'mysql' ? mysqlMasterSchema() : sqliteMasterSchema();
-  for (const sql of schema) await master.run(sql);
+  if (master.engine === 'mysql') {
+    const tableNames = schema.map(mysqlCreateTableName).filter(Boolean);
+    const placeholders = tableNames.map(() => '?').join(',');
+    const existingRows = tableNames.length
+      ? await master.all(
+        `SELECT TABLE_NAME AS name
+         FROM INFORMATION_SCHEMA.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${placeholders})`,
+        tableNames,
+      )
+      : [];
+    const existing = new Set(existingRows.map(row => String(row.name || row.TABLE_NAME || '').toLowerCase()));
+    for (const sql of schema) {
+      const table = mysqlCreateTableName(sql);
+      if (table && existing.has(table.toLowerCase())) continue;
+      await master.run(sql);
+    }
+  } else {
+    for (const sql of schema) await master.run(sql);
+  }
   const emails = [...adminEmails].filter(Boolean);
   if (emails.length) {
     const placeholders = emails.map(() => '?').join(',');
@@ -235,4 +261,5 @@ module.exports = {
   initializeMasterDatabase,
   sqliteMasterSchema,
   mysqlMasterSchema,
+  mysqlCreateTableName,
 };

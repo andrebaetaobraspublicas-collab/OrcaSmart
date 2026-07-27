@@ -115,8 +115,31 @@ const RISK_TABLES_SQL = [
 async function ensureMysqlRiscosSchema(config) {
   const connection = await createMysqlConnection(config);
   try {
-    for (const sql of RISK_TABLES_SQL) await connection.query(sql);
-    return { tabelas: RISK_TABLES_SQL.length };
+    const tableNames = RISK_TABLES_SQL
+      .map(sql => (String(sql).match(/^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/i) || [])[1])
+      .filter(Boolean);
+    const placeholders = tableNames.map(() => '?').join(',');
+    const [rows] = tableNames.length
+      ? await connection.execute(
+        `SELECT TABLE_NAME AS name
+         FROM INFORMATION_SCHEMA.TABLES
+         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${placeholders})`,
+        tableNames,
+      )
+      : [[]];
+    const existing = new Set(rows.map(row => String(row.name || row.TABLE_NAME || '').toLowerCase()));
+    const created = [];
+    for (const sql of RISK_TABLES_SQL) {
+      const table = (String(sql).match(/^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/i) || [])[1];
+      if (table && existing.has(table.toLowerCase())) continue;
+      await connection.query(sql);
+      if (table) created.push(table);
+    }
+    return {
+      tabelas: RISK_TABLES_SQL.length,
+      existentes: tableNames.length - created.length,
+      criadas: created,
+    };
   } finally {
     await connection.end().catch(() => {});
   }
