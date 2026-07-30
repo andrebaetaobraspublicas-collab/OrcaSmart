@@ -82,7 +82,10 @@ module.exports = function(db, options = {}) {
   }
 
   router.get('/perfis', asyncHandler(async (req, res) => {
-    res.json(await service.listPerfis(readDb, req.query));
+    res.json(await service.listPerfis(readDb, {
+      ...req.query,
+      _tenant_key: Number(req.user?.id_tenant || req.user?.tenant_id) || null,
+    }));
   }));
 
   router.get('/perfis/:id', asyncHandler(async (req, res) => {

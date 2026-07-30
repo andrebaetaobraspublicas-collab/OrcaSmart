@@ -86,6 +86,7 @@ async function main() {
   await repository.listPerfis(listDb, {
     fonte: 'USUARIO',
     mes_referencia: '2026-04',
+    _tenant_key: 11,
   });
   const listCall = listDb.calls.find(call => call.method === 'all');
   assert(listCall, 'a listagem unificada deve ser consultada');
@@ -98,7 +99,7 @@ async function main() {
   assert.strictEqual(repairs.length, 3, 'a listagem deve reparar os percentuais legados uma unica vez por tenant');
   assert(repairs.some(call => call.sql.includes('UPDATE tenant_itens_encargo')));
   assert(repairs.some(call => call.sql.includes('UPDATE tenant_perfis_encargos')));
-  await repository.listPerfis(listDb, { fonte: 'USUARIO' });
+  await repository.listPerfis(listDb, { fonte: 'USUARIO', _tenant_key: 11 });
   assert.strictEqual(
     listDb.calls.filter(call => call.method === 'run').length,
     3,

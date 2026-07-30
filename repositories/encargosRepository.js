@@ -85,9 +85,9 @@ function normalizePerfilPercentuais(perfil) {
 
 const legacyPercentRepairDone = new Set();
 
-async function repairLegacyTenantPercentuais(db) {
+async function repairLegacyTenantPercentuais(db, tenantKeyHint = null) {
   if (!isMysqlRuntime() || !(await hasTenantEncargosOverrides(db))) return;
-  const tenantKey = Number(db && db.tenantId);
+  const tenantKey = Number(tenantKeyHint || (db && db.tenantId));
   if (tenantKey > 0 && legacyPercentRepairDone.has(tenantKey)) return;
   const divisor = 100000000;
   const minimo = 1000000;
@@ -385,7 +385,7 @@ const selectPerfil = `
   LEFT JOIN datas_base db2 ON pe.id_data_base = db2.id_data_base`;
 
 async function listPerfis(db, query = {}) {
-  await repairLegacyTenantPercentuais(db);
+  await repairLegacyTenantPercentuais(db, query._tenant_key);
   if (await useTenantCatalogRead(db)) {
     const catalog = buildPerfilListSelect(query, 'catalog');
     const tenant = buildPerfilListSelect(query, 'tenant');
