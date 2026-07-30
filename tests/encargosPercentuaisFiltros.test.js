@@ -34,6 +34,7 @@ function mysqlDecimalMock() {
 function unifiedListMock() {
   const calls = [];
   return {
+    tenantId: 11,
     calls,
     get(sql, params, callback) {
       calls.push({ method: 'get', sql, params });
@@ -59,6 +60,8 @@ async function main() {
   assert.strictEqual(repository.toNum('37.80000000'), 37.8);
   assert.strictEqual(repository.toNum('10.00000000'), 10);
   assert.strictEqual(repository.toNum('1.234,56'), 1234.56);
+  assert.strictEqual(repository.toPercent('3780000000.00000000'), 37.8);
+  assert.strictEqual(repository.toPercent('1000000000.00000000'), 10);
 
   const decimalDb = mysqlDecimalMock();
   const totais = await repository.calcEncargos(decimalDb, 'tenant:7');
@@ -78,15 +81,38 @@ async function main() {
   assert.strictEqual(profileUpdate.params[4], 47.8);
 
   const listDb = unifiedListMock();
+  const previousEngine = process.env.ORCASMART_DB_ENGINE;
+  process.env.ORCASMART_DB_ENGINE = 'mysql';
   await repository.listPerfis(listDb, {
     fonte: 'USUARIO',
     mes_referencia: '2026-04',
   });
   const listCall = listDb.calls.find(call => call.method === 'all');
   assert(listCall, 'a listagem unificada deve ser consultada');
-  assert.match(listCall.sql, /tenant_override_action,'create'\)='create'/);
+  assert.match(listCall.sql, /tenant_override_action,'create'\)='create'.*fonte_referencia.*USUARIO/s);
+  assert.match(listCall.sql, /fonte_referencia,''\)\)='USUARIO'/);
+  assert.doesNotMatch(listCall.sql, /\browid\b/);
   assert.match(listCall.sql, /db2\.mes = \? AND db2\.ano = \?/);
   assert.deepStrictEqual(listCall.params, [4, 2026, 4, 2026]);
+  const repairs = listDb.calls.filter(call => call.method === 'run');
+  assert.strictEqual(repairs.length, 3, 'a listagem deve reparar os percentuais legados uma unica vez por tenant');
+  assert(repairs.some(call => call.sql.includes('UPDATE tenant_itens_encargo')));
+  assert(repairs.some(call => call.sql.includes('UPDATE tenant_perfis_encargos')));
+  await repository.listPerfis(listDb, { fonte: 'USUARIO' });
+  assert.strictEqual(
+    listDb.calls.filter(call => call.method === 'run').length,
+    3,
+    'a reparacao nao deve repetir escritas durante o mesmo processo',
+  );
+
+  const crudDb = unifiedListMock();
+  await repository.listGrupos(crudDb, 'tenant:7');
+  await repository.deletePerfil(crudDb, 'tenant:7');
+  for (const call of crudDb.calls.filter(item => item.method !== 'get')) {
+    assert.doesNotMatch(call.sql, /\browid\b/, 'o CRUD MySQL de encargos nao pode depender de rowid');
+  }
+  if (previousEngine === undefined) delete process.env.ORCASMART_DB_ENGINE;
+  else process.env.ORCASMART_DB_ENGINE = previousEngine;
 
   const frontend = fs.readFileSync(path.join(__dirname, '..', 'js', 'encargos.js'), 'utf8');
   assert(frontend.includes('id="filtroMesBase"'), 'a tela deve exibir o filtro de mes-base');
