@@ -36,7 +36,14 @@ Object.assign(API, {
       sicroProfissional: (id) => API.get(`/encargos/sicro-profissionais/${id}`),
       updateSicroProfissional: (id,d) => API.put(`/encargos/sicro-profissionais/${id}`, d),
       deleteSicroProfissional: (id) => API.delete(`/encargos/sicro-profissionais/${id}`),
+      duplicateSicroProfissional: (id) => API.post(`/encargos/sicro-profissionais/${id}/duplicar`, {}),
+      aplicarSicroProfissional: (id,d) => API.post(`/encargos/sicro-profissionais/${id}/aplicar-orcamento`, d),
       goinfraAnalitico: (p={}) => API.get('/encargos/goinfra-profissionais?'+new URLSearchParams(p).toString()),
+      goinfraProfissional: (id) => API.get(`/encargos/goinfra-profissionais/${id}`),
+      updateGoinfraProfissional: (id,d) => API.put(`/encargos/goinfra-profissionais/${id}`, d),
+      deleteGoinfraProfissional: (id) => API.delete(`/encargos/goinfra-profissionais/${id}`),
+      duplicateGoinfraProfissional: (id) => API.post(`/encargos/goinfra-profissionais/${id}/duplicar`, {}),
+      aplicarGoinfraProfissional: (id,d) => API.post(`/encargos/goinfra-profissionais/${id}/aplicar-orcamento`, d),
       importarReferenciais: () => API.post('/encargos/importar-referenciais', {}),
       importarSeinfra: (formData) => fetch(`${API.BASE}/encargos/importar-seinfra`, { method:'POST', body:formData }).then(async r => {
         const data = await r.json().catch(()=>({erro:'Resposta inválida do servidor.'}));
@@ -86,7 +93,7 @@ Router.register('encargos', async () => {
 
   let perfis = [], datasBase = [], sicroAnalitico = [], goinfraAnalitico = [];
   let perfilAtivo = null, gruposAtivos = [];
-  const filtros = { fonte:'', uf:'', categoria:'', regime:'', profissional:'', vigencia_inicio_mes:'', vigencia_fim_mes:'', q:'' };
+  const filtros = { fonte:'', uf:'', categoria:'', regime:'', profissional:'', mes_referencia:'', vigencia_inicio_mes:'', vigencia_fim_mes:'', q:'' };
   let opcoesProfissionaisSicro = [];
 
   async function carregar() {
@@ -133,7 +140,10 @@ Router.register('encargos', async () => {
   /* ═══════════════════════ LISTA PRINCIPAL ════════════════════════════════════ */
   function renderLista() {
     const ufs = [...new Set(perfis.map(p=>p.uf_referencia).filter(Boolean))].sort();
-    const fontes = ['SINAPI','SICRO','GOINFRA','SEINFRA','SUDECAP'];
+    const fontes = ['SINAPI','SICRO','GOINFRA','SEINFRA','SUDECAP','USUARIO'];
+    const fonteLabel = f => f === 'USUARIO'
+      ? 'Criados pelo usuário'
+      : `${f}${f==='SUDECAP'?' / BH':''}${f==='SEINFRA'?' / CE':''}${f==='GOINFRA'?' / GO':''}`;
     const mostrandoSicro = filtros.fonte === 'SICRO';
     const mostrandoGoinfra = filtros.fonte === 'GOINFRA';
 
@@ -162,7 +172,7 @@ Router.register('encargos', async () => {
           </div>
           <select class="filter-select" id="filtroFonte" style="min-width:170px">
             <option value="">Todas as fontes</option>
-            ${fontes.map(f => `<option value="${f}" ${filtros.fonte===f?'selected':''}>${f}${f==='SUDECAP'?' / BH':''}${f==='SEINFRA'?' / CE':''}${f==='GOINFRA'?' / GO':''}</option>`).join('')}
+             ${fontes.map(f => `<option value="${f}" ${filtros.fonte===f?'selected':''}>${fonteLabel(f)}</option>`).join('')}
           </select>
           <select class="filter-select" id="filtroUF" style="min-width:180px">
             <option value="">Todos os estados</option>
@@ -188,8 +198,18 @@ Router.register('encargos', async () => {
             <option value="Normal"     ${filtros.regime==='Normal'?'selected':''}>Sem Desoneração (Normal)</option>
             <option value="Desonerado" ${filtros.regime==='Desonerado'?'selected':''}>Com Desoneração</option>
           </select>
-          <input class="filter-select" id="filtroVigIni" type="month" title="Mês de início da vigência" value="${Utils.esc(filtros.vigencia_inicio_mes)}" style="min-width:150px">
-          <input class="filter-select" id="filtroVigFim" type="month" title="Mês de fim da vigência" value="${Utils.esc(filtros.vigencia_fim_mes)}" style="min-width:150px">
+          <div style="display:grid;gap:3px">
+            <label class="text-xs text-2" for="filtroMesBase">Mês-base</label>
+            <input class="filter-select" id="filtroMesBase" type="month" title="Mês-base dos encargos" value="${Utils.esc(filtros.mes_referencia)}" style="min-width:150px">
+          </div>
+          <div style="display:grid;gap:3px">
+            <label class="text-xs text-2" for="filtroVigIni">Vigência inicial</label>
+            <input class="filter-select" id="filtroVigIni" type="month" title="Mês de início da vigência" value="${Utils.esc(filtros.vigencia_inicio_mes)}" style="min-width:150px">
+          </div>
+          <div style="display:grid;gap:3px">
+            <label class="text-xs text-2" for="filtroVigFim">Vigência final</label>
+            <input class="filter-select" id="filtroVigFim" type="month" title="Mês de fim da vigência" value="${Utils.esc(filtros.vigencia_fim_mes)}" style="min-width:150px">
+          </div>
           <button class="btn btn-ghost btn-sm" id="btnLimparFiltros">Limpar</button>
         </div>
       </div>
@@ -241,11 +261,12 @@ Router.register('encargos', async () => {
     document.getElementById('filtroCat').addEventListener('change', e=>{ filtros.categoria=e.target.value; carregarPerfis(); });
     document.getElementById('filtroProfissional')?.addEventListener('change', e=>{ filtros.profissional=e.target.value; carregarPerfis(); });
     document.getElementById('filtroReg').addEventListener('change', e=>{ filtros.regime=e.target.value; carregarPerfis(); });
+    document.getElementById('filtroMesBase').addEventListener('change', e=>{ filtros.mes_referencia=e.target.value; carregarPerfis(); });
     document.getElementById('filtroVigIni').addEventListener('change', e=>{ filtros.vigencia_inicio_mes=e.target.value; carregarPerfis(); });
     document.getElementById('filtroVigFim').addEventListener('change', e=>{ filtros.vigencia_fim_mes=e.target.value; carregarPerfis(); });
     document.getElementById('btnLimparFiltros').addEventListener('click', ()=>{
       filtros.fonte=''; filtros.uf=''; filtros.categoria=''; filtros.regime=''; filtros.profissional='';
-      filtros.vigencia_inicio_mes=''; filtros.vigencia_fim_mes=''; filtros.q='';
+      filtros.mes_referencia=''; filtros.vigencia_inicio_mes=''; filtros.vigencia_fim_mes=''; filtros.q='';
       carregarPerfis();
     });
 
@@ -260,14 +281,17 @@ Router.register('encargos', async () => {
         else if (action==='del')     excluirPerfil(pid);
       });
     });
-    document.querySelectorAll('[data-sicro-action]').forEach(btn=>{
-      const indice=Number(btn.dataset.indice), action=btn.dataset.sicroAction;
+    document.querySelectorAll('[data-prof-action]').forEach(btn=>{
+      const indice=Number(btn.dataset.indice), action=btn.dataset.profAction;
+      const fonte=btn.dataset.profFonte;
       btn.addEventListener('click', ()=>{
-        const registro=sicroAnalitico[indice];
+        const registro=fonte === 'GOINFRA' ? goinfraAnalitico[indice] : sicroAnalitico[indice];
         if (!registro) return;
-        if (action==='view') consultarSicroProfissional(registro);
-        else if (action==='edit') editarSicroProfissional(registro);
-        else if (action==='delete') excluirSicroProfissional(registro);
+        if (action==='view') consultarProfissional(registro, fonte);
+        else if (action==='edit') editarProfissional(registro, fonte);
+        else if (action==='apply') abrirAplicarProfissional(registro, fonte);
+        else if (action==='duplicate') duplicarProfissional(registro, fonte);
+        else if (action==='delete') excluirProfissional(registro, fonte);
       });
     });
   }
@@ -535,13 +559,19 @@ Router.register('encargos', async () => {
                   <td>
                     <div class="td-actions">
                       <button class="btn-icon" style="color:var(--c-primary)" title="Consultar"
-                        data-sicro-action="view" data-indice="${indice}">
+                        data-prof-action="view" data-prof-fonte="SICRO" data-indice="${indice}">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="1.8"/></svg>
                       </button>
                       <button class="btn-icon edit" title="Editar"
-                        data-sicro-action="edit" data-indice="${indice}">${Utils.icons.edit}</button>
+                        data-prof-action="edit" data-prof-fonte="SICRO" data-indice="${indice}">${Utils.icons.edit}</button>
+                      <button class="btn-icon" style="color:var(--c-success)" title="Aplicar a orçamento"
+                        data-prof-action="apply" data-prof-fonte="SICRO" data-indice="${indice}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </button>
+                      <button class="btn-icon copy" title="Duplicar como perfil do usuário"
+                        data-prof-action="duplicate" data-prof-fonte="SICRO" data-indice="${indice}">${Utils.icons.copy}</button>
                       <button class="btn-icon delete" title="Excluir"
-                        data-sicro-action="delete" data-indice="${indice}">${Utils.icons.delete}</button>
+                        data-prof-action="delete" data-prof-fonte="SICRO" data-indice="${indice}">${Utils.icons.delete}</button>
                     </div>
                   </td>
                 </tr>`).join('')}
@@ -580,12 +610,12 @@ Router.register('encargos', async () => {
       </div>`;
   }
 
-  function consultarSicroProfissional(registro) {
+  function consultarProfissional(registro, fonte) {
     const dataBase = registro.db_mes && registro.db_ano
       ? `${String(registro.db_mes).padStart(2, '0')}/${registro.db_ano}`
       : (registro.vigencia || '-');
     Modal.open({
-      title: `Encargos SICRO - ${Utils.esc(registro.codigo_profissional || '')}`,
+      title: `Encargos ${fonte} - ${Utils.esc(registro.codigo_profissional || '')}`,
       size: 'modal-lg',
       body: `
         <div class="form-grid form-grid-2" style="margin-bottom:14px">
@@ -637,9 +667,9 @@ Router.register('encargos', async () => {
     return Number.isFinite(numero) ? numero : 0;
   }
 
-  function editarSicroProfissional(registro) {
+  function editarProfissional(registro, fonte) {
     Modal.open({
-      title: `Editar encargos SICRO - ${Utils.esc(registro.codigo_profissional || '')}`,
+      title: `Editar encargos ${fonte} - ${Utils.esc(registro.codigo_profissional || '')}`,
       size: 'modal-lg',
       body: `
         <div class="form-grid form-grid-2" style="margin-bottom:14px">
@@ -661,18 +691,21 @@ Router.register('encargos', async () => {
         </div>`,
       footer: `
         <button class="btn btn-ghost" onclick="Modal.close()">Cancelar</button>
-        <button class="btn btn-primary" id="btnSalvarSicroProfissional">Salvar</button>`,
+        <button class="btn btn-primary" id="btnSalvarProfissional">Salvar</button>`,
     });
-    document.getElementById('btnSalvarSicroProfissional').addEventListener('click', async () => {
+    document.getElementById('btnSalvarProfissional').addEventListener('click', async () => {
       const descricao = document.getElementById('sicro_descricao').value.trim();
       const unidade = document.getElementById('sicro_unidade').value.trim();
       if (!descricao) {
         Toast.warning('Informe a descricao do profissional.');
         return;
       }
+      const atualizar = fonte === 'GOINFRA'
+        ? API.encargos.perfis.updateGoinfraProfissional
+        : API.encargos.perfis.updateSicroProfissional;
       const operacoes = ['normal', 'desonerado']
         .filter(prefixo => registro[`${prefixo}_profissional_id`])
-        .map(prefixo => API.encargos.perfis.updateSicroProfissional(
+        .map(prefixo => atualizar(
           registro[`${prefixo}_profissional_id`],
           {
             descricao,
@@ -683,12 +716,12 @@ Router.register('encargos', async () => {
             total_grupo_d: lerPercentualSicro(`sicro_${prefixo}_d`),
           },
         ));
-      const btn = document.getElementById('btnSalvarSicroProfissional');
+      const btn = document.getElementById('btnSalvarProfissional');
       btn.disabled = true;
       btn.textContent = 'Salvando...';
       try {
         await Promise.all(operacoes);
-        Toast.success('Encargos do profissional SICRO atualizados.');
+        Toast.success(`Encargos do profissional ${fonte} atualizados.`);
         Modal.close();
         await carregarPerfis();
       } catch (e) {
@@ -700,20 +733,23 @@ Router.register('encargos', async () => {
     });
   }
 
-  async function excluirSicroProfissional(registro) {
+  async function excluirProfissional(registro, fonte) {
     const ids = [
       registro.normal_profissional_id,
       registro.desonerado_profissional_id,
     ].filter(Boolean);
     if (!ids.length) return;
     if (!await Confirm.ask(
-      `Excluir os encargos SICRO de ${registro.codigo_profissional} - ${registro.descricao} nos regimes cadastrados?`,
-      'Excluir encargos SICRO',
+      `Excluir os encargos ${fonte} de ${registro.codigo_profissional} - ${registro.descricao} nos regimes cadastrados?`,
+      `Excluir encargos ${fonte}`,
       { okText: 'Excluir', okClass: 'btn btn-danger' },
     )) return;
     try {
-      await Promise.all(ids.map(id => API.encargos.perfis.deleteSicroProfissional(id)));
-      Toast.success('Encargos do profissional SICRO excluidos.');
+      const excluir = fonte === 'GOINFRA'
+        ? API.encargos.perfis.deleteGoinfraProfissional
+        : API.encargos.perfis.deleteSicroProfissional;
+      await Promise.all(ids.map(id => excluir(id)));
+      Toast.success(`Encargos do profissional ${fonte} excluidos.`);
       await carregarPerfis();
     } catch (e) {
       Toast.error(e.message);
@@ -760,9 +796,10 @@ Router.register('encargos', async () => {
               <th style="text-align:right">B</th>
               <th style="text-align:right">C</th>
               <th style="text-align:right">D</th>
+              <th>Ações</th>
             </tr></thead>
             <tbody>
-              ${goinfraAnalitico.map(r => `
+              ${goinfraAnalitico.map((r, indice) => `
                 <tr>
                   <td class="fw-700 text-xs text-2">${Utils.esc(r.codigo_profissional || '')}</td>
                   <td><div class="fw-600">${Utils.esc(r.descricao || '')}</div></td>
@@ -780,6 +817,24 @@ Router.register('encargos', async () => {
                   <td style="text-align:right;color:${COR_G.B}">${fmt(r.desonerado_b)}</td>
                   <td style="text-align:right;color:${COR_G.C}">${fmt(r.desonerado_c)}</td>
                   <td style="text-align:right;color:${COR_G.D}">${fmt(r.desonerado_d)}</td>
+                  <td>
+                    <div class="td-actions">
+                      <button class="btn-icon" style="color:var(--c-primary)" title="Consultar"
+                        data-prof-action="view" data-prof-fonte="GOINFRA" data-indice="${indice}">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="1.8"/></svg>
+                      </button>
+                      <button class="btn-icon edit" title="Editar"
+                        data-prof-action="edit" data-prof-fonte="GOINFRA" data-indice="${indice}">${Utils.icons.edit}</button>
+                      <button class="btn-icon" style="color:var(--c-success)" title="Aplicar a orçamento"
+                        data-prof-action="apply" data-prof-fonte="GOINFRA" data-indice="${indice}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </button>
+                      <button class="btn-icon copy" title="Duplicar como perfil do usuário"
+                        data-prof-action="duplicate" data-prof-fonte="GOINFRA" data-indice="${indice}">${Utils.icons.copy}</button>
+                      <button class="btn-icon delete" title="Excluir"
+                        data-prof-action="delete" data-prof-fonte="GOINFRA" data-indice="${indice}">${Utils.icons.delete}</button>
+                    </div>
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -793,12 +848,16 @@ Router.register('encargos', async () => {
     const isSicroProf = (p.categoria || '').includes('SICRO');
     const corCat = isSicroProf ? 'badge-info' : (p.categoria==='Horista'  ? 'badge-success' : 'badge-gray');
     const total  = parseFloat(p.encargo_total)||0;
+    const fonteExibida = p._tenant_scope === 'tenant'
+      && (p.tenant_override_action || 'create') === 'create'
+      ? 'USUÁRIO'
+      : (p.fonte_referencia || 'SINAPI');
     const vig = p.vigencia_inicio || p.vigencia_fim
       ? `${p.vigencia_inicio || 'indeterminada'} a ${p.vigencia_fim || 'indeterminada'}`
       : (p.vigencia || '—');
     return `
       <tr>
-        <td><span class="badge badge-gray">${Utils.esc(p.fonte_referencia || 'SINAPI')}</span></td>
+        <td><span class="badge badge-gray">${Utils.esc(fonteExibida)}</span></td>
         <td class="fw-600">${p.uf_referencia||'—'}</td>
         <td><span class="badge ${corCat}">${isSicroProf ? '' : (p.categoria==='Horista'?'👷':' 💼')} ${Utils.esc(p.categoria || '')}</span></td>
         <td><span class="badge ${corReg}">${p.regime==='Desonerado'?'Com Desonera.':'Sem Desonera.'}</span></td>
@@ -867,8 +926,12 @@ Router.register('encargos', async () => {
           <div class="form-group">
             <label class="form-label">Fonte de referência</label>
             <select class="form-control" id="fp_fonte_ref">
-              ${['SINAPI','SICRO','SEINFRA','SUDECAP','GOINFRA','USUARIO'].map(f=>`<option value="${f}" ${(p.fonte_referencia||'SINAPI')===f?'selected':''}>${f}</option>`).join('')}
+              ${['USUARIO','SINAPI','SICRO','SEINFRA','SUDECAP','GOINFRA'].map(f=>`<option value="${f}" ${(p.fonte_referencia||(id?'SINAPI':'USUARIO'))===f?'selected':''}>${f==='USUARIO'?'Criado pelo usuário':f}</option>`).join('')}
             </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mês-base</label>
+            <select class="form-control" id="fp_data_base">${dbOpts}</select>
           </div>
           <div class="form-group">
             <label class="form-label">Início de Vigência</label>
@@ -906,6 +969,7 @@ Router.register('encargos', async () => {
       categoria:     document.getElementById('fp_cat').value,
       regime:        document.getElementById('fp_reg').value,
       uf_referencia: document.getElementById('fp_uf').value||null,
+      id_data_base:  document.getElementById('fp_data_base').value||null,
       fonte_referencia: document.getElementById('fp_fonte_ref').value,
       vigencia:      document.getElementById('fp_vig').value.trim()||'01/2026',
       vigencia_inicio: document.getElementById('fp_vig_ini').value || null,
@@ -914,15 +978,38 @@ Router.register('encargos', async () => {
       situacao:      document.getElementById('fp_sit').value,
     };
     if (!payload.nome_perfil) { Toast.warning('Nome obrigatório.'); return; }
+    const btn = document.getElementById('btnSalvarPerfil');
+    btn.disabled = true;
+    btn.textContent = id ? 'Salvando...' : 'Criando...';
     try {
       if (id) { await API.encargos.perfis.update(id,payload); Toast.success('Perfil atualizado!'); }
       else    { await API.encargos.perfis.create(payload);    Toast.success('Perfil criado!'); }
       Modal.close(); carregarPerfis();
-    } catch(e) { Toast.error(e.message); }
+    } catch(e) {
+      Toast.error(e.message);
+      btn.disabled = false;
+      btn.textContent = id ? 'Salvar' : 'Criar';
+    }
   }
 
-  async function abrirAplicarOrcamento(pid) {
-    const p = perfis.find(x=>x.id_perfil==pid) || await API.encargos.perfis.get(pid);
+  async function abrirAplicarProfissional(registro, fonte) {
+    return abrirAplicarOrcamento(null, { registro, fonte });
+  }
+
+  async function abrirAplicarOrcamento(pid, profissionalOpcoes = null) {
+    let p;
+    try {
+      p = profissionalOpcoes
+        ? {
+          nome_perfil: `${profissionalOpcoes.fonte} - ${profissionalOpcoes.registro.codigo_profissional} - ${profissionalOpcoes.registro.descricao}`,
+          fonte_referencia: profissionalOpcoes.fonte,
+          encargo_total: profissionalOpcoes.registro.normal_total ?? profissionalOpcoes.registro.desonerado_total ?? 0,
+        }
+        : (perfis.find(x=>x.id_perfil==pid) || await API.encargos.perfis.get(pid));
+    } catch (e) {
+      Toast.error(e.message);
+      return;
+    }
     let orcs = [];
     try {
       const res = await API.orcamentos.list({});
@@ -930,8 +1017,11 @@ Router.register('encargos', async () => {
     } catch(e) { Toast.error(e.message); return; }
     const opts = orcs.map(o => `
       <option value="${o.id_orcamento}">
-        ${Utils.esc(o.nome_orcamento || 'Orçamento')} — ${Utils.esc(o.nome_obra || '')} ${o.data_base_mes ? `(${Utils.nomeMes(o.data_base_mes)}/${o.data_base_ano})` : ''}
+        ${Utils.esc(o.nome_orcamento || 'Orçamento')} — ${Utils.esc(o.nome_obra || '')} ${o.data_base_mes ? `(${Utils.nomeMes(o.data_base_mes)}/${o.data_base_ano})` : ''}${o.regime_previdenciario ? ` — ${Utils.esc(o.regime_previdenciario)}` : ''}
       </option>`).join('');
+    const resumoPerfil = profissionalOpcoes
+      ? `${Utils.esc(p.nome_perfil)} — Onerado ${Utils.num(profissionalOpcoes.registro.normal_total || 0,4)}% / Desonerado ${Utils.num(profissionalOpcoes.registro.desonerado_total || 0,4)}%`
+      : `${Utils.esc(p.nome_perfil || '')} — ${Utils.num(p.encargo_total||0,4)}%`;
     Modal.open({
       title: 'Aplicar encargos sociais a orçamento',
       size: 'modal-lg',
@@ -942,7 +1032,7 @@ Router.register('encargos', async () => {
         <div class="form-grid form-grid-2">
           <div class="form-group span-2">
             <label class="form-label">Perfil de encargos</label>
-            <input class="form-control" value="${Utils.esc(p.nome_perfil || '')} — ${Utils.num(p.encargo_total||0,4)}%" readonly>
+            <input class="form-control" value="${resumoPerfil}" readonly>
           </div>
           <div class="form-group span-2">
             <label class="form-label">Orçamento sintético <span class="req">*</span></label>
@@ -984,6 +1074,7 @@ Router.register('encargos', async () => {
     document.getElementById('btnAplicarEncargo').addEventListener('click', async () => {
       const idOrc = document.getElementById('ap_orc').value;
       if (!idOrc) { Toast.warning('Selecione um orçamento.'); return; }
+      const orcSelecionado = orcs.find(o => String(o.id_orcamento) === String(idOrc));
       const escopo = document.querySelector('input[name="ap_escopo"]:checked')?.value || 'todos';
       const escopoTxt = escopo === 'mesma_fonte'
         ? `somente os insumos de mão de obra da fonte ${p.fonte_referencia || 'selecionada'}`
@@ -997,7 +1088,20 @@ Router.register('encargos', async () => {
       btn.disabled = true;
       btn.textContent = 'Aplicando...';
       try {
-        const res = await API.encargos.perfis.aplicarOrcamento(pid, {
+        let aplicar = dados => API.encargos.perfis.aplicarOrcamento(pid, dados);
+        if (profissionalOpcoes) {
+          const regime = String(orcSelecionado?.regime_previdenciario || '').toLowerCase();
+          const prefixo = regime.includes('desoner') ? 'desonerado' : 'normal';
+          const idProfissional = profissionalOpcoes.registro[`${prefixo}_profissional_id`];
+          if (!idProfissional) {
+            Toast.warning(`Não há encargos ${prefixo === 'desonerado' ? 'desonerados' : 'onerados'} cadastrados para este profissional.`);
+            return;
+          }
+          aplicar = profissionalOpcoes.fonte === 'GOINFRA'
+            ? dados => API.encargos.perfis.aplicarGoinfraProfissional(idProfissional, dados)
+            : dados => API.encargos.perfis.aplicarSicroProfissional(idProfissional, dados);
+        }
+        const res = await aplicar({
           id_orcamento: idOrc,
           escopo_aplicacao: escopo,
           observacoes: document.getElementById('ap_obs').value.trim(),
@@ -1025,6 +1129,30 @@ Router.register('encargos', async () => {
     catch(e) { Toast.error(e.message); }
   }
 
+  async function duplicarProfissional(registro, fonte) {
+    const ids = [
+      registro.normal_profissional_id,
+      registro.desonerado_profissional_id,
+    ].filter(Boolean);
+    if (!ids.length) return;
+    if (!await Confirm.ask(
+      `Duplicar os encargos ${fonte} de ${registro.codigo_profissional} - ${registro.descricao} como ${ids.length} perfil(is) criado(s) pelo usuário?`,
+      `Duplicar encargos ${fonte}`,
+      { okText:'Duplicar', okClass:'btn btn-primary' },
+    )) return;
+    try {
+      const duplicar = fonte === 'GOINFRA'
+        ? API.encargos.perfis.duplicateGoinfraProfissional
+        : API.encargos.perfis.duplicateSicroProfissional;
+      await Promise.all(ids.map(id => duplicar(id)));
+      Toast.success(`${ids.length} perfil(is) criado(s) pelo usuário.`);
+      filtros.fonte = 'USUARIO';
+      await carregarPerfis();
+    } catch (e) {
+      Toast.error(e.message);
+    }
+  }
+
   async function excluirPerfil(id) {
     const p = perfis.find(x=>x.id_perfil==id);
     if (!await Confirm.ask(`Excluir o perfil "${p?.nome_perfil}"?\nTodos os grupos e parcelas serão excluídos.`)) return;
@@ -1035,8 +1163,11 @@ Router.register('encargos', async () => {
   /* ═══════════════════════ DETALHE — EDITOR DE PARCELAS ══════════════════════ */
   async function abrirDetalhe(pid) {
     try {
-      perfilAtivo  = perfis.find(p=>p.id_perfil==pid) || await API.encargos.perfis.get(pid);
-      gruposAtivos = await API.encargos.perfis.grupos(pid);
+      const perfilLocal = perfis.find(p=>p.id_perfil==pid);
+      [perfilAtivo, gruposAtivos] = await Promise.all([
+        perfilLocal ? Promise.resolve(perfilLocal) : API.encargos.perfis.get(pid),
+        API.encargos.perfis.grupos(pid),
+      ]);
     } catch(e) { Toast.error(e.message); return; }
     renderDetalhe();
   }
@@ -1283,8 +1414,10 @@ Router.register('encargos', async () => {
 
   async function atualizarTotais() {
     if (!perfilAtivo) return;
-    gruposAtivos = await API.encargos.perfis.grupos(perfilAtivo.id_perfil);
-    perfilAtivo  = await API.encargos.perfis.get(perfilAtivo.id_perfil);
+    [gruposAtivos, perfilAtivo] = await Promise.all([
+      API.encargos.perfis.grupos(perfilAtivo.id_perfil),
+      API.encargos.perfis.get(perfilAtivo.id_perfil),
+    ]);
     for (const l of ['A','B','C','D']) {
       const el = document.getElementById(`tot_g${l}`);
       if (el) el.textContent = Utils.num(perfilAtivo[`total_grupo_${l.toLowerCase()}`]||0,4)+'%';

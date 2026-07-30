@@ -90,24 +90,30 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/perfis', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.createPerfil(db, req.body || {}));
+    res.status(201).json(await writeWithSingleConnection(
+      conn => service.createPerfil(conn, req.body || {}),
+    ));
   }));
 
   router.put('/perfis/:id', asyncHandler(async (req, res) => {
-    res.json(await service.updatePerfil(db, req.params.id, req.body || {}, { readDb }));
+    res.json(await writeWithSingleConnection(
+      conn => service.updatePerfil(conn, req.params.id, req.body || {}, { readDb }),
+    ));
   }));
 
   router.delete('/perfis/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'perfil referencial de encargos sociais');
-    res.json(await service.deletePerfil(db, req.params.id));
+    res.json(await writeWithSingleConnection(conn => service.deletePerfil(conn, req.params.id)));
   }));
 
   router.post('/perfis/:id/duplicar', asyncHandler(async (req, res) => {
-    res.status(201).json(await service.duplicatePerfil(db, req.params.id, { readDb }));
+    res.status(201).json(await writeWithSingleConnection(
+      conn => service.duplicatePerfil(conn, req.params.id, { readDb }),
+    ));
   }));
 
   router.post('/perfis/:id/recalcular-d', asyncHandler(async (req, res) => {
-    res.json(await service.recalcD(db, req.params.id));
+    res.json(await writeWithSingleConnection(conn => service.recalcD(conn, req.params.id)));
   }));
 
   router.get('/perfis/:id/grupos', asyncHandler(async (req, res) => {
@@ -128,7 +134,9 @@ module.exports = function(db, options = {}) {
   }));
 
   router.post('/perfis/:id/aplicar-orcamento', asyncHandler(async (req, res) => {
-    res.json(await service.aplicarAoOrcamento(db, req.params.id, req.body || {}));
+    res.json(await writeWithSingleConnection(
+      conn => service.aplicarAoOrcamento(conn, req.params.id, req.body || {}),
+    ));
   }));
 
   router.get('/perfis/:id/sicro-profissionais', asyncHandler(async (req, res) => {
@@ -184,23 +192,106 @@ module.exports = function(db, options = {}) {
     res.json({ mensagem: 'Encargo profissional SICRO excluido.' });
   }));
 
+  router.post('/sicro-profissionais/:id/duplicar', asyncHandler(async (req, res) => {
+    res.status(201).json(await writeWithSingleConnection(conn => service.duplicateProfissional(
+      conn,
+      'encargos_sicro_profissionais',
+      req.params.id,
+    )));
+  }));
+
+  router.post('/sicro-profissionais/:id/aplicar-orcamento', asyncHandler(async (req, res) => {
+    res.json(await writeWithSingleConnection(conn => service.aplicarProfissionalAoOrcamento(
+      conn,
+      'encargos_sicro_profissionais',
+      req.params.id,
+      req.body || {},
+    )));
+  }));
+
   router.get('/goinfra-profissionais', asyncHandler(async (req, res) => {
     res.json(await repository.listProfissionais(readDb, 'encargos_goinfra_profissionais', req.query));
   }));
 
+  router.get('/goinfra-profissionais/:id', asyncHandler(async (req, res) => {
+    const registro = await repository.getCatalogProfissional(
+      readDb,
+      'encargos_goinfra_profissionais',
+      req.params.id,
+    );
+    if (!registro) {
+      const err = new Error('Encargo profissional GOINFRA nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json(registro);
+  }));
+
+  router.put('/goinfra-profissionais/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'A edicao dos encargos profissionais GOINFRA e permitida apenas para administradores.');
+    const registro = await writeWithSingleConnection(conn => repository.updateCatalogProfissional(
+      conn,
+      'encargos_goinfra_profissionais',
+      req.params.id,
+      req.body || {},
+    ));
+    if (!registro) {
+      const err = new Error('Encargo profissional GOINFRA nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json(registro);
+  }));
+
+  router.delete('/goinfra-profissionais/:id', asyncHandler(async (req, res) => {
+    ensureAdmin(req, 'A exclusao dos encargos profissionais GOINFRA e permitida apenas para administradores.');
+    const result = await writeWithSingleConnection(conn => repository.deleteCatalogProfissional(
+      conn,
+      'encargos_goinfra_profissionais',
+      req.params.id,
+    ));
+    if (!result.changes) {
+      const err = new Error('Encargo profissional GOINFRA nao encontrado.');
+      err.status = 404;
+      throw err;
+    }
+    res.json({ mensagem: 'Encargo profissional GOINFRA excluido.' });
+  }));
+
+  router.post('/goinfra-profissionais/:id/duplicar', asyncHandler(async (req, res) => {
+    res.status(201).json(await writeWithSingleConnection(conn => service.duplicateProfissional(
+      conn,
+      'encargos_goinfra_profissionais',
+      req.params.id,
+    )));
+  }));
+
+  router.post('/goinfra-profissionais/:id/aplicar-orcamento', asyncHandler(async (req, res) => {
+    res.json(await writeWithSingleConnection(conn => service.aplicarProfissionalAoOrcamento(
+      conn,
+      'encargos_goinfra_profissionais',
+      req.params.id,
+      req.body || {},
+    )));
+  }));
+
   router.post('/itens', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.body && req.body.id_grupo_enc, 'incluir item em', 'grupo referencial de encargos sociais');
-    res.status(201).json(await service.createItem(db, req.body || {}));
+    res.status(201).json(await writeWithSingleConnection(
+      conn => service.createItem(conn, req.body || {}),
+    ));
   }));
 
   router.put('/itens/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'alterar', 'item referencial de encargos sociais');
-    res.json(await service.updateItem(db, req.params.id, req.body || {}));
+    res.json(await writeWithSingleConnection(
+      conn => service.updateItem(conn, req.params.id, req.body || {}),
+    ));
   }));
 
   router.delete('/itens/:id', asyncHandler(async (req, res) => {
     ensureAdminOrTenantScoped(req, req.params.id, 'excluir', 'item referencial de encargos sociais');
-    res.json(await service.deleteItem(db, req.params.id));
+    res.json(await writeWithSingleConnection(conn => service.deleteItem(conn, req.params.id)));
   }));
 
   router.post('/importar-referenciais', asyncHandler(async (req, res) => {

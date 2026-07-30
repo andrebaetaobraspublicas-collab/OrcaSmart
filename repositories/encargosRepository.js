@@ -22,7 +22,11 @@ function run(db, sql, params = []) {
 function toNum(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
-  const n = Number(String(value).replace(/\./g, '').replace(',', '.'));
+  const raw = String(value).trim().replace(/\s/g, '');
+  const normalized = raw.includes(',')
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw;
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -200,42 +204,47 @@ async function ensureSchema(db) {
     )`);
 }
 
-async function sumGrupo(db, idPerfil, letra) {
+async function sumGrupos(db, idPerfil) {
   const scoped = scopedId(idPerfil);
   if ((await hasTenantEncargosOverrides(db)) && scoped.scope === 'tenant') {
-    const row = await one(db, `
-      SELECT COALESCE(SUM(ie.percentual), 0) AS total
-      FROM tenant_itens_encargo ie
-      JOIN tenant_grupos_encargos ge ON ie.id_grupo_enc = ge.rowid
-      WHERE ge.id_perfil = ? AND ge.letra = ?
+    const rows = await all(db, `
+      SELECT ge.letra, COALESCE(SUM(ie.percentual), 0) AS total
+      FROM tenant_grupos_encargos ge
+      LEFT JOIN tenant_itens_encargo ie
+        ON ie.id_grupo_enc = ge.rowid
+       AND COALESCE(ie.tenant_override_status,'active')='active'
+      WHERE ge.id_perfil = ?
         AND COALESCE(ge.tenant_override_status,'active')='active'
-        AND COALESCE(ie.tenant_override_status,'active')='active'`, [scoped.value, letra]);
-    return toNum(row?.total);
+      GROUP BY ge.letra`, [scoped.value]);
+    return Object.fromEntries(rows.map(row => [row.letra, toNum(row.total)]));
   }
   if (await useTenantCatalogRead(db)) {
-    const row = await one(db, `
-      SELECT COALESCE(SUM(ie.percentual), 0) AS total
-      FROM catalog.itens_encargo ie
-      JOIN catalog.grupos_encargos ge ON ie.id_grupo_enc = ge.id_grupo_enc
-      WHERE ge.id_perfil = ? AND ge.letra = ?`, [scoped.value, letra]);
-    return toNum(row?.total);
+    const rows = await all(db, `
+      SELECT ge.letra, COALESCE(SUM(ie.percentual), 0) AS total
+      FROM catalog.grupos_encargos ge
+      LEFT JOIN catalog.itens_encargo ie ON ie.id_grupo_enc = ge.id_grupo_enc
+      WHERE ge.id_perfil = ?
+      GROUP BY ge.letra`, [scoped.value]);
+    return Object.fromEntries(rows.map(row => [row.letra, toNum(row.total)]));
   }
-  const row = await one(db, `
-    SELECT COALESCE(SUM(ie.percentual), 0) AS total
-    FROM itens_encargo ie
-    JOIN grupos_encargos ge ON ie.id_grupo_enc = ge.id_grupo_enc
-    WHERE ge.id_perfil = ? AND ge.letra = ?`, [idPerfil, letra]);
-  return toNum(row?.total);
+  const rows = await all(db, `
+    SELECT ge.letra, COALESCE(SUM(ie.percentual), 0) AS total
+    FROM grupos_encargos ge
+    LEFT JOIN itens_encargo ie ON ie.id_grupo_enc = ge.id_grupo_enc
+    WHERE ge.id_perfil = ?
+    GROUP BY ge.letra`, [idPerfil]);
+  return Object.fromEntries(rows.map(row => [row.letra, toNum(row.total)]));
 }
 
 async function calcEncargos(db, idPerfil, { recalcD = false, persist = true } = {}) {
   const tenantMode = await hasTenantEncargosOverrides(db);
   const scoped = scopedId(idPerfil);
   if (!tenantMode) await ensureSchema(db);
-  const A = await sumGrupo(db, idPerfil, 'A');
-  const B = await sumGrupo(db, idPerfil, 'B');
-  const C = await sumGrupo(db, idPerfil, 'C');
-  let D = await sumGrupo(db, idPerfil, 'D');
+  const somas = await sumGrupos(db, idPerfil);
+  const A = toNum(somas.A);
+  const B = toNum(somas.B);
+  const C = toNum(somas.C);
+  let D = toNum(somas.D);
 
   if (recalcD && persist && (!tenantMode || scoped.scope === 'tenant')) {
     const fator = 1 + A / 100;
@@ -252,7 +261,6 @@ async function calcEncargos(db, idPerfil, { recalcD = false, persist = true } = 
       const itensD = await all(db, `SELECT ${itemIdCol} AS id_item FROM ${itemTable} WHERE id_grupo_enc = ? ORDER BY ordem, ${itemIdCol}`, [grupoD.id_grupo_enc]);
       if (itensD[0]) await run(db, `UPDATE ${itemTable} SET percentual = ? WHERE ${itemIdCol} = ?`, [dSobreB, itensD[0].id_item]);
       if (itensD[1]) await run(db, `UPDATE ${itemTable} SET percentual = ? WHERE ${itemIdCol} = ?`, [dSobreC, itensD[1].id_item]);
-      await run(db, `UPDATE ${grupoTable} SET total_grupo = ? WHERE ${idCol} = ?`, [D, grupoD.id_grupo_enc]);
     }
   }
 
@@ -264,18 +272,27 @@ async function calcEncargos(db, idPerfil, { recalcD = false, persist = true } = 
         SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?,
             tenant_updated_at = ?
         WHERE rowid = ?`, [A, B, C, D, total, new Date().toISOString(), scoped.value]);
-      for (const [letra, val] of [['A', A], ['B', B], ['C', C], ['D', D]]) {
-        await run(db, 'UPDATE tenant_grupos_encargos SET total_grupo = ?, tenant_updated_at = ? WHERE id_perfil = ? AND letra = ?', [val, new Date().toISOString(), scoped.value, letra]);
-      }
+      await run(db, `
+        UPDATE tenant_grupos_encargos
+        SET total_grupo = CASE letra
+              WHEN 'A' THEN ? WHEN 'B' THEN ? WHEN 'C' THEN ? WHEN 'D' THEN ?
+              ELSE total_grupo END,
+            tenant_updated_at = ?
+        WHERE id_perfil = ? AND letra IN ('A','B','C','D')`, [
+        A, B, C, D, new Date().toISOString(), scoped.value,
+      ]);
       return { A: Number(A.toFixed(4)), B: Number(B.toFixed(4)), C: Number(C.toFixed(4)), D: Number(D.toFixed(4)), total: Number(total.toFixed(4)) };
     }
     await run(db, `
       UPDATE perfis_encargos
       SET total_grupo_a = ?, total_grupo_b = ?, total_grupo_c = ?, total_grupo_d = ?, encargo_total = ?
       WHERE id_perfil = ?`, [A, B, C, D, total, idPerfil]);
-    for (const [letra, val] of [['A', A], ['B', B], ['C', C], ['D', D]]) {
-      await run(db, 'UPDATE grupos_encargos SET total_grupo = ? WHERE id_perfil = ? AND letra = ?', [val, idPerfil, letra]);
-    }
+    await run(db, `
+      UPDATE grupos_encargos
+      SET total_grupo = CASE letra
+            WHEN 'A' THEN ? WHEN 'B' THEN ? WHEN 'C' THEN ? WHEN 'D' THEN ?
+            ELSE total_grupo END
+      WHERE id_perfil = ? AND letra IN ('A','B','C','D')`, [A, B, C, D, idPerfil]);
   }
   return { A: Number(A.toFixed(4)), B: Number(B.toFixed(4)), C: Number(C.toFixed(4)), D: Number(D.toFixed(4)), total: Number(total.toFixed(4)) };
 }
@@ -328,6 +345,11 @@ async function listPerfis(db, query = {}) {
     where.push("substr(COALESCE(pe.vigencia_fim, ''), 1, 7) = ?");
     params.push(query.vigencia_fim_mes);
   }
+  const mesReferencia = parseMesReferencia(query.mes_referencia);
+  if (mesReferencia) {
+    where.push('db2.mes = ? AND db2.ano = ?');
+    params.push(mesReferencia.mes, mesReferencia.ano);
+  }
   if (query.q) {
     where.push('pe.nome_perfil LIKE ?');
     params.push(`%${query.q}%`);
@@ -344,13 +366,21 @@ function buildPerfilListSelect(query = {}, source = 'catalog') {
   const params = [];
   if (isTenant) where.push("COALESCE(pe.tenant_override_status,'active')='active'");
   else where.push(visibleCatalogPerfilClause('pe'));
-  if (query.fonte) { where.push("UPPER(COALESCE(pe.fonte_referencia, '')) = ?"); params.push(String(query.fonte).toUpperCase()); }
+  if (String(query.fonte || '').toUpperCase() === 'USUARIO') {
+    if (isTenant) where.push("COALESCE(pe.tenant_override_action,'create')='create'");
+    else where.push('1=0');
+  } else if (query.fonte) {
+    where.push("UPPER(COALESCE(pe.fonte_referencia, '')) = ?");
+    params.push(String(query.fonte).toUpperCase());
+  }
   if (query.uf) { where.push('pe.uf_referencia = ?'); params.push(query.uf); }
   if (query.categoria && !String(query.categoria).startsWith('Profissional')) { where.push('pe.categoria = ?'); params.push(query.categoria); }
   if (query.regime) { where.push('pe.regime = ?'); params.push(query.regime); }
   if (query.situacao) { where.push('pe.situacao = ?'); params.push(query.situacao); }
   if (query.vigencia_inicio_mes) { where.push("substr(COALESCE(pe.vigencia_inicio, ''), 1, 7) = ?"); params.push(query.vigencia_inicio_mes); }
   if (query.vigencia_fim_mes) { where.push("substr(COALESCE(pe.vigencia_fim, ''), 1, 7) = ?"); params.push(query.vigencia_fim_mes); }
+  const mesReferencia = parseMesReferencia(query.mes_referencia);
+  if (mesReferencia) { where.push('db2.mes = ? AND db2.ano = ?'); params.push(mesReferencia.mes, mesReferencia.ano); }
   if (query.q) { where.push('pe.nome_perfil LIKE ?'); params.push(`%${query.q}%`); }
   return {
     sql: `
@@ -359,10 +389,11 @@ function buildPerfilListSelect(query = {}, source = 'catalog') {
              pe.descricao, pe.total_grupo_a, pe.total_grupo_b, pe.total_grupo_c,
              pe.total_grupo_d, pe.encargo_total, pe.observacoes, pe.situacao,
              pe.vigencia, pe.fonte_referencia, pe.vigencia_inicio, pe.vigencia_fim,
-             pe.encargo_original_percentual,
-             db2.mes AS db_mes, db2.ano AS db_ano,
-             ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
-             ${isTenant ? 'pe.tenant_catalog_id' : 'pe.id_perfil'} AS _catalog_id
+              pe.encargo_original_percentual,
+              db2.mes AS db_mes, db2.ano AS db_ano,
+              ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
+              ${isTenant ? 'pe.tenant_catalog_id' : 'pe.id_perfil'} AS _catalog_id,
+              ${isTenant ? 'pe.tenant_override_action' : 'NULL'} AS tenant_override_action
       FROM ${table} pe
       LEFT JOIN ${dataTable} db2 ON pe.id_data_base = db2.id_data_base
       WHERE ${where.join(' AND ')}`,
@@ -579,33 +610,48 @@ async function listGrupos(db, idPerfil) {
       FROM tenant_grupos_encargos
       WHERE id_perfil = ? AND COALESCE(tenant_override_status,'active')='active'
       ORDER BY letra`, [scoped.value]);
+    const itens = await all(db, `
+      SELECT *, id_grupo_enc AS _grupo_rowid, 'tenant:' || rowid AS id_item
+      FROM tenant_itens_encargo
+      WHERE id_grupo_enc IN (
+        SELECT rowid FROM tenant_grupos_encargos
+        WHERE id_perfil = ? AND COALESCE(tenant_override_status,'active')='active'
+      )
+        AND COALESCE(tenant_override_status,'active')='active'
+      ORDER BY id_grupo_enc, ordem, rowid`, [scoped.value]);
     for (const grupo of grupos) {
       const grupoRowid = scopedId(grupo.id_grupo_enc).value;
-      grupo.itens = await all(db, `
-        SELECT *, 'tenant:' || rowid AS id_item
-        FROM tenant_itens_encargo
-        WHERE id_grupo_enc = ? AND COALESCE(tenant_override_status,'active')='active'
-        ORDER BY ordem, rowid`, [grupoRowid]);
+      grupo.itens = itens.filter(item => Number(item._grupo_rowid) === Number(grupoRowid));
     }
     return grupos;
   }
   if (await useTenantCatalogRead(db)) {
     const grupos = await all(db, 'SELECT * FROM catalog.grupos_encargos WHERE id_perfil = ? ORDER BY letra', [scoped.value]);
-    for (const grupo of grupos) {
-      grupo.itens = await all(db, 'SELECT * FROM catalog.itens_encargo WHERE id_grupo_enc = ? ORDER BY ordem, id_item', [grupo.id_grupo_enc]);
-    }
+    const itens = await all(db, `
+      SELECT *
+      FROM catalog.itens_encargo
+      WHERE id_grupo_enc IN (
+        SELECT id_grupo_enc FROM catalog.grupos_encargos WHERE id_perfil = ?
+      )
+      ORDER BY id_grupo_enc, ordem, id_item`, [scoped.value]);
+    for (const grupo of grupos) grupo.itens = itens.filter(item => Number(item.id_grupo_enc) === Number(grupo.id_grupo_enc));
     return grupos;
   }
   await ensureSchema(db);
   const grupos = await all(db, 'SELECT * FROM grupos_encargos WHERE id_perfil = ? ORDER BY letra', [idPerfil]);
-  for (const grupo of grupos) {
-    grupo.itens = await all(db, 'SELECT * FROM itens_encargo WHERE id_grupo_enc = ? ORDER BY ordem, id_item', [grupo.id_grupo_enc]);
-  }
+  const itens = await all(db, `
+    SELECT *
+    FROM itens_encargo
+    WHERE id_grupo_enc IN (
+      SELECT id_grupo_enc FROM grupos_encargos WHERE id_perfil = ?
+    )
+    ORDER BY id_grupo_enc, ordem, id_item`, [idPerfil]);
+  for (const grupo of grupos) grupo.itens = itens.filter(item => Number(item.id_grupo_enc) === Number(grupo.id_grupo_enc));
   return grupos;
 }
 
 async function getMemoria(db, idPerfil, options = {}) {
-  const perfil = await getPerfil(db, idPerfil, options);
+  const perfil = await getPerfil(db, idPerfil, { ...options, recalc: false });
   if (!perfil) return null;
   const totais = await calcEncargos(db, idPerfil, options);
   const grupos = await listGrupos(db, idPerfil);
@@ -1048,7 +1094,15 @@ async function listTenantProfissionais(db, query = {}) {
     where.push('tp.rowid=?');
     params.push(scoped.value);
   }
-  const mesFiltro = parseMesReferencia(query.mes_referencia || query.vigencia_inicio_mes);
+  if (query.vigencia_inicio_mes) {
+    where.push("substr(COALESCE(tp.vigencia_inicio, ''), 1, 7) = ?");
+    params.push(query.vigencia_inicio_mes);
+  }
+  if (query.vigencia_fim_mes) {
+    where.push("substr(COALESCE(tp.vigencia_fim, ''), 1, 7) = ?");
+    params.push(query.vigencia_fim_mes);
+  }
+  const mesFiltro = parseMesReferencia(query.mes_referencia);
   if (mesFiltro) {
     where.push('db2.mes=? AND db2.ano=?');
     params.push(mesFiltro.mes, mesFiltro.ano);
@@ -1309,7 +1363,15 @@ async function listProfissionais(db, table, query = {}) {
     where.push('ep.codigo_profissional = ?');
     params.push(String(query.profissional));
   }
-  const mesFiltro = parseMesReferencia(query.mes_referencia || query.vigencia_inicio_mes);
+  if (query.vigencia_inicio_mes) {
+    where.push("substr(COALESCE(pe.vigencia_inicio, ''), 1, 7) = ?");
+    params.push(query.vigencia_inicio_mes);
+  }
+  if (query.vigencia_fim_mes) {
+    where.push("substr(COALESCE(pe.vigencia_fim, ''), 1, 7) = ?");
+    params.push(query.vigencia_fim_mes);
+  }
+  const mesFiltro = parseMesReferencia(query.mes_referencia);
   if (mesFiltro) {
     where.push('db2.mes=? AND db2.ano=?');
     params.push(mesFiltro.mes, mesFiltro.ano);
@@ -1392,7 +1454,8 @@ async function getCatalogProfissional(db, table, idProfissional) {
   if (!schema) await ensureSchema(db);
   return one(db, `
     SELECT ep.*, pe.categoria, pe.regime, pe.uf_referencia, pe.id_data_base,
-           pe.fonte_referencia, pe.vigencia, db2.mes AS db_mes, db2.ano AS db_ano
+           pe.fonte_referencia, pe.vigencia, pe.vigencia_inicio, pe.vigencia_fim,
+           db2.mes AS db_mes, db2.ano AS db_ano
     FROM ${schema}${table} ep
     JOIN ${schema}perfis_encargos pe ON pe.id_perfil=ep.id_perfil
     LEFT JOIN ${schema}datas_base db2 ON db2.id_data_base=pe.id_data_base
@@ -1563,6 +1626,55 @@ async function deleteCatalogProfissional(db, table, idProfissional) {
     ]);
   }
   return result;
+}
+
+function fonteProfissional(table) {
+  if (table === 'encargos_sicro_profissionais') return 'SICRO';
+  if (table === 'encargos_goinfra_profissionais') return 'GOINFRA';
+  throw new Error('Tabela analitica de encargos invalida.');
+}
+
+async function duplicateProfissionalAsUserProfile(db, table, idProfissional) {
+  const profissional = await getCatalogProfissional(db, table, idProfissional);
+  if (!profissional) return null;
+  const fonte = fonteProfissional(table);
+  const perfil = await createPerfil(db, {
+    nome_perfil: `Copia de ${fonte} - ${profissional.codigo_profissional} - ${profissional.descricao} - ${profissional.regime === 'Desonerado' ? 'Com Desoneracao' : 'Sem Desoneracao'}`,
+    categoria: profissional.categoria || categoriaFromUnidade(profissional.unidade),
+    regime: profissional.regime || 'Normal',
+    uf_referencia: profissional.uf_referencia || null,
+    id_data_base: profissional.id_data_base || null,
+    fonte_referencia: 'USUARIO',
+    vigencia: profissional.vigencia || null,
+    vigencia_inicio: profissional.vigencia_inicio || null,
+    vigencia_fim: profissional.vigencia_fim || null,
+    descricao: `Perfil criado a partir dos encargos ${fonte} do profissional ${profissional.codigo_profissional} - ${profissional.descricao}.`,
+    observacoes: `Origem: ${fonte}; profissional: ${profissional.codigo_profissional}; perfil referencial: ${profissional.id_perfil}.`,
+    situacao: 'Ativo',
+  });
+  return replacePerfilTotais(db, perfil.id_perfil, {
+    A: profissional.total_grupo_a,
+    B: profissional.total_grupo_b,
+    C: profissional.total_grupo_c,
+    D: profissional.total_grupo_d,
+  });
+}
+
+async function aplicarProfissionalAoOrcamento(db, table, idProfissional, data = {}) {
+  const profissional = await getCatalogProfissional(db, table, idProfissional);
+  if (!profissional) return null;
+  const fonte = fonteProfissional(table);
+  return aplicarAoOrcamento(db, profissional.id_perfil, data, {
+    profileOverride: {
+      nome_perfil: `${fonte} - ${profissional.codigo_profissional} - ${profissional.descricao}`,
+      categoria: profissional.categoria || categoriaFromUnidade(profissional.unidade),
+      regime: profissional.regime || 'Normal',
+      uf_referencia: profissional.uf_referencia || null,
+      id_data_base: profissional.id_data_base || null,
+      fonte_referencia: fonte,
+      encargo_total: toNum(profissional.encargo_total),
+    },
+  });
 }
 
 function perfilParams(data = {}) {
@@ -1823,11 +1935,14 @@ async function custoComposicaoAjustado(db, itemOrc, perfilNovo, escopo = 'todos'
   };
 }
 
-async function aplicarAoOrcamento(db, idPerfil, data = {}) {
+async function aplicarAoOrcamento(db, idPerfil, data = {}, options = {}) {
   await ensureSchema(db);
   const idOrcamento = data.id_orcamento;
   const escopo = data.escopo_aplicacao || 'todos';
-  const perfil = await getPerfil(db, idPerfil);
+  const perfilBase = await getPerfil(db, idPerfil);
+  const perfil = perfilBase && options.profileOverride
+    ? { ...perfilBase, ...options.profileOverride }
+    : perfilBase;
   const orcamento = idOrcamento ? await one(db, 'SELECT * FROM orcamentos WHERE id_orcamento = ?', [idOrcamento]) : null;
   if (!perfil) {
     const err = new Error('Perfil de encargos nao encontrado.');
@@ -1959,5 +2074,7 @@ module.exports = {
   getCatalogProfissional,
   updateCatalogProfissional,
   deleteCatalogProfissional,
+  duplicateProfissionalAsUserProfile,
+  aplicarProfissionalAoOrcamento,
   aplicarAoOrcamento,
 };

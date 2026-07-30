@@ -155,6 +155,41 @@ async function aplicarAoOrcamento(db, idPerfil, data = {}) {
   return repository.aplicarAoOrcamento(db, idPerfil, data);
 }
 
+async function duplicateProfissional(db, table, idProfissional) {
+  const perfil = await repository.duplicateProfissionalAsUserProfile(db, table, idProfissional);
+  if (!perfil) {
+    const err = new Error('Encargo profissional nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  return perfil;
+}
+
+async function aplicarProfissionalAoOrcamento(db, table, idProfissional, data = {}) {
+  if (!data.id_orcamento) {
+    const err = new Error('Selecione um orcamento sintetico.');
+    err.status = 400;
+    throw err;
+  }
+  if (data.escopo_aplicacao && !['todos', 'mesma_fonte'].includes(data.escopo_aplicacao)) {
+    const err = new Error('Escopo de aplicacao invalido.');
+    err.status = 400;
+    throw err;
+  }
+  const resultado = await repository.aplicarProfissionalAoOrcamento(
+    db,
+    table,
+    idProfissional,
+    data,
+  );
+  if (!resultado) {
+    const err = new Error('Encargo profissional nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  return resultado;
+}
+
 function normPercent(value) {
   if (value === null || value === undefined || value === '') return null;
   const raw = String(value).trim().replace('%', '');
@@ -565,6 +600,8 @@ module.exports = {
   updateItem,
   deleteItem,
   aplicarAoOrcamento,
+  duplicateProfissional,
+  aplicarProfissionalAoOrcamento,
   importarUniforme,
   importarAnalitico,
   parseProfissionaisSicroXlsx,

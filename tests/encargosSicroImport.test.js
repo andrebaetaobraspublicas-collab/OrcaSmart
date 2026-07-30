@@ -164,6 +164,16 @@ async function main() {
     assert(tabela[0].normal_profissional_id);
     assert(tabela[0].desonerado_profissional_id);
 
+    const copiaUsuario = await repository.duplicateProfissionalAsUserProfile(
+      db,
+      'encargos_sicro_profissionais',
+      tabela[0].normal_profissional_id,
+    );
+    assert.strictEqual(copiaUsuario.fonte_referencia, 'USUARIO');
+    assert.strictEqual(copiaUsuario.total_grupo_a, 20.2);
+    assert.strictEqual(copiaUsuario.total_grupo_b, 5);
+    assert.strictEqual(copiaUsuario.encargo_total, 30.2);
+
     const filtrada = await repository.listProfissionais(db, 'encargos_sicro_profissionais', {
       uf: 'SP',
       mes_referencia: '04/2026',
