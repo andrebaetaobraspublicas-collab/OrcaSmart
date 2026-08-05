@@ -63,6 +63,9 @@ async function main() {
   ['fonteFiltroDataBase', 'fonteFiltroTipo', 'fonteFiltroAbrangencia', 'fonteFiltroNome']
     .forEach(id => assert.ok(frontend.includes(id), `Filtro ${id} ausente.`));
   assert.ok(frontend.includes("['oficial', 'privada']"), 'A grade deve aceitar somente fontes oficiais e privadas.');
+  assert.ok(frontend.includes('<select class="filter-select" id="fonteFiltroNome"'), 'O filtro de nome deve ser um combo-box.');
+  assert.ok(!frontend.includes('Importação SINAPI disponível.'), 'O banner informativo SINAPI deve ser removido.');
+  assert.ok(frontend.includes('id="btnImportarORSE"'), 'A interface de estudo ORSE deve estar disponível.');
 
   await new Promise(resolve => db.close(resolve));
   console.log('fontesConsolidacao.test.js: ok');

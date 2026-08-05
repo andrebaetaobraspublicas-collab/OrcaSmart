@@ -54,6 +54,7 @@ assert(imports.includes('POST /sudecap/importar'));
 assert(imports.includes('POST /goinfra/importar'));
 assert(imports.includes('POST /sicor-mg/importar'));
 assert(imports.includes('POST /cdhu/importar'));
+assert(imports.includes('POST /orse/analisar'));
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }), false);
 assert.strictEqual(validOffice({ originalname: 'legado.xls' }, true), true);
 
