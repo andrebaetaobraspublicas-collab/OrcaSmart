@@ -30,7 +30,50 @@ function params(data = {}) {
 }
 
 async function listFontes(db) {
-  return all(db, 'SELECT * FROM fontes_referencia ORDER BY nome_fonte');
+  const fontes = await all(db, 'SELECT * FROM fontes_referencia ORDER BY nome_fonte');
+  if (!fontes.length) return fontes;
+
+  // A data-base continua sendo uma entidade independente e compartilhada por
+  // diferentes processos. Para a tela consolidada, apenas lemos os vinculos
+  // existentes nos precos, sem duplicar ou migrar qualquer registro.
+  const referencias = await all(db, `
+    SELECT refs.id_fonte, d.id_data_base, d.mes, d.ano, d.descricao
+    FROM (
+      SELECT id_fonte, id_data_base
+      FROM precos_insumos
+      WHERE id_fonte IS NOT NULL AND id_data_base IS NOT NULL
+      GROUP BY id_fonte, id_data_base
+      UNION
+      SELECT id_fonte, id_data_base
+      FROM precos_equipamentos
+      WHERE id_fonte IS NOT NULL AND id_data_base IS NOT NULL
+      GROUP BY id_fonte, id_data_base
+    ) refs
+    INNER JOIN datas_base d ON d.id_data_base = refs.id_data_base
+    ORDER BY d.ano DESC, d.mes DESC, d.id_data_base DESC
+  `).catch(() => []);
+
+  const datasPorFonte = new Map();
+  for (const referencia of referencias) {
+    const idFonte = String(referencia.id_fonte);
+    if (!datasPorFonte.has(idFonte)) datasPorFonte.set(idFonte, []);
+    datasPorFonte.get(idFonte).push({
+      id_data_base: referencia.id_data_base,
+      mes: Number(referencia.mes),
+      ano: Number(referencia.ano),
+      descricao: referencia.descricao || null,
+      referencia: `${String(referencia.mes).padStart(2, '0')}/${referencia.ano}`,
+    });
+  }
+
+  return fontes.map(fonte => {
+    const datasBase = datasPorFonte.get(String(fonte.id_fonte)) || [];
+    return {
+      ...fonte,
+      data_base_referencia: datasBase[0]?.referencia || null,
+      datas_base_referencias: datasBase,
+    };
+  });
 }
 
 async function getFonte(db, id) {
