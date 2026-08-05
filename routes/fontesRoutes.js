@@ -11,7 +11,7 @@ module.exports = function fontesRoutes(db, options = {}) {
   });
 
   router.get('/', asyncHandler(async (_req, res) => {
-    res.json(await service.listFontes(readDb));
+    res.json(await service.listFontes(readDb, db));
   }));
 
   router.get('/:id', asyncHandler(async (req, res) => {
