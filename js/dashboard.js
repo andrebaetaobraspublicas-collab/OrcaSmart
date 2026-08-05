@@ -102,8 +102,7 @@ Router.register('dashboard', async () => {
              onclick="sessionStorage.removeItem('osSintId')">📋 &nbsp;Orçamentos Sintéticos</a>
           <a href="#composicoes"       class="btn btn-ghost w-100" style="justify-content:flex-start">🧱 &nbsp;Consultar composições</a>
           <a href="#insumos"           class="btn btn-ghost w-100" style="justify-content:flex-start">🏷️ &nbsp;Consultar insumos e preços</a>
-          <a href="#fontes"            class="btn btn-ghost w-100" style="justify-content:flex-start">🔖 &nbsp;Importar SINAPI / SICRO</a>
-          <a href="#datas-base"        class="btn btn-ghost w-100" style="justify-content:flex-start">📅 &nbsp;Gerenciar datas-base</a>
+          <a href="#fontes"            class="btn btn-ghost w-100" style="justify-content:flex-start">🔖 &nbsp;Fontes e datas-base referenciais</a>
         </div>
       </div>
 

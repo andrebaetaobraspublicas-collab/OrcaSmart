@@ -2,18 +2,63 @@
 
 Router.register('fontes', async () => {
   let lista = [];
+  const filtros = { dataBase: '', fonte: '', abrangencia: '', nome: '' };
 
   async function carregar() {
     try { lista = await API.fontes.list(); renderTabela(); }
     catch(e) { Toast.error(e.message); }
   }
 
+  function normalizar(valor) {
+    return String(valor || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  function ehFonteReferencial(fonte) {
+    return ['oficial', 'privada'].includes(normalizar(fonte.tipo_fonte));
+  }
+
+  function datasBaseDaFonte(fonte) {
+    return Array.isArray(fonte.datas_base_referencias) ? fonte.datas_base_referencias : [];
+  }
+
+  function fontesFiltradas() {
+    const nome = normalizar(filtros.nome);
+    return lista.filter(fonte => {
+      if (!ehFonteReferencial(fonte)) return false;
+      if (filtros.fonte && normalizar(fonte.tipo_fonte) !== filtros.fonte) return false;
+      if (filtros.abrangencia && fonte.abrangencia !== filtros.abrangencia) return false;
+      if (nome && !normalizar(fonte.nome_fonte).includes(nome)) return false;
+      if (filtros.dataBase && !datasBaseDaFonte(fonte).some(d => d.referencia === filtros.dataBase)) return false;
+      return true;
+    });
+  }
+
+  function referenciaExibida(fonte) {
+    const datas = datasBaseDaFonte(fonte);
+    if (filtros.dataBase && datas.some(d => d.referencia === filtros.dataBase)) return filtros.dataBase;
+    return fonte.data_base_referencia || datas[0]?.referencia || '';
+  }
+
   function renderTabela() {
+    const fontes = fontesFiltradas();
+    const fontesReferenciais = lista.filter(ehFonteReferencial);
+    const datasBase = [...new Set(fontesReferenciais.flatMap(datasBaseDaFonte).map(d => d.referencia).filter(Boolean))]
+      .sort((a, b) => {
+        const [ma, aa] = a.split('/').map(Number);
+        const [mb, ab] = b.split('/').map(Number);
+        return (ab * 100 + mb) - (aa * 100 + ma);
+      });
+    const abrangencias = [...new Set(fontesReferenciais.map(f => f.abrangencia).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
-        <div class="page-header-left">
+        <div class="page-header-left" style="min-width:220px;flex-shrink:0">
           <h1>Fontes Referenciais</h1>
-          <p>${lista.length} fonte(s) cadastrada(s)</p>
+          <p>${fontes.length} fonte(s) oficial(is) ou privada(s)</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-secondary" id="btnImportarSEINFRA"
@@ -76,17 +121,45 @@ Router.register('fontes', async () => {
         </div>
       </div>
 
+      <div class="section-card" style="margin-bottom:16px">
+        <div class="toolbar" style="flex-wrap:wrap;gap:10px">
+          <div class="search-box" style="flex:1;min-width:220px">
+            ${Utils.icons.search}
+            <input id="fonteFiltroNome" type="text" placeholder="Filtrar por nome..." value="${Utils.esc(filtros.nome)}">
+          </div>
+          <select class="filter-select" id="fonteFiltroDataBase" aria-label="Filtrar por data-base">
+            <option value="">Todas as datas-base</option>
+            ${datasBase.map(ref => `<option value="${Utils.esc(ref)}" ${filtros.dataBase === ref ? 'selected' : ''}>${Utils.esc(ref)}</option>`).join('')}
+          </select>
+          <select class="filter-select" id="fonteFiltroTipo" aria-label="Filtrar por fonte">
+            <option value="">Todas as fontes</option>
+            <option value="oficial" ${filtros.fonte === 'oficial' ? 'selected' : ''}>Oficial</option>
+            <option value="privada" ${filtros.fonte === 'privada' ? 'selected' : ''}>Privada</option>
+          </select>
+          <select class="filter-select" id="fonteFiltroAbrangencia" aria-label="Filtrar por abrangência">
+            <option value="">Todas as abrangências</option>
+            ${abrangencias.map(valor => `<option value="${Utils.esc(valor)}" ${filtros.abrangencia === valor ? 'selected' : ''}>${Utils.esc(valor)}</option>`).join('')}
+          </select>
+          <button class="btn btn-ghost btn-sm" id="fonteLimparFiltros" type="button">Limpar filtros</button>
+        </div>
+      </div>
+
       <div class="section-card">
         <div class="table-wrapper">
           <table>
-            <thead><tr><th>Nome</th><th>Tipo</th><th>Órgão Responsável</th><th>Abrangência</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Nome</th><th>Fonte</th><th>Data-base</th><th>Órgão Responsável</th><th>Abrangência</th><th>Ações</th></tr></thead>
             <tbody>
-              ${lista.length === 0
-                ? `<tr><td colspan="5"><div class="empty-state"><p>Nenhuma fonte cadastrada.</p></div></td></tr>`
-                : lista.map(f => `
+              ${fontes.length === 0
+                ? `<tr><td colspan="6"><div class="empty-state"><p>Nenhuma fonte oficial ou privada encontrada.</p></div></td></tr>`
+                : fontes.map(f => `
                   <tr>
                     <td class="fw-600">${Utils.esc(f.nome_fonte)}</td>
                     <td>${Utils.tipoBadge(f.tipo_fonte)}</td>
+                    <td class="text-sm">
+                      ${referenciaExibida(f)
+                        ? `<span class="badge badge-gray">${Utils.esc(referenciaExibida(f))}</span>${!filtros.dataBase && datasBaseDaFonte(f).length > 1 ? `<div class="text-xs text-3" style="margin-top:4px" title="${Utils.esc(datasBaseDaFonte(f).map(d => d.referencia).join(', '))}">${datasBaseDaFonte(f).length} referências</div>` : ''}`
+                        : '<span class="text-3">—</span>'}
+                    </td>
                     <td class="text-sm text-2">${Utils.esc(f.orgao_responsavel)||'—'}</td>
                     <td class="text-sm text-2">${Utils.esc(f.abrangencia)||'—'}</td>
                     <td>
@@ -98,6 +171,34 @@ Router.register('fontes', async () => {
           </table>
         </div>
       </div>`;
+
+    let timerBusca = null;
+    document.getElementById('fonteFiltroNome').addEventListener('input', ev => {
+      clearTimeout(timerBusca);
+      filtros.nome = ev.target.value;
+      timerBusca = setTimeout(() => {
+        renderTabela();
+        const campo = document.getElementById('fonteFiltroNome');
+        campo.focus();
+        campo.setSelectionRange(campo.value.length, campo.value.length);
+      }, 180);
+    });
+    document.getElementById('fonteFiltroDataBase').addEventListener('change', ev => {
+      filtros.dataBase = ev.target.value;
+      renderTabela();
+    });
+    document.getElementById('fonteFiltroTipo').addEventListener('change', ev => {
+      filtros.fonte = ev.target.value;
+      renderTabela();
+    });
+    document.getElementById('fonteFiltroAbrangencia').addEventListener('change', ev => {
+      filtros.abrangencia = ev.target.value;
+      renderTabela();
+    });
+    document.getElementById('fonteLimparFiltros').addEventListener('click', () => {
+      Object.assign(filtros, { dataBase: '', fonte: '', abrangencia: '', nome: '' });
+      renderTabela();
+    });
 
     document.getElementById('btnNovaFonte').addEventListener('click', () => abrirModal(null));
     document.getElementById('btnImportarSEINFRA').addEventListener('click', iniciarImportacaoSEINFRA);
@@ -120,10 +221,10 @@ Router.register('fontes', async () => {
       title: id ? 'Editar Fonte' : 'Nova Fonte Referencial',
       body: `
         <div class="form-group"><label class="form-label">Nome *</label>
-          <input class="form-control" id="f_nome" type="text" value="${Utils.esc(f.nome_fonte||'')}" placeholder="Ex: SINAPI, SICRO, Cotação Própria"></div>
+          <input class="form-control" id="f_nome" type="text" value="${Utils.esc(f.nome_fonte||'')}" placeholder="Ex: SINAPI, SICRO, tabela privada"></div>
         <div class="form-group"><label class="form-label">Tipo</label>
           <select class="form-control" id="f_tipo">
-            ${['Oficial','Privada','Interna','Outra'].map(t =>
+            ${['Oficial','Privada'].map(t =>
               `<option value="${t}" ${f.tipo_fonte===t?'selected':''}>${t}</option>`).join('')}
           </select></div>
         <div class="form-group"><label class="form-label">Órgão Responsável</label>
