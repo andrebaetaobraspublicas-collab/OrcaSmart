@@ -71,7 +71,7 @@ async function editarComVinculo(db, id, payload = {}, options = {}) {
     err.status = 404;
     throw err;
   }
-  const fontesReferencia = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+  const fontesReferencia = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'SEOP'];
   const preservaReferencia = payload.acao_orcamentos === 'manter'
     && (current._tenant_scope === 'catalog' || fontesReferencia.includes(String(current.fonte || '').toUpperCase()));
   const impacto = preservaReferencia ? {
