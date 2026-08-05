@@ -1,7 +1,6 @@
 const express = require('express');
 const { parseMultipartAll } = require('../utils/spreadsheetUpload');
-const { validOffice, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu } = require('../services/referenceImportService');
-const { analyzeOrseFile } = require('../services/orseFileService');
+const { validOffice, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu, importSeop } = require('../services/referenceImportService');
 
 function tenantId(req) {
   const value = Number(req.user?.id_tenant || req.user?.tenant_id);
@@ -58,15 +57,7 @@ module.exports = function referenceImportRoutes(db) {
   }));
   router.post('/cdhu/importar', ...handler(
     ['arquivo_pdf','arquivo_sintetico'], importCdhu, { pdf: 'arquivo_pdf' }));
-  router.post('/orse/analisar', upload, async (req, res) => {
-    try {
-      const { files } = parseMultipartAll(req.body, req.headers['content-type']);
-      const file = files.arquivo_orse;
-      if (!file?.buffer?.length) return res.status(400).json({ erro: 'Selecione um arquivo .ORSE.' });
-      return res.json(analyzeOrseFile(file));
-    } catch (error) {
-      return res.status(error.status || 500).json({ erro: error.message || 'Falha ao analisar o arquivo ORSE.' });
-    }
-  });
+  router.post('/seop/importar', ...handler(
+    ['relatorio_analitico','relatorio_sintetico'], importSeop, { pdf: true }));
   return router;
 };

@@ -848,4 +848,243 @@ function parseCdhuReference(files, fields, pdfText, syntheticRows) {
 }
 async function importCdhu(db,files,fields,tenantId){const divisor=number(fields.bdi_divisor)||1.2081;const syntheticRows=parseXlsxBuffer(files.arquivo_sintetico.buffer);const synthetic=parseCdhuSynthetic(files.arquivo_sintetico.buffer,divisor);const pdf=await pdfParse(files.arquivo_pdf.buffer);const base=parseCdhuPdfText(pdf.text);const ref=parseCdhuReference(files,fields,pdf.text,syntheticRows);const mesRef=`${String(ref.mes).padStart(2,'0')}/${ref.ano}`;if(!base.length||!synthetic.records.length)throw Object.assign(new Error('Não foi possível identificar as composições analíticas e os preços sintéticos da CDHU.'),{status:400});const inferred=[];const comps=base.map(comp=>{const own=synthetic.byCode.get(comp.codigo)||synthetic.byText.get(`${normalizeCdhu(comp.descricao)}|${comp.unidade}`);return{codigo:`CDHU.${comp.codigo}`,descricao:comp.descricao,unidade:comp.unidade,regime:own?'COM PREÇO':'SEM PREÇO',custo:own?.preco||0,observacoes:`CDHU/SP; BDI expurgado pelo divisor ${divisor}.`,itens:comp.itens.map(item=>{const rec=synthetic.byCode.get(cdhuCode(item.codigo))||synthetic.byText.get(`${normalizeCdhu(item.descricao)}|${item.unidade}`);if(item.codigo&&rec)inferred.push({codigo:item.codigo,descricao:item.descricao,unidade:item.unidade,tipo:item.unidade==='H'?'Mão de Obra':'Material',precoNaoDesonerado:rec.preco,precoDesonerado:rec.preco,observacoes:'Preço inferido do sintético CDHU/SP sem BDI.'});return{tipo:/^\d{6}$/.test(item.codigo)?'COMPOSICAO':'INSUMO',...item,preco:rec?.preco??null,custoParcial:rec?rec.preco*item.coeficiente:null};})};});return transaction(db,async conn=>{const ctx=await ensureCatalogContext(conn,'CDHU/SP',ref.mes,ref.ano,`CDHU/SP ${mesRef}`);const ins=await persistInsumos(conn,mergeInsumos(inferred),{tenantId,origem:'CDHU',uf:'SP',idDataBase:ctx.idDataBase,idFonte:ctx.idFonte,sobrepor:fields.sobrepor!=='false'});const comp=await persistCompositions(conn,comps,{tenantId,fonte:'CDHU',uf:'SP',mesRef,sobrepor:fields.sobrepor!=='false'});return{...ins,...comp,data_base:mesRef,uf:'SP',bdi_percentual:number(fields.bdi_percentual)||20.81,bdi_divisor:divisor,composicoes_sem_preco:comps.filter(c=>!c.custo).length,itens_com_preco_inferido:inferred.length,mensagem:`CDHU/SP ${mesRef}: ${comp.composicoes_inseridas} composições novas e ${comp.itens_inseridos} itens importados.`};});}
 
-module.exports={ validOffice, extractPdfRows, parseReference, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseSicorMgInputRows, parseSicorMgInputFile, createSicorMgCompositionParser, parseSicorMgCompositions, parseCdhuSynthetic, parseCdhuPdfText, parseCdhuReference, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu };
+const SEOP_UNITS = [
+  'm2/mês', 'm²/mês', 'm3/mês', 'm³/mês', 'm2/mes', 'm3/mes',
+  'm²', 'm³', 'm2', 'm3', 'mês', 'mes', 'kg', 'km', 'kwh', 'mwh',
+  'und', 'un', 'cj', 'pt', 'vb', 'par', 'jg', 'dz', 'pç', 'pc', 'gl',
+  'ha', 't', 'l', 'h', 'm', '%',
+];
+
+function seopRowKind(value) {
+  const normalized = ascii(value).toUpperCase();
+  if (normalized === 'INSUMO') return 'INSUMO';
+  if (normalized.includes('AUXILIAR')) return 'AUXILIAR';
+  return 'COMPOSICAO';
+}
+
+function parseSeopRawRows(raw) {
+  const rows = [];
+  let pending = null;
+  const start = /^(Composi\S*o Auxiliar|Composi\S*o|Insumo)\s+([A-Z]{0,4}\d{5,8})\s+(.+)$/i;
+  const numericSuffix = /^(.*?)(-?\d+(?:\.\d{3})*,\d{7})(-?\d+(?:\.\d{3})*,\d{2})(-?\d+(?:\.\d{3})*,\d{2})$/;
+  const finishIfComplete = () => {
+    if (!pending) return false;
+    const flat = pending.parts.join(' ').replace(/\s+/g, ' ').trim();
+    const match = flat.match(numericSuffix);
+    if (!match) return false;
+    rows.push({
+      tipo: pending.tipo,
+      codigo: pending.codigo,
+      detalhe: match[1].trim(),
+      coeficiente: number(match[2]),
+      preco: number(match[3]),
+      custoParcial: number(match[4]),
+    });
+    pending = null;
+    return true;
+  };
+
+  for (const line of String(raw || '').split(/\r?\n/).map(text).filter(Boolean)) {
+    const match = line.match(start);
+    if (match) {
+      if (pending) throw Object.assign(new Error(`Linha analitica SEOP incompleta para o codigo ${pending.codigo}.`), { status: 400 });
+      pending = { tipo: seopRowKind(match[1]), codigo: code(match[2]), parts: [match[3]] };
+      finishIfComplete();
+      continue;
+    }
+    if (pending) {
+      pending.parts.push(line);
+      finishIfComplete();
+    }
+  }
+  if (pending) throw Object.assign(new Error(`Fim inesperado no item analitico SEOP ${pending.codigo}.`), { status: 400 });
+  return rows;
+}
+
+function splitSeopInputDetail(detail) {
+  const match = text(detail).match(/^(.*)(Material|Equipamento|Taxas|Servi\S*os|M\S*o de Obra)(\S+)$/i);
+  if (!match) return null;
+  const rawType = ascii(match[2]).toUpperCase();
+  let tipo = 'Material';
+  if (rawType.includes('EQUIPAMENTO')) tipo = 'Equipamento';
+  else if (rawType.includes('MAO DE OBRA')) tipo = 'Mão de Obra';
+  else if (rawType.includes('TAXAS')) tipo = 'Taxas';
+  else if (rawType.includes('SERVI')) tipo = 'Serviço Auxiliar';
+  return { descricao: text(match[1]), tipo, unidade: code(match[3]) };
+}
+
+function splitSeopCompositionDetail(detail, units) {
+  const raw = text(detail);
+  const ordered = [...new Set([...(units || []), ...SEOP_UNITS].map(code).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  const upper = raw.toUpperCase();
+  const unit = ordered.find(candidate => upper.endsWith(candidate.toUpperCase()));
+  if (!unit) return null;
+  return { descricao: text(raw.slice(0, raw.length - unit.length)), unidade: unit };
+}
+
+function parseSeopAnalyticText(raw) {
+  const rows = parseSeopRawRows(raw);
+  const inputDetails = new Map();
+  const units = new Set(SEOP_UNITS.map(code));
+  for (const row of rows.filter(item => item.tipo === 'INSUMO')) {
+    const detail = splitSeopInputDetail(row.detalhe);
+    if (!detail) throw Object.assign(new Error(`Tipo ou unidade do insumo SEOP ${row.codigo} nao reconhecido.`), { status: 400 });
+    inputDetails.set(row, detail);
+    units.add(code(detail.unidade));
+  }
+
+  const compositions = [];
+  const inputs = new Map();
+  let current = null;
+  const finish = () => { if (current) compositions.push(current); current = null; };
+  for (const row of rows) {
+    if (row.tipo === 'COMPOSICAO') {
+      finish();
+      const detail = splitSeopCompositionDetail(row.detalhe, units);
+      if (!detail) throw Object.assign(new Error(`Unidade da composicao SEOP ${row.codigo} nao reconhecida.`), { status: 400 });
+      current = {
+        codigoBase: row.codigo,
+        codigo: `SEOP.${row.codigo}`,
+        descricao: detail.descricao,
+        unidade: detail.unidade,
+        regime: 'Sem desoneração',
+        custo: row.preco,
+        observacoes: 'SEOP/PA - relatório analítico sem desoneração.',
+        itens: [],
+      };
+      continue;
+    }
+    if (!current) continue;
+    if (row.tipo === 'AUXILIAR') {
+      const detail = splitSeopCompositionDetail(row.detalhe, units);
+      if (!detail) throw Object.assign(new Error(`Unidade da composicao auxiliar SEOP ${row.codigo} nao reconhecida.`), { status: 400 });
+      current.itens.push({
+        tipo: 'COMPOSICAO', codigo: `SEOP.${row.codigo}`, descricao: detail.descricao,
+        unidade: detail.unidade, coeficiente: row.coeficiente, preco: row.preco, custoParcial: row.custoParcial,
+      });
+      continue;
+    }
+    const detail = inputDetails.get(row);
+    current.itens.push({
+      tipo: 'INSUMO', codigo: row.codigo, descricao: detail.descricao, unidade: detail.unidade,
+      coeficiente: row.coeficiente, preco: row.preco, custoParcial: row.custoParcial,
+    });
+    const existing = inputs.get(row.codigo);
+    if (!existing || Math.abs(Number(existing.precoNaoDesonerado) - Number(row.preco)) <= 0.02) {
+      inputs.set(row.codigo, {
+        codigo: row.codigo, descricao: detail.descricao, unidade: detail.unidade, tipo: detail.tipo,
+        precoNaoDesonerado: row.preco,
+        observacoes: 'SEOP/PA - relatório analítico sem desoneração.',
+      });
+    }
+  }
+  finish();
+  return { compositions, inputs: [...inputs.values()], rows };
+}
+
+function parseSeopSyntheticText(raw, knownUnitsByCode = new Map()) {
+  const normalized = String(raw || '').replace(/\r/g, '');
+  const start = /(?:^|\n)\s*(\d+(?:\.\d+)+)\s+(\d{5,8})\s+/g;
+  const markers = [];
+  for (const match of normalized.matchAll(start)) markers.push({ index: match.index + match[0].lastIndexOf(match[1]), item: match[1], codigo: match[2] });
+  const records = [];
+  const money = '-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}';
+  const units = [...new Set(SEOP_UNITS.map(code).filter(Boolean))].sort((a, b) => b.length - a.length);
+  for (let i = 0; i < markers.length; i += 1) {
+    const marker = markers[i];
+    const end = markers[i + 1]?.index ?? normalized.length;
+    const chunk = normalized.slice(marker.index, end).replace(/\s+/g, ' ').trim();
+    const expectedUnit = code(knownUnitsByCode.get(marker.codigo));
+    const candidates = expectedUnit ? [expectedUnit] : units;
+    const unitPattern = candidates.map(unit => unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const valuePattern = new RegExp(`(${unitPattern})(${money})`, 'i');
+    const value = chunk.match(valuePattern);
+    if (!value) continue;
+    const prefix = chunk.slice(0, value.index);
+    const description = text(prefix.replace(/^\d+(?:\.\d+)+\s+\d{5,8}\s+/, ''));
+    records.push({ item: marker.item, codigo: marker.codigo, descricao: description, unidade: code(value[1]), preco: number(value[2]) });
+  }
+  return records;
+}
+
+function parseSeopReference(raw, fields = {}) {
+  const manualMes = Number(fields.mes);
+  const manualAno = Number(fields.ano);
+  if (Number.isInteger(manualMes) && manualMes >= 1 && manualMes <= 12
+      && Number.isInteger(manualAno) && manualAno >= 2000 && manualAno <= 2100) {
+    return { mes: manualMes, ano: manualAno };
+  }
+  const normalized = ascii(raw).toUpperCase();
+  const monthName = Object.keys(REFERENCE_MONTHS).sort((a, b) => b.length - a.length).join('|');
+  const match = normalized.match(new RegExp(`\\b(${monthName})\\s+(20\\d{2})\\b`));
+  if (!match) throw Object.assign(new Error('Nao foi possivel identificar a data-base nos relatorios SEOP/PA.'), { status: 400 });
+  return referenceParts(match[1], match[2]);
+}
+
+async function importSeop(db, files, fields, tenantId) {
+  const [analyticPdf, syntheticPdf] = await Promise.all([
+    pdfParse(files.relatorio_analitico.buffer),
+    pdfParse(files.relatorio_sintetico.buffer),
+  ]);
+  const sourceText = `${analyticPdf.text}\n${syntheticPdf.text}`;
+  if (!ascii(sourceText).toUpperCase().includes('SECRETARIA DE ESTADO DE OBRAS PUBLICAS - SEOP')) {
+    throw Object.assign(new Error('Os PDFs enviados nao foram reconhecidos como relatorios oficiais da SEOP/PA.'), { status: 400 });
+  }
+  const parsed = parseSeopAnalyticText(analyticPdf.text);
+  const analyticUnits = new Map(parsed.compositions.map(item => [item.codigoBase, item.unidade]));
+  const synthetic = parseSeopSyntheticText(syntheticPdf.text, analyticUnits);
+  if (!parsed.inputs.length || !parsed.compositions.length) {
+    throw Object.assign(new Error('O relatorio analitico nao contem insumos e composicoes SEOP reconheciveis.'), { status: 400 });
+  }
+  if (!synthetic.length) throw Object.assign(new Error('Nenhum servico foi reconhecido no relatorio sintetico SEOP.'), { status: 400 });
+
+  const ref = parseSeopReference(sourceText, fields);
+  const mesRef = `${String(ref.mes).padStart(2, '0')}/${ref.ano}`;
+  const syntheticByCode = new Map(synthetic.map(item => [item.codigo, item]));
+  let checked = 0;
+  let divergences = 0;
+  for (const composition of parsed.compositions) {
+    const official = syntheticByCode.get(composition.codigoBase);
+    if (!official) continue;
+    checked += 1;
+    if (Math.abs(Number(composition.custo || 0) - Number(official.preco || 0)) > 0.05) divergences += 1;
+    composition.custo = official.preco;
+    composition.observacoes = 'SEOP/PA - custo conferido no relatório sintético sem BDI; itens do relatório analítico sem desoneração.';
+  }
+  if (checked < Math.floor(synthetic.length * 0.9)) {
+    throw Object.assign(new Error(`Conferencia SEOP insuficiente: apenas ${checked} de ${synthetic.length} servicos sinteticos foram localizados no analitico.`), { status: 400 });
+  }
+  if (divergences > Math.max(5, Math.floor(checked * 0.01))) {
+    throw Object.assign(new Error(`Os relatorios SEOP divergem em ${divergences} custos unitarios; a importacao foi cancelada.`), { status: 400 });
+  }
+
+  return transaction(db, async conn => {
+    const context = await ensureCatalogContext(conn, 'SEOP/PA', ref.mes, ref.ano, `SEOP/PA ${mesRef}`, {
+      tipo: 'Oficial',
+      orgao: 'Secretaria de Estado de Obras Públicas do Pará - SEOP',
+      abrangencia: 'PA',
+      observacoes: 'Tabela oficial de custos da SEOP/PA.',
+    });
+    const ins = await persistInsumos(conn, parsed.inputs, {
+      tenantId, origem: 'SEOP', uf: 'PA', idDataBase: context.idDataBase,
+      idFonte: context.idFonte, sobrepor: fields.sobrepor !== 'false',
+    });
+    const comp = await persistCompositions(conn, parsed.compositions, {
+      tenantId, fonte: 'SEOP', uf: 'PA', mesRef, sobrepor: fields.sobrepor !== 'false',
+    });
+    return {
+      ...ins,
+      ...comp,
+      data_base: mesRef,
+      uf: 'PA',
+      composicoes_analiticas: parsed.compositions.length,
+      servicos_sinteticos: synthetic.length,
+      composicoes_conferidas: checked,
+      divergencias_custo: divergences,
+      mensagem: `SEOP/PA ${mesRef}: ${parsed.inputs.length} insumos e ${parsed.compositions.length} composicoes processados; ${checked} custos conferidos no sintetico.`,
+    };
+  });
+}
+
+module.exports={ validOffice, extractPdfRows, parseReference, parseSicroLaborOrMaterial, parseSicroEquipment, parseSeinfraInsumos, parseSeinfraComposicoes, parseSudecapInsumos, parseSudecapComposicoes, parseGoinfraReference, parseGoinfraLaborRows, parseGoinfraMaterialRows, parseGoinfraCompositionRows, parseSicorMgInputRows, parseSicorMgInputFile, createSicorMgCompositionParser, parseSicorMgCompositions, parseCdhuSynthetic, parseCdhuPdfText, parseCdhuReference, parseSeopAnalyticText, parseSeopSyntheticText, parseSeopReference, importSicroInputs, importSeinfra, importSudecap, importGoinfra, importSicorMg, importCdhu, importSeop };

@@ -65,7 +65,9 @@ async function main() {
   assert.ok(frontend.includes("['oficial', 'privada']"), 'A grade deve aceitar somente fontes oficiais e privadas.');
   assert.ok(frontend.includes('<select class="filter-select" id="fonteFiltroNome"'), 'O filtro de nome deve ser um combo-box.');
   assert.ok(!frontend.includes('Importação SINAPI disponível.'), 'O banner informativo SINAPI deve ser removido.');
-  assert.ok(frontend.includes('id="btnImportarORSE"'), 'A interface de estudo ORSE deve estar disponível.');
+  assert.ok(frontend.includes('id="btnImportarSEOP"'), 'O importador SEOP/PA deve estar disponível.');
+  assert.ok(frontend.includes("'/api/seop/importar'"), 'A interface deve enviar os dois PDFs para a rota SEOP/PA.');
+  assert.ok(!frontend.includes('btnImportarORSE'), 'A iniciativa ORSE deve ser removida da interface.');
 
   await new Promise(resolve => db.close(resolve));
   console.log('fontesConsolidacao.test.js: ok');
