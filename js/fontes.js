@@ -104,11 +104,11 @@ Router.register('fontes', async () => {
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>Importar SINAPI
           </button>
-          <button class="btn btn-secondary" id="btnImportarORSE"
-            style="background:linear-gradient(135deg,#fff7ed,#ffedd5);color:#9a3412;border:1px solid #fdba74;font-weight:600">
+          <button class="btn btn-secondary" id="btnImportarSEOP"
+            style="background:linear-gradient(135deg,#eff6ff,#fee2e2);color:#1e3a8a;border:1px solid #93c5fd;font-weight:600">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="margin-right:5px;vertical-align:-2px">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>Importar ORSE/SE
+            </svg>Importar SEOP/PA
           </button>
           <button class="btn btn-primary" id="btnNovaFonte">${Utils.icons.plus} Nova Fonte</button>
         </div>
@@ -194,7 +194,7 @@ Router.register('fontes', async () => {
     document.getElementById('btnImportarCDHU').addEventListener('click', iniciarImportacaoCDHU);
     document.getElementById('btnImportarSICRO').addEventListener('click', iniciarImportacaoSICRO);
     document.getElementById('btnImportarSINAPI').addEventListener('click', iniciarImportacaoSINAPI);
-    document.getElementById('btnImportarORSE').addEventListener('click', iniciarAnaliseORSE);
+    document.getElementById('btnImportarSEOP').addEventListener('click', iniciarImportacaoSEOP);
 
     document.querySelectorAll('[data-action="edit"]').forEach(b =>
       b.addEventListener('click', () => abrirModal(parseInt(b.dataset.id))));
@@ -244,73 +244,93 @@ Router.register('fontes', async () => {
     catch(e) { Toast.error(e.message); }
   }
 
-  function iniciarAnaliseORSE() {
+  function iniciarImportacaoSEOP() {
     Modal.open({
-      title: 'Importação ORSE/SE — análise técnica',
+      title: 'Importar SEOP/PA',
       size: 'modal-lg',
       body: `
-        <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius);padding:13px 15px;margin-bottom:16px;color:#7c2d12;font-size:.83rem;line-height:1.5">
-          Esta etapa verifica o arquivo mensal oficial do ORSE sem gravar dados. O futuro importador será restrito a
-          <strong>insumos</strong> e <strong>composições</strong>; qualquer outro conteúdo será descartado.
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div class="form-group">
+            <label class="form-label">Relatório analítico de composições *</label>
+            <input class="form-control" id="seopAnalitico" type="file" accept=".pdf,application/pdf">
+            <div class="text-xs text-3" style="margin-top:4px">PDF de Composições Analíticas de Preços Unitários.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Relatório sintético de serviços *</label>
+            <input class="form-control" id="seopSintetico" type="file" accept=".pdf,application/pdf">
+            <div class="text-xs text-3" style="margin-top:4px">PDF da Planilha Padrão sem BDI.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mês de referência</label>
+            <input class="form-control" id="seopMes" type="number" min="1" max="12" placeholder="Detectado automaticamente">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Ano de referência</label>
+            <input class="form-control" id="seopAno" type="number" min="2000" max="2100" placeholder="Detectado automaticamente">
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Arquivo oficial ORSE *</label>
-          <input class="form-control" id="orseArquivo" type="file" accept=".orse,.ORSE">
-          <div class="form-hint">Formato esperado: AAAAMMOO-AA.ORSE, por exemplo 20260501-00.ORSE.</div>
+        <label style="display:flex;gap:8px;align-items:center;margin:2px 0 12px;font-size:.85rem">
+          <input type="checkbox" id="seopSobrepor" checked>
+          Sobrepor registros SEOP/PA existentes para a mesma data-base
+        </label>
+        <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:12px;font-size:.82rem;color:#1e3a8a;line-height:1.5">
+          O importador extrai os insumos, coeficientes e composições do relatório analítico e confere os custos unitários
+          no relatório sintético. A importação é cancelada se os arquivos não forem SEOP/PA ou não forem compatíveis.
         </div>
-        <div id="orseArquivoResumo" style="display:none;background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius);padding:12px 14px;margin-top:12px"></div>
-        <div id="orseAnaliseResultado" style="display:none;margin-top:14px"></div>`,
-      footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>
-               <button class="btn btn-primary" id="btnAnalisarORSE" style="background:#c2410c;border-color:#c2410c">Analisar arquivo</button>`,
+        <div id="seopStatus" style="display:none;margin-top:12px"></div>`,
+      footer: `<button class="btn btn-secondary" onclick="Modal.close()">Cancelar</button>
+               <button class="btn btn-primary" id="btnSeopImportar" style="background:#1d4ed8;border-color:#1d4ed8">Importar SEOP/PA</button>`,
     });
 
-    const input = document.getElementById('orseArquivo');
-    const resumo = document.getElementById('orseArquivoResumo');
-    const resultado = document.getElementById('orseAnaliseResultado');
-    const botao = document.getElementById('btnAnalisarORSE');
-
-    input.addEventListener('change', () => {
-      const arquivo = input.files[0];
-      if (!arquivo) { resumo.style.display = 'none'; return; }
-      const match = arquivo.name.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})\.orse$/i);
-      const referencia = match ? `${match[2]}/${match[1]}` : 'não identificada pelo nome';
-      resumo.style.display = 'block';
-      resumo.innerHTML = `
-        <div class="fw-600">${Utils.esc(arquivo.name)}</div>
-        <div class="text-sm text-2" style="margin-top:4px">${(arquivo.size / 1024 / 1024).toFixed(2)} MB · Data-base ${Utils.esc(referencia)}</div>`;
-      resultado.style.display = 'none';
-    });
-
-    botao.addEventListener('click', async () => {
-      const arquivo = input.files[0];
-      if (!arquivo) { Toast.warning('Selecione um arquivo .ORSE.'); return; }
-      if (!/\.orse$/i.test(arquivo.name)) { Toast.warning('O arquivo deve possuir a extensão .ORSE.'); return; }
-
-      botao.disabled = true;
-      botao.textContent = 'Analisando...';
-      resultado.style.display = 'block';
-      resultado.innerHTML = '<div class="loading-inline"><div class="spinner"></div><span>Validando assinatura, referência e estrutura binária...</span></div>';
+    document.getElementById('btnSeopImportar').addEventListener('click', async () => {
+      const analitico = document.getElementById('seopAnalitico').files[0];
+      const sintetico = document.getElementById('seopSintetico').files[0];
+      if (!analitico || !sintetico) { Toast.warning('Selecione os dois relatórios PDF da SEOP/PA.'); return; }
+      const btn = document.getElementById('btnSeopImportar');
+      const status = document.getElementById('seopStatus');
+      btn.disabled = true;
+      btn.textContent = 'Importando...';
+      status.style.display = 'block';
+      status.innerHTML = _mkProgressBar('seopProg', '#1d4ed8');
       try {
         const fd = new FormData();
-        fd.append('arquivo_orse', arquivo);
-        const response = await fetch('/api/orse/analisar', { method: 'POST', body: fd });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.erro) throw new Error(data.erro || `Erro HTTP ${response.status}`);
-        resultado.innerHTML = `
-          <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:14px;color:#1e3a8a;font-size:.83rem;line-height:1.55">
-            <div class="fw-700" style="margin-bottom:5px">Arquivo ORSE reconhecido para estudo</div>
-            <div>Referência: <strong>${Utils.esc(data.referencia || 'não identificada')}</strong></div>
-            <div>Escopo previsto: <strong>insumos e composições</strong></div>
-            <div>Conteúdo adicional: <strong>será descartado</strong></div>
-            <div style="margin-top:8px">${Utils.esc(data.mensagem || '')}</div>
-          </div>`;
+        fd.append('relatorio_analitico', analitico);
+        fd.append('relatorio_sintetico', sintetico);
+        fd.append('sobrepor', document.getElementById('seopSobrepor').checked ? 'true' : 'false');
+        const mes = document.getElementById('seopMes').value.trim();
+        const ano = document.getElementById('seopAno').value.trim();
+        if (mes) fd.append('mes', mes);
+        if (ano) fd.append('ano', ano);
+        const res = await _importFetch('/api/seop/importar', fd, 'seopProg', 'Extraindo e conferindo os relatórios SEOP/PA...');
+        Modal.close();
+        mostrarResultadoSEOP(res);
       } catch (error) {
-        resultado.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:var(--radius);padding:12px;color:#991b1b;font-size:.83rem">${Utils.esc(error.message)}</div>`;
-      } finally {
-        botao.disabled = false;
-        botao.textContent = 'Analisar arquivo';
+        status.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:var(--radius);padding:12px;color:#991b1b;font-size:.82rem;white-space:pre-wrap">${Utils.esc(error.message.slice(0, 900))}</div>`;
+        btn.disabled = false;
+        btn.textContent = 'Importar SEOP/PA';
       }
     });
+  }
+
+  function mostrarResultadoSEOP(res) {
+    const kpi = (label, value, color) => `<div style="background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:11px 14px"><div style="font-size:.67rem;text-transform:uppercase;color:var(--c-text-2)">${label}</div><div style="font-size:1.25rem;font-weight:800;color:${color};margin-top:3px">${Number(value || 0).toLocaleString('pt-BR')}</div></div>`;
+    Modal.open({
+      title: 'Importação SEOP/PA concluída',
+      size: 'modal-lg',
+      body: `
+        <div style="text-align:center;margin-bottom:16px"><div style="font-size:1.05rem;font-weight:800;color:#1d4ed8">Dados importados e conferidos</div><div class="text-sm text-2" style="margin-top:4px">PA | ${Utils.esc(res.data_base || '')}</div></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          ${kpi('Insumos processados', res.insumos_inseridos + res.insumos_atualizados, '#1d4ed8')}
+          ${kpi('Preços processados', res.precos_inseridos + res.precos_atualizados, '#059669')}
+          ${kpi('Composições analíticas', res.composicoes_analiticas, '#7c3aed')}
+          ${kpi('Itens importados', res.itens_inseridos, '#0891b2')}
+          ${kpi('Custos conferidos', res.composicoes_conferidas, '#2563eb')}
+          ${kpi('Divergências', res.divergencias_custo, Number(res.divergencias_custo) ? '#dc2626' : '#059669')}
+        </div>
+        <div style="margin-top:14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:12px;color:#1e3a8a;font-size:.84rem">${Utils.esc(res.mensagem || '')}</div>`,
+      footer: `<button class="btn btn-primary" onclick="Modal.close()" style="background:#1d4ed8;border-color:#1d4ed8">Fechar</button>`,
+    });
+    carregar();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
