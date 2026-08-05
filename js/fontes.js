@@ -26,12 +26,11 @@ Router.register('fontes', async () => {
   }
 
   function fontesFiltradas() {
-    const nome = normalizar(filtros.nome);
     return lista.filter(fonte => {
       if (!ehFonteReferencial(fonte)) return false;
       if (filtros.fonte && normalizar(fonte.tipo_fonte) !== filtros.fonte) return false;
       if (filtros.abrangencia && fonte.abrangencia !== filtros.abrangencia) return false;
-      if (nome && !normalizar(fonte.nome_fonte).includes(nome)) return false;
+      if (filtros.nome && fonte.nome_fonte !== filtros.nome) return false;
       if (filtros.dataBase && !datasBaseDaFonte(fonte).some(d => d.referencia === filtros.dataBase)) return false;
       return true;
     });
@@ -53,6 +52,8 @@ Router.register('fontes', async () => {
         return (ab * 100 + mb) - (aa * 100 + ma);
       });
     const abrangencias = [...new Set(fontesReferenciais.map(f => f.abrangencia).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const nomesFontes = [...new Set(fontesReferenciais.map(f => f.nome_fonte).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, 'pt-BR'));
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
@@ -103,30 +104,22 @@ Router.register('fontes', async () => {
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>Importar SINAPI
           </button>
+          <button class="btn btn-secondary" id="btnImportarORSE"
+            style="background:linear-gradient(135deg,#fff7ed,#ffedd5);color:#9a3412;border:1px solid #fdba74;font-weight:600">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="margin-right:5px;vertical-align:-2px">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>Importar ORSE/SE
+          </button>
           <button class="btn btn-primary" id="btnNovaFonte">${Utils.icons.plus} Nova Fonte</button>
-        </div>
-      </div>
-
-      <!-- Banner informativo SINAPI -->
-      <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;display:flex;align-items:flex-start;gap:12px">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;margin-top:1px">
-          <circle cx="12" cy="12" r="10" stroke="#15803d" stroke-width="1.8"/>
-          <path d="M12 8v4M12 16h.01" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <div style="font-size:.83rem;color:#14532d;line-height:1.55">
-          <strong>Importação SINAPI disponível.</strong>
-          Importe as planilhas oficiais da Caixa Econômica Federal (formato SINAPI Referência) para
-          carregar insumos (ISD e ICD) e composições unitárias (Analítico) diretamente no banco de dados.
-          O sistema recalculará automaticamente os custos das composições após a importação.
         </div>
       </div>
 
       <div class="section-card" style="margin-bottom:16px">
         <div class="toolbar" style="flex-wrap:wrap;gap:10px">
-          <div class="search-box" style="flex:1;min-width:220px">
-            ${Utils.icons.search}
-            <input id="fonteFiltroNome" type="text" placeholder="Filtrar por nome..." value="${Utils.esc(filtros.nome)}">
-          </div>
+          <select class="filter-select" id="fonteFiltroNome" aria-label="Filtrar por nome da fonte" style="min-width:220px">
+            <option value="">Todos os nomes</option>
+            ${nomesFontes.map(nome => `<option value="${Utils.esc(nome)}" ${filtros.nome === nome ? 'selected' : ''}>${Utils.esc(nome)}</option>`).join('')}
+          </select>
           <select class="filter-select" id="fonteFiltroDataBase" aria-label="Filtrar por data-base">
             <option value="">Todas as datas-base</option>
             ${datasBase.map(ref => `<option value="${Utils.esc(ref)}" ${filtros.dataBase === ref ? 'selected' : ''}>${Utils.esc(ref)}</option>`).join('')}
@@ -172,16 +165,9 @@ Router.register('fontes', async () => {
         </div>
       </div>`;
 
-    let timerBusca = null;
-    document.getElementById('fonteFiltroNome').addEventListener('input', ev => {
-      clearTimeout(timerBusca);
+    document.getElementById('fonteFiltroNome').addEventListener('change', ev => {
       filtros.nome = ev.target.value;
-      timerBusca = setTimeout(() => {
-        renderTabela();
-        const campo = document.getElementById('fonteFiltroNome');
-        campo.focus();
-        campo.setSelectionRange(campo.value.length, campo.value.length);
-      }, 180);
+      renderTabela();
     });
     document.getElementById('fonteFiltroDataBase').addEventListener('change', ev => {
       filtros.dataBase = ev.target.value;
@@ -208,6 +194,7 @@ Router.register('fontes', async () => {
     document.getElementById('btnImportarCDHU').addEventListener('click', iniciarImportacaoCDHU);
     document.getElementById('btnImportarSICRO').addEventListener('click', iniciarImportacaoSICRO);
     document.getElementById('btnImportarSINAPI').addEventListener('click', iniciarImportacaoSINAPI);
+    document.getElementById('btnImportarORSE').addEventListener('click', iniciarAnaliseORSE);
 
     document.querySelectorAll('[data-action="edit"]').forEach(b =>
       b.addEventListener('click', () => abrirModal(parseInt(b.dataset.id))));
@@ -255,6 +242,75 @@ Router.register('fontes', async () => {
     if (!await Confirm.ask(`Excluir fonte "${f?.nome_fonte}"?`)) return;
     try { await API.fontes.delete(id); Toast.success('Excluída.'); carregar(); }
     catch(e) { Toast.error(e.message); }
+  }
+
+  function iniciarAnaliseORSE() {
+    Modal.open({
+      title: 'Importação ORSE/SE — análise técnica',
+      size: 'modal-lg',
+      body: `
+        <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius);padding:13px 15px;margin-bottom:16px;color:#7c2d12;font-size:.83rem;line-height:1.5">
+          Esta etapa verifica o arquivo mensal oficial do ORSE sem gravar dados. O futuro importador será restrito a
+          <strong>insumos</strong> e <strong>composições</strong>; qualquer outro conteúdo será descartado.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Arquivo oficial ORSE *</label>
+          <input class="form-control" id="orseArquivo" type="file" accept=".orse,.ORSE">
+          <div class="form-hint">Formato esperado: AAAAMMOO-AA.ORSE, por exemplo 20260501-00.ORSE.</div>
+        </div>
+        <div id="orseArquivoResumo" style="display:none;background:var(--c-bg);border:1px solid var(--c-border);border-radius:var(--radius);padding:12px 14px;margin-top:12px"></div>
+        <div id="orseAnaliseResultado" style="display:none;margin-top:14px"></div>`,
+      footer: `<button class="btn btn-ghost" onclick="Modal.close()">Fechar</button>
+               <button class="btn btn-primary" id="btnAnalisarORSE" style="background:#c2410c;border-color:#c2410c">Analisar arquivo</button>`,
+    });
+
+    const input = document.getElementById('orseArquivo');
+    const resumo = document.getElementById('orseArquivoResumo');
+    const resultado = document.getElementById('orseAnaliseResultado');
+    const botao = document.getElementById('btnAnalisarORSE');
+
+    input.addEventListener('change', () => {
+      const arquivo = input.files[0];
+      if (!arquivo) { resumo.style.display = 'none'; return; }
+      const match = arquivo.name.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})\.orse$/i);
+      const referencia = match ? `${match[2]}/${match[1]}` : 'não identificada pelo nome';
+      resumo.style.display = 'block';
+      resumo.innerHTML = `
+        <div class="fw-600">${Utils.esc(arquivo.name)}</div>
+        <div class="text-sm text-2" style="margin-top:4px">${(arquivo.size / 1024 / 1024).toFixed(2)} MB · Data-base ${Utils.esc(referencia)}</div>`;
+      resultado.style.display = 'none';
+    });
+
+    botao.addEventListener('click', async () => {
+      const arquivo = input.files[0];
+      if (!arquivo) { Toast.warning('Selecione um arquivo .ORSE.'); return; }
+      if (!/\.orse$/i.test(arquivo.name)) { Toast.warning('O arquivo deve possuir a extensão .ORSE.'); return; }
+
+      botao.disabled = true;
+      botao.textContent = 'Analisando...';
+      resultado.style.display = 'block';
+      resultado.innerHTML = '<div class="loading-inline"><div class="spinner"></div><span>Validando assinatura, referência e estrutura binária...</span></div>';
+      try {
+        const fd = new FormData();
+        fd.append('arquivo_orse', arquivo);
+        const response = await fetch('/api/orse/analisar', { method: 'POST', body: fd });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.erro) throw new Error(data.erro || `Erro HTTP ${response.status}`);
+        resultado.innerHTML = `
+          <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:var(--radius);padding:14px;color:#1e3a8a;font-size:.83rem;line-height:1.55">
+            <div class="fw-700" style="margin-bottom:5px">Arquivo ORSE reconhecido para estudo</div>
+            <div>Referência: <strong>${Utils.esc(data.referencia || 'não identificada')}</strong></div>
+            <div>Escopo previsto: <strong>insumos e composições</strong></div>
+            <div>Conteúdo adicional: <strong>será descartado</strong></div>
+            <div style="margin-top:8px">${Utils.esc(data.mensagem || '')}</div>
+          </div>`;
+      } catch (error) {
+        resultado.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:var(--radius);padding:12px;color:#991b1b;font-size:.83rem">${Utils.esc(error.message)}</div>`;
+      } finally {
+        botao.disabled = false;
+        botao.textContent = 'Analisar arquivo';
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
