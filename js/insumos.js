@@ -526,6 +526,14 @@ Router.register('insumos', async () => {
                 </div>
                 <div class="form-hint">Provedor atual: ${Utils.esc(provedorIA)}. ${buscaWebOk ? 'Busca web real habilitada.' : 'Sem busca web real: preços, URLs e fotos devem ser confirmados ou preenchidos manualmente.'}</div>
               </div>
+              <div class="form-group span-2">
+                <label class="form-label" for="pm_openai_key">Chave da API OpenAI <span class="text-3" style="font-weight:400">(opcional se o servidor já estiver configurado)</span></label>
+                <input class="form-control" id="pm_openai_key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
+                <div class="form-hint" style="line-height:1.45">
+                  A chave é usada somente nesta pesquisa, enviada por conexão HTTPS e não é salva pelo OrçaSmart.
+                  Para obter uma chave, acesse <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Chaves da API OpenAI</a>, entre em sua conta, clique em <strong>Create new secret key</strong> e copie a chave. A API possui cobrança separada do ChatGPT.
+                </div>
+              </div>
               <div class="form-group">
                 <label class="form-label">Tipo sugerido</label>
                 <select class="form-control" id="pm_tipo">
@@ -614,6 +622,7 @@ Router.register('insumos', async () => {
     try {
       const res = await API.pesquisaMercado.pesquisar({
         termo,
+        api_key: document.getElementById('pm_openai_key')?.value.trim() || '',
         tipo: document.getElementById('pm_tipo')?.value || '',
         uf: document.getElementById('pm_uf')?.value || '',
         mes: parseInt(data.slice(5, 7), 10),
