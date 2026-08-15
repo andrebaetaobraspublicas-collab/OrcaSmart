@@ -950,11 +950,11 @@ Router.register('insumos', async () => {
 
     // Pré-selecionar data-base pelo mes+ano do preço atual
     const dbPreSel = datasBase.find(d => d.mes == ins.preco_mes && d.ano == ins.preco_ano);
-    const dbOpts = `<option value="">Selecione...</option>` +
-      datasBase
-        .slice().sort((a,b) => b.ano - a.ano || b.mes - a.mes)
-        .map(d => `<option value="${d.id_data_base}" ${d.id_data_base == dbPreSel?.id_data_base?'selected':''}>${Utils.nomeMes(d.mes)}/${d.ano}</option>`)
-        .join('');
+    const dbAtual = dbPreSel ? `${String(dbPreSel.mes).padStart(2, '0')}/${dbPreSel.ano}` : '';
+    const dbOpts = datasBase
+      .slice().sort((a,b) => b.ano - a.ano || b.mes - a.mes)
+      .map(d => `<option value="${String(d.mes).padStart(2, '0')}/${d.ano}" label="${Utils.nomeMes(d.mes)}/${d.ano}"></option>`)
+      .join('');
 
     Modal.open({
       title: id ? 'Editar Insumo' : 'Novo Insumo',
@@ -1048,7 +1048,11 @@ Router.register('insumos', async () => {
             </div>
             <div class="form-group">
               <label class="form-label">Data-Base (Mês/Ano)</label>
-              <select class="form-control" id="fi_db">${dbOpts}</select>
+              <input class="form-control" id="fi_db" type="text" inputmode="numeric"
+                list="fi_db_opcoes" maxlength="7" placeholder="MM/AAAA"
+                pattern="(0[1-9]|1[0-2])/\\d{4}" value="${dbAtual}">
+              <datalist id="fi_db_opcoes">${dbOpts}</datalist>
+              <small class="text-3">Escolha uma referência existente ou digite uma nova no formato MM/AAAA.</small>
             </div>
             <div class="form-group"></div>
           </div>
@@ -1110,6 +1114,14 @@ Router.register('insumos', async () => {
   }
 
   async function salvarInsumo(id) {
+    const campoDataBase = document.getElementById('fi_db');
+    const dataBase = campoDataBase?.value.trim() || '';
+    const dataBaseMatch = dataBase.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+    if (dataBase && (!dataBaseMatch || Number(dataBaseMatch[2]) < 1900 || Number(dataBaseMatch[2]) > 2100)) {
+      Toast.warning('Data-base inválida. Informe um mês entre 01 e 12 e um ano entre 1900 e 2100, no formato MM/AAAA.');
+      campoDataBase.focus();
+      return;
+    }
     const payload = {
       codigo_insumo:       document.getElementById('fi_cod').value.trim(),
       descricao:           document.getElementById('fi_desc').value.trim(),
@@ -1126,7 +1138,8 @@ Router.register('insumos', async () => {
       preco_desonerado:     parseFloat(document.getElementById('fi_pdes')?.value)  || 0,
       preco_nao_desonerado: parseFloat(document.getElementById('fi_pndes')?.value) || 0,
       uf_referencia:        document.getElementById('fi_uf_preco')?.value || null,
-      id_data_base:         document.getElementById('fi_db')?.value || null,
+      id_data_base:         null,
+      data_base:            dataBase || null,
       cbs_percentual:       parseFloat(document.getElementById('fi_cbs')?.value)   || 0,
       ibs_percentual:       parseFloat(document.getElementById('fi_ibs')?.value)   || 0,
       is_percentual:        parseFloat(document.getElementById('fi_is')?.value)    || 0,

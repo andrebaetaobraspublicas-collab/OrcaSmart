@@ -56,6 +56,7 @@ module.exports = function insumosRoutes(db, options = {}) {
 
   router.post('/', asyncHandler(async (req, res) => {
     res.status(201).json(await service.createInsumo(db, req.body || {}, {
+      readDb,
       forceUserOwned: req.user?.role !== 'admin',
     }));
   }));
