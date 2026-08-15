@@ -4,9 +4,12 @@
 Object.assign(API, {
   ia: {
     analisar:  (id_obra, form) => {
-      return fetch(`/api/obras/${id_obra}/analisar-projetos`, { method:'POST', body: form })
+      const request = fetch(`/api/obras/${id_obra}/analisar-projetos`, { method:'POST', body: form });
+      form.delete('anthropic_api_key');
+      return request
         .then(r => r.json().then(d => { if (!r.ok) throw new Error(d.erro || `Erro ${r.status}`); return d; }));
     },
+    config:    ()          => API.get('/analise/config'),
     status:    (job_id)  => API.get(`/analise/${job_id}`),
     gerar:     (id_obra, d) => API.post(`/obras/${id_obra}/orcamento-ia`, d),
   },
@@ -35,9 +38,31 @@ window.abrirAnaliseIA = function(id_obra, nome_obra) {
   let _pollTimer = null;
   let _resultado = null; // resultado final da API
   let _itensSel  = [];   // itens editados pelo usuário antes de gerar
+  let _configIa  = { fontes: [], servidor_configurado: false };
+  let _prioridades = ['', '', ''];
 
   // ── Abrir modal no step 1 ──────────────────────────────────────────────────
-  _renderStep1();
+  _carregarConfig();
+
+  async function _carregarConfig() {
+    try {
+      _configIa = await API.ia.config();
+      const fontes = (_configIa.fontes || []).map(item => item.fonte).filter(Boolean);
+      const preferidas = ['sinapi', 'sicro', 'cdhu'];
+      _prioridades = preferidas.map(nome => fontes.find(fonte => fonte.toLowerCase().includes(nome)) || '');
+      const restantes = fontes.filter(fonte => !_prioridades.includes(fonte));
+      _prioridades = _prioridades.map(valor => valor || restantes.shift() || '');
+    } catch (error) {
+      Toast.warning(`Não foi possível carregar as fontes referenciais: ${error.message}`);
+    }
+    _renderStep1();
+  }
+
+  function _optionsFontes(selected) {
+    const fontes = (_configIa.fontes || []).map(item => item.fonte).filter(Boolean);
+    return `<option value="">Selecione...</option>${fontes.map(fonte => `
+      <option value="${Utils.esc(fonte)}" ${fonte === selected ? 'selected' : ''}>${Utils.esc(fonte)}</option>`).join('')}`;
+  }
 
   /* ════════════════ STEP 1: UPLOAD ════════════════════════════════════════ */
   function _renderStep1() {
@@ -55,6 +80,34 @@ window.abrirAnaliseIA = function(id_obra, nome_obra) {
               <div class="fw-600">${Utils.esc(nome_obra)}</div>
               <div class="text-xs text-3">Envie os projetos para análise automática — até ${20} arquivos</div>
             </div>
+          </div>
+
+          <!-- Credencial temporária -->
+          <div style="border:1px solid var(--c-border);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;background:var(--c-surface)">
+            <label class="form-label" for="ia-anthropic-key">API key da Anthropic ${_configIa.servidor_configurado ? '(opcional)' : ''}</label>
+            <input class="form-control" type="password" id="ia-anthropic-key" name="anthropic_api_key_analise_obras"
+              autocomplete="new-password" data-form-type="other" data-lpignore="true" data-1p-ignore
+              placeholder="sk-ant-...">
+            <div class="form-hint" style="line-height:1.45;margin-top:6px">
+              Acesse o <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Console da Anthropic</a>,
+              crie ou entre em sua conta, habilite créditos de uso em <strong>Billing</strong> e escolha <strong>Create Key</strong> em <strong>API Keys</strong>.
+              A cobrança da API é separada da assinatura do Claude. A chave será usada somente nesta análise e nunca será armazenada pelo OrçaPro.
+            </div>
+          </div>
+
+          <!-- Prioridade das fontes -->
+          <div style="border:1px solid var(--c-border);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;background:var(--c-surface)">
+            <div class="fw-600 text-sm" style="margin-bottom:4px">Prioridade das tabelas de custos</div>
+            <div class="text-xs text-3" style="margin-bottom:10px">A pesquisa seguirá a ordem abaixo e só avançará quando não houver composição suficientemente aderente.</div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">
+              ${[0,1,2].map(index => `<div>
+                <label class="form-label" for="ia-fonte-${index + 1}">${index + 1}ª prioridade</label>
+                <select class="form-control" id="ia-fonte-${index + 1}" onchange="window._iaAtualizarFonte(${index},this.value)">
+                  ${_optionsFontes(_prioridades[index])}
+                </select>
+              </div>`).join('')}
+            </div>
+            <div class="form-hint" style="margin-top:8px">Se nenhuma das três fontes possuir correspondência confiável, o serviço será mantido sem composição, com quantitativo e preço estimado para revisão.</div>
           </div>
 
           <!-- Drop zone -->
@@ -109,6 +162,10 @@ window.abrirAnaliseIA = function(id_obra, nome_obra) {
     _iaAdicionarArquivos(Array.from(files));
   };
 
+  window._iaAtualizarFonte = function(index, value) {
+    _prioridades[index] = value;
+  };
+
   function _iaAdicionarArquivos(novos) {
     const exts = new Set(['ifc','dxf','pdf','png','jpg','jpeg']);
     for (const f of novos) {
@@ -156,8 +213,25 @@ window.abrirAnaliseIA = function(id_obra, nome_obra) {
 
   /* ════════════════ STEP 2: PROGRESSO ════════════════════════════════════ */
   window._iaIniciarAnalise = async function() {
+    const prioridades = [1,2,3].map(index => document.getElementById(`ia-fonte-${index}`)?.value || '');
+    if (prioridades.some(fonte => !fonte)) {
+      Toast.warning('Selecione as três fontes referenciais prioritárias.');
+      return;
+    }
+    if (new Set(prioridades).size !== prioridades.length) {
+      Toast.warning('As três prioridades devem usar fontes diferentes.');
+      return;
+    }
+    const chaveAnthropic = document.getElementById('ia-anthropic-key')?.value.trim() || '';
+    if (!_configIa.servidor_configurado && !chaveAnthropic) {
+      Toast.warning('Informe uma API key da Anthropic para realizar a análise.');
+      document.getElementById('ia-anthropic-key')?.focus();
+      return;
+    }
     const form = new FormData();
     _arquivos.forEach(f => form.append('arquivo', f));
+    form.append('anthropic_api_key', chaveAnthropic);
+    prioridades.forEach((fonte, index) => form.append(`fonte_prioridade_${index + 1}`, fonte));
 
     _renderStep2('Enviando arquivos...');
     try {
@@ -362,6 +436,7 @@ window.abrirAnaliseIA = function(id_obra, nome_obra) {
               <span style="font-family:monospace;font-size:.72rem;color:${hasMatch?'var(--c-primary)':'var(--c-danger)'}" title="${hasMatch?'Composição vinculada':'Sem composição correspondente'}">
                 ${Utils.esc(it.codigo||'—')}
               </span>
+              ${hasMatch && it.fonte ? `<span style="color:var(--c-text-3);font-size:.62rem;display:block">${Utils.esc(it.fonte)}</span>` : ''}
               ${!hasMatch ? '<span style="color:var(--c-danger);font-size:.65rem;display:block">sem vínculo</span>' : ''}
             </td>
             <td style="padding:5px 8px;max-width:250px">

@@ -12,6 +12,10 @@ module.exports = function analiseProjetosRoutes(db) {
     res.json(await service.startAnalysis(db, req, req.params.id_obra));
   }));
 
+  router.get('/analise/config', asyncHandler(async (_req, res) => {
+    res.json(await service.config(db));
+  }));
+
   router.get('/analise/:job_id', asyncHandler(async (req, res) => {
     res.json(service.getJob(req.params.job_id));
   }));
