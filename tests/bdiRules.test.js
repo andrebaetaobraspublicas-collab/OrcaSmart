@@ -224,9 +224,20 @@ async function testarPersistenciaRepository() {
       cbs_percentual: 8.7,
       ibs_percentual: 0.1,
       usa_iva_manual: 1,
+      componentes: [
+        { grupo: 'AC', codigo: 'AC1', descricao: 'Administração Central', percentual: 4, ordem: 1 },
+        { grupo: 'S', codigo: 'S1', descricao: 'Seguros e Garantias', percentual: 0.8, ordem: 2 },
+        { grupo: 'R', codigo: 'R1', descricao: 'Riscos', percentual: 1.2, ordem: 3 },
+        { grupo: 'DF', codigo: 'DF1', descricao: 'Despesas Financeiras', percentual: 1, ordem: 4 },
+        { grupo: 'L', codigo: 'L1', descricao: 'Lucro', percentual: 7.4, ordem: 5 },
+        { grupo: 'T', codigo: 'T1', descricao: 'Tributos', percentual: 0, incide_sobre: 'PV', ordem: 6 },
+      ],
     });
     assert.strictEqual(personalizado.quartil, 'Personalizado');
     assert.ok(personalizado.bdi_percentual > 0);
+    const componentesPersonalizados = await repo.listComponentes(db, personalizado.id_perfil_bdi);
+    assert.strictEqual(componentesPersonalizados.length, 6);
+    perto(componentesPersonalizados.find(c => c.grupo === 'AC').percentual, 4);
     const bdiPersonalizadoOriginal = personalizado.bdi_percentual;
     await run(db, 'UPDATE perfis_bdi SET bdi_percentual=0 WHERE id_perfil_bdi=?', [personalizado.id_perfil_bdi]);
     const personalizadosListados = await repo.listPerfis(db, { quartil: 'Personalizado' });
@@ -269,11 +280,20 @@ async function testarPersistenciaTenant() {
     const perfil = await repo.createPerfil(db, {
       nome_perfil: 'Simples tenant', regime_tributario: 'Simples Nacional', regime_previdenciario: 'Desonerado',
       ano_orcamento: 2027, simples_rbt12: 1000000, percentual_mat_ivaeq: 0.4,
+      componentes: [
+        { grupo: 'AC', codigo: 'AC1', descricao: 'Administração Central', percentual: 3.5, ordem: 1 },
+        { grupo: 'S', codigo: 'S1', descricao: 'Seguros e Garantias', percentual: 0.5, ordem: 2 },
+        { grupo: 'R', codigo: 'R1', descricao: 'Riscos', percentual: 1, ordem: 3 },
+        { grupo: 'DF', codigo: 'DF1', descricao: 'Despesas Financeiras', percentual: 1, ordem: 4 },
+        { grupo: 'L', codigo: 'L1', descricao: 'Lucro', percentual: 7, ordem: 5 },
+        { grupo: 'T', codigo: 'T1', descricao: 'Tributos', percentual: 0, incide_sobre: 'PV', ordem: 6 },
+      ],
     });
     assert.ok(String(perfil.id_perfil_bdi).startsWith('tenant:'));
     const memoria = await repo.memoria(db, perfil.id_perfil_bdi);
     assert.strictEqual(memoria.totais_grupo.IVAeq, 0);
     assert.strictEqual(memoria.totais_grupo.simples.faixa, 4);
+    perto(memoria.totais_grupo.AC, 3.5);
     const personalizado = await repo.duplicarPerfil(db, perfil.id_perfil_bdi, {
       nomePerfil: 'BDI personalizado da analise de riscos',
       quartil: 'Personalizado',

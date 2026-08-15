@@ -1,7 +1,7 @@
 /* js/reformaTributaria.js - Calculadora BDIPro incorporada */
 
 Router.register('reforma-tributaria', async () => {
-  const src = 'embedded/bdipro.html?v=20260815-icms-2027-ivaeq';
+  const src = 'embedded/bdipro.html?v=20260815-bdi-destaque-cadastro-rapido';
   document.getElementById('pageContent').innerHTML = `
     <div class="rt-bdipro-shell">
       <div class="rt-bdipro-framebar">
@@ -80,45 +80,13 @@ Router.register('reforma-tributaria', async () => {
       ...data,
     }, window.location.origin);
   };
-  const perfilId = perfil => perfil?.id_perfil_bdi ?? perfil?.id;
-  const atualizarComponente = async (idPerfil, existentes, componente) => {
-    const atual = existentes.find(c => c.grupo === componente.grupo);
-    const payload = {
-      id_perfil_bdi: idPerfil,
-      grupo: componente.grupo,
-      codigo: componente.codigo || componente.grupo,
-      descricao: componente.descricao || componente.grupo,
-      base_legal: componente.base_legal || 'BDIPro - Reforma Tributária',
-      percentual: Number(componente.percentual || 0),
-      incide_sobre: componente.incide_sobre || 'CD',
-      ativo: componente.ativo === 0 ? 0 : 1,
-      ordem: componente.ordem || 99,
-      observacoes: componente.observacoes || 'Importado da calculadora de Reforma Tributária.',
-    };
-    if (atual?.id_componente) {
-      return API.put(`/bdi/componentes/${encodeURIComponent(atual.id_componente)}`, payload);
-    }
-    return API.post('/bdi/componentes', payload);
-  };
   const cadastrarBdiPersonalizado = async (payload = {}) => {
     if (!payload.perfil) throw new Error('A calculadora não enviou os dados do perfil BDI.');
-    const perfil = await API.post('/bdi/perfis', {
+    return API.post('/bdi/perfis', {
       ...payload.perfil,
       quartil: 'Personalizado',
       situacao: payload.perfil.situacao || 'Ativo',
-    });
-    const idPerfil = perfilId(perfil);
-    if (!idPerfil) throw new Error('O perfil BDI foi criado, mas o identificador não foi retornado.');
-    const existentes = await API.get(`/bdi/perfis/${encodeURIComponent(idPerfil)}/componentes`);
-    for (const componente of payload.componentes || []) {
-      await atualizarComponente(idPerfil, existentes, componente);
-    }
-    // A criação ocorre antes dos componentes; esta atualização força o backend a
-    // recalcular o BDI com as rubricas recém-gravadas e com a regra vigente do IVAeq.
-    return API.put(`/bdi/perfis/${encodeURIComponent(idPerfil)}`, {
-      ...payload.perfil,
-      quartil: 'Personalizado',
-      situacao: payload.perfil.situacao || 'Ativo',
+      componentes: payload.componentes || [],
     });
   };
 

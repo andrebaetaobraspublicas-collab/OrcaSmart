@@ -495,6 +495,10 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
 #screenSimples .btn.warn{background:#c87904}
 #screenSimples canvas{width:100%;height:270px;border:1px solid var(--line);border-radius:12px;background:#fff;margin-top:8px}
 #screenSimples .formula{font-family:Consolas,monospace;background:#e8f3fb;border:1px solid #cfe3f1;color:var(--accent-d);border-radius:10px;padding:12px;line-height:1.7;white-space:pre-wrap}
+#screenSimples .kpi.good{background:#e7f6ec;border-color:#86c9a0;box-shadow:0 5px 16px rgba(15,122,61,.12)}
+#screenParam .btn-bdi-save,#screenExato .btn.btn-bdi-save,#screenSimples .btn.btn-bdi-save{background:linear-gradient(180deg,#f59e0b,#d97706);color:#fff;border-color:#d97706}
+#screenParam .btn-bdi-save:hover,#screenExato .btn.btn-bdi-save:hover,#screenSimples .btn.btn-bdi-save:hover{background:linear-gradient(180deg,#fbbf24,#ea8406);filter:none}
+#screenParam .btn-bdi-save:disabled,#screenExato .btn.btn-bdi-save:disabled,#screenSimples .btn.btn-bdi-save:disabled{cursor:wait;opacity:.72}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -1769,9 +1773,22 @@ function bdiProComponentes(base){
   ];
 }
 function bdiProNome(origem,ano,tipo){return `BDI personalizado - ${origem} - ${bdiProTipoObraModulo(tipo)} - ${ano} - ${new Date().toLocaleDateString('pt-BR')}`}
+function bdiProDefinirCadastroPendente(pendente){
+  document.querySelectorAll('.btn-bdi-save').forEach(btn=>{
+    if(pendente){
+      if(!btn.dataset.rotuloOriginal)btn.dataset.rotuloOriginal=btn.textContent;
+      btn.disabled=true;
+      btn.textContent='Incluindo BDI...';
+    }else{
+      btn.disabled=false;
+      if(btn.dataset.rotuloOriginal)btn.textContent=btn.dataset.rotuloOriginal;
+    }
+  });
+}
 function bdiProEmitirCadastro(payload){
   if(!window.parent||window.parent===window){alert('Para incluir o BDI personalizado, abra esta calculadora dentro do módulo Reforma Tributária do OrçaPro.');return}
   const requestId=`bdi-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  bdiProDefinirCadastroPendente(true);
   window.parent.postMessage({type:'orcasmart:bdi-personalizado',requestId,payload},window.location.origin);
   toast('Enviando BDI personalizado ao módulo BDI...');
 }
@@ -1820,7 +1837,10 @@ function cadastrarBdiPersonalizadoSimples(){
 window.addEventListener('message',function(event){
   if(event.origin!==window.location.origin)return;
   const data=event.data||{};
-  if(data.type==='orcasmart:bdi-personalizado:result')toast(data.ok?'BDI personalizado incluído no módulo BDI.':(data.error||'Não foi possível incluir o BDI personalizado.'));
+  if(data.type==='orcasmart:bdi-personalizado:result'){
+    bdiProDefinirCadastroPendente(false);
+    toast(data.ok?'BDI personalizado incluído no módulo BDI.':(data.error||'Não foi possível incluir o BDI personalizado.'));
+  }
 });
 window.BDIProPersonalizado={emitir:bdiProEmitirCadastro,percent:bdiProPercent,tipoObra:bdiProTipoObraModulo,quartil:bdiProQuartilLabel,componentes:bdiProComponentes,nome:bdiProNome,tributacao:bdiProTributacaoPerfil};
 
