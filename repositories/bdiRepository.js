@@ -466,23 +466,46 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
   };
 }
 
+const COMPONENTES_BDI_PADRAO = [
+  ['AC', 'AC1', 'Administração Central', 1],
+  ['S', 'S1', 'Seguros e Garantias', 2],
+  ['R', 'R1', 'Riscos', 3],
+  ['DF', 'DF1', 'Despesas Financeiras', 4],
+  ['L', 'L1', 'Lucro', 5],
+  ['T', 'T1', 'Tributos', 6],
+];
+
+function componentesIniciais(data = {}) {
+  const informados = Array.isArray(data.componentes) ? data.componentes : [];
+  const componentes = informados.length ? informados : COMPONENTES_BDI_PADRAO.map(([grupo, codigo, descricao, ordem]) => ({
+    grupo, codigo, descricao, ordem, percentual: 0,
+  }));
+  return componentes.map((c, index) => ({
+    grupo: c.grupo || 'Outros',
+    codigo: c.codigo || c.grupo || null,
+    descricao: String(c.descricao || c.grupo || '').trim(),
+    base_legal: c.base_legal || null,
+    percentual: toNum(c.percentual, 0),
+    incide_sobre: c.incide_sobre || 'CD',
+    ativo: c.ativo === 0 ? 0 : 1,
+    ordem: c.ordem || index + 1,
+    observacoes: c.observacoes || null,
+  }));
+}
+
 async function createPerfil(db, data, options = {}) {
+  const componentes = componentesIniciais(data);
   if (!options.forceCatalog && await hasTenantBdiOverrides(db)) {
     const result = await insertTenantPerfil(db, data, { action: data.tenant_override_action || 'create', catalogId: data.tenant_catalog_id || null });
-    const defaults = [
-      ['AC', 'AC1', 'Administração Central', 1],
-      ['S', 'S1', 'Seguros e Garantias', 2],
-      ['R', 'R1', 'Riscos', 3],
-      ['DF', 'DF1', 'Despesas Financeiras', 4],
-      ['L', 'L1', 'Lucro', 5],
-      ['T', 'T1', 'Tributos', 6],
-    ];
-    for (const c of defaults) {
+    for (const c of componentes) {
+      const agora = new Date().toISOString();
       await run(db, `
         INSERT INTO tenant_componentes_bdi
-          (id_perfil_bdi,grupo,codigo,descricao,percentual,ordem,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-        VALUES (?,?,?,?,0,?,'create','active',?,?)`,
-      [result.lastID, ...c, new Date().toISOString(), new Date().toISOString()]);
+          (id_perfil_bdi,grupo,codigo,descricao,base_legal,percentual,incide_sobre,ativo,ordem,observacoes,
+           tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'create','active',?,?)`,
+      [result.lastID, c.grupo, c.codigo, c.descricao, c.base_legal, c.percentual, c.incide_sobre,
+        c.ativo, c.ordem, c.observacoes, agora, agora]);
     }
     return recalcAndGet(db, `tenant:${result.lastID}`);
   }
@@ -496,16 +519,13 @@ async function createPerfil(db, data, options = {}) {
      simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual,
      icms_2027_percentual,simples_modelo_bdi,simples_anexo)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
-  const defaults = [
-    ['AC', 'AC1', 'Administração Central', 1],
-    ['S', 'S1', 'Seguros e Garantias', 2],
-    ['R', 'R1', 'Riscos', 3],
-    ['DF', 'DF1', 'Despesas Financeiras', 4],
-    ['L', 'L1', 'Lucro', 5],
-    ['T', 'T1', 'Tributos', 6],
-  ];
-  for (const c of defaults) {
-    await run(db, 'INSERT INTO componentes_bdi (id_perfil_bdi,grupo,codigo,descricao,percentual,ordem) VALUES (?,?,?,?,0,?)', [result.lastID, ...c]);
+  for (const c of componentes) {
+    await run(db, `
+      INSERT INTO componentes_bdi
+        (id_perfil_bdi,grupo,codigo,descricao,base_legal,percentual,incide_sobre,ativo,ordem,observacoes)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [result.lastID, c.grupo, c.codigo, c.descricao, c.base_legal, c.percentual, c.incide_sobre,
+      c.ativo, c.ordem, c.observacoes]);
   }
   return recalcAndGet(db, result.lastID);
 }

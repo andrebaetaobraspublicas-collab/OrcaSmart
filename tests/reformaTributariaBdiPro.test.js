@@ -29,8 +29,13 @@ for (const trecho of [
   assert.ok(html.includes(trecho), `integração ausente no BDIPro: ${trecho}`);
 }
 
-assert.ok(integracao.includes("API.put(`/bdi/perfis/${encodeURIComponent(idPerfil)}`"), 'perfil não é recalculado após gravar componentes');
-assert.ok(integracao.includes('20260815-icms-2027-ivaeq'), 'cache-buster do BDIPro não foi atualizado');
+assert.ok(integracao.includes('componentes: payload.componentes || []'), 'componentes não são enviados junto com o perfil');
+assert.ok(!integracao.includes("API.get(`/bdi/perfis/"), 'cadastro ainda consulta componentes em uma segunda chamada');
+assert.ok(!integracao.includes("API.put(`/bdi/componentes/"), 'cadastro ainda atualiza componentes em chamadas separadas');
+assert.ok(html.includes('#screenSimples .kpi.good{background:#e7f6ec'), 'card do BDI Simples não está destacado em verde');
+assert.ok(html.includes('#screenExato .btn.btn-bdi-save'), 'botão do cálculo exato não recebeu o tema laranja');
+assert.ok(html.includes("btn.textContent='Incluindo BDI...'"), 'botão não informa o andamento do cadastro');
+assert.ok(integracao.includes('20260815-bdi-destaque-cadastro-rapido'), 'cache-buster do BDIPro não foi atualizado');
 
 const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
   .map(match => match[1])

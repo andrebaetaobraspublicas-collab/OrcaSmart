@@ -19,6 +19,17 @@ function validarDescricaoComponente(data = {}) {
   }
 }
 
+function validarComponentesPerfil(data = {}) {
+  if (data.componentes === undefined) return;
+  if (!Array.isArray(data.componentes)) {
+    throw httpError(400, 'Componentes do perfil devem ser uma lista.');
+  }
+  if (data.componentes.length > 50) {
+    throw httpError(400, 'O perfil excede o limite de 50 componentes.');
+  }
+  data.componentes.forEach(validarDescricaoComponente);
+}
+
 async function getPerfil(db, id, options = {}) {
   const row = await repo.recalcAndGet(db, id, options);
   if (!row) throw httpError(404, 'Perfil nao encontrado.');
@@ -27,6 +38,7 @@ async function getPerfil(db, id, options = {}) {
 
 async function createPerfil(db, data, options = {}) {
   validarNomePerfil(data);
+  validarComponentesPerfil(data);
   return repo.createPerfil(db, data || {}, options);
 }
 
