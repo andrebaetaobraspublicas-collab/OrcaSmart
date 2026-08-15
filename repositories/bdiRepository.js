@@ -224,6 +224,9 @@ function perfilPayload(d) {
     d.usa_iva_manual ? 1 : 0,
     toNum(d.simples_rbt12, 0),
     d.usa_simples_efetiva_manual ? 1 : 0,
+    d.icms_2027_percentual === undefined || d.icms_2027_percentual === null || d.icms_2027_percentual === '' ? 18 : toNum(d.icms_2027_percentual, 18),
+    d.simples_modelo_bdi === 'hibrido' ? 'hibrido' : 'das',
+    ['III', 'IV', 'V'].includes(d.simples_anexo) ? d.simples_anexo : 'IV',
   ];
 }
 
@@ -448,11 +451,9 @@ function buildPerfilListSelect(query = {}, source = 'catalog', hasOverrides = tr
              b.regime_previdenciario, b.simples_faixa, b.simples_faixa_label,
              b.simples_receita_limite, b.simples_aliquota_efetiva,
              b.simples_irpj_percentual, b.simples_csll_percentual,
-             ${isTenant ? 'b.redutor_setorial_ivaeq' : 'NULL'} AS redutor_setorial_ivaeq,
-             ${isTenant ? 'b.redutor_governamental_ivaeq' : 'NULL'} AS redutor_governamental_ivaeq,
-             ${isTenant ? 'b.usa_iva_manual' : '0'} AS usa_iva_manual,
-             ${isTenant ? 'b.simples_rbt12' : 'b.simples_rbt12'} AS simples_rbt12,
-             ${isTenant ? 'b.usa_simples_efetiva_manual' : 'b.usa_simples_efetiva_manual'} AS usa_simples_efetiva_manual,
+             b.redutor_setorial_ivaeq, b.redutor_governamental_ivaeq, b.usa_iva_manual,
+             b.simples_rbt12, b.usa_simples_efetiva_manual,
+             b.icms_2027_percentual, b.simples_modelo_bdi, b.simples_anexo,
              COUNT(c.${isTenant ? 'rowid' : 'id_componente'}) AS qtd_componentes,
              ${isTenant ? "'tenant'" : "'catalog'"} AS _tenant_scope,
              ${isTenant ? 'b.tenant_catalog_id' : 'b.id_perfil_bdi'} AS _catalog_id
@@ -492,8 +493,9 @@ async function createPerfil(db, data, options = {}) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual,
+     icms_2027_percentual,simples_modelo_bdi,simples_anexo)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(data));
   const defaults = [
     ['AC', 'AC1', 'Administração Central', 1],
     ['S', 'S1', 'Seguros e Garantias', 2],
@@ -546,7 +548,7 @@ async function updatePerfil(db, id, data, options = {}) {
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
       simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
-      usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?
+       usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?,icms_2027_percentual=?,simples_modelo_bdi=?,simples_anexo=?
     WHERE id_perfil_bdi=?`, [...perfilPayload(data), id]);
   if (!result.changes) return null;
   return recalcAndGet(db, id);
@@ -605,8 +607,9 @@ async function duplicarPerfil(db, id, options = {}) {
      ano_orcamento,quartil,cbs_percentual,ibs_percentual,fator_efetivo_ivaeq,percentual_mat_ivaeq,
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
-     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(duplicateData));
+     simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,usa_simples_efetiva_manual,
+     icms_2027_percentual,simples_modelo_bdi,simples_anexo)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, perfilPayload(duplicateData));
   const comps = await all(db, 'SELECT * FROM componentes_bdi WHERE id_perfil_bdi=?', [id]);
   for (const c of comps) {
     await run(db, `
@@ -626,8 +629,9 @@ async function insertTenantPerfil(db, data = {}, options = {}) {
      credito_bdi_ivaeq,ivaeq_percentual,iss_percentual_manual,id_orcamento_ivaeq,regime_previdenciario,
      simples_faixa,simples_faixa_label,simples_receita_limite,simples_aliquota_efetiva,simples_irpj_percentual,
      simples_csll_percentual,redutor_setorial_ivaeq,redutor_governamental_ivaeq,usa_iva_manual,simples_rbt12,
-     usa_simples_efetiva_manual,tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
+     usa_simples_efetiva_manual,icms_2027_percentual,simples_modelo_bdi,simples_anexo,
+     tenant_catalog_id,tenant_override_action,tenant_override_status,tenant_created_at,tenant_updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)`,
   [
     ...perfilPayload(data),
     options.catalogId || data.tenant_catalog_id || null,
@@ -654,7 +658,7 @@ async function updateTenantPerfil(db, rowid, data = {}) {
       iss_percentual_manual=?,id_orcamento_ivaeq=?,regime_previdenciario=?,simples_faixa=?,
       simples_faixa_label=?,simples_receita_limite=?,simples_aliquota_efetiva=?,simples_irpj_percentual=?,
       simples_csll_percentual=?,redutor_setorial_ivaeq=?,redutor_governamental_ivaeq=?,
-      usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?,tenant_updated_at=?
+       usa_iva_manual=?,simples_rbt12=?,usa_simples_efetiva_manual=?,icms_2027_percentual=?,simples_modelo_bdi=?,simples_anexo=?,tenant_updated_at=?
     WHERE rowid=? AND COALESCE(tenant_override_status,'active')='active'`,
   [...perfilPayload(data), new Date().toISOString(), rowid]);
 }

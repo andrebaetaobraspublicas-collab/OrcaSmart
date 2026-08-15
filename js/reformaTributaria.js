@@ -1,7 +1,7 @@
 /* js/reformaTributaria.js - Calculadora BDIPro incorporada */
 
 Router.register('reforma-tributaria', async () => {
-  const src = 'embedded/bdipro.html?v=20260715-bdi-personalizado-simples-alert';
+  const src = 'embedded/bdipro.html?v=20260815-icms-2027-ivaeq';
   document.getElementById('pageContent').innerHTML = `
     <div class="rt-bdipro-shell">
       <div class="rt-bdipro-framebar">
@@ -113,7 +113,13 @@ Router.register('reforma-tributaria', async () => {
     for (const componente of payload.componentes || []) {
       await atualizarComponente(idPerfil, existentes, componente);
     }
-    return API.get(`/bdi/perfis/${encodeURIComponent(idPerfil)}`);
+    // A criação ocorre antes dos componentes; esta atualização força o backend a
+    // recalcular o BDI com as rubricas recém-gravadas e com a regra vigente do IVAeq.
+    return API.put(`/bdi/perfis/${encodeURIComponent(idPerfil)}`, {
+      ...payload.perfil,
+      quartil: 'Personalizado',
+      situacao: payload.perfil.situacao || 'Ativo',
+    });
   };
 
   if (window.__reformaTributariaBdiHandler) {

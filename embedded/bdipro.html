@@ -312,10 +312,10 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
 #screenParam button:active{transform:translateY(1px)}
 #screenParam .btn-primary{background:var(--accent);color:#fff;flex:1;justify-content:center}
 #screenParam .btn-primary:hover{filter:brightness(1.08)}
-#screenParam .btn-ghost{background:#fff;color:#334155;border:1px solid #cbd5e1}
-#screenParam .btn-ghost:hover{background:#f1f5f9}
 #screenParam .btn-bdi-save,#screenExato .btn-bdi-save,#screenSimples .btn-bdi-save{background:linear-gradient(180deg,#f59e0b,#d97706);color:#fff;border:0}
 #screenParam .btn-bdi-save:hover,#screenExato .btn-bdi-save:hover,#screenSimples .btn-bdi-save:hover{filter:brightness(1.06)}
+#screenParam .btn-ghost{background:#fff;color:#334155;border:1px solid #cbd5e1}
+#screenParam .btn-ghost:hover{background:#f1f5f9}
 #screenParam .tabs{display:flex;gap:6px;flex-wrap:wrap;padding:14px 16px 0;border-bottom:1px solid var(--line)}
 #screenParam .tab{background:transparent;color:#64748b;border:0;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;padding:9px 13px;font-size:13px;font-weight:600}
 #screenParam .tab:hover{background:#f1f5f9;color:#334155}
@@ -522,6 +522,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       <button class="enter" type="button" onclick="showScreen('param')">Cálculo Paramétrico do BDI →</button>
       <button class="enter alt-btn" type="button" onclick="showScreen('exato')">Cálculo Exato do BDI →</button>
       <button class="enter alt-btn" type="button" onclick="showScreen('simples')">BDI – Simples Nacional →</button>
+      <button class="manual" type="button" onclick="window.open('Manual BDIPro.pdf','_blank','noopener')">Manual do sistema</button>
     </div>
     <div class="foot">BDI · CBS · IBS · CPRB · ISS · PIS/COFINS · Simulações</div>
   </section>
@@ -565,7 +566,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
             <div class="field"><label>%MATcd do contrato</label><input id="simMatcd" type="text" inputmode="decimal" value="40"></div>
             <div class="field"><label>Fator setorial (%)</label><input id="simFatorSetorial" type="text" inputmode="decimal" value="50"></div>
             <div class="field"><label>Redutor governamental (%)</label><input id="simRedutorGov" type="text" inputmode="decimal" value="0"></div>
-            <div class="field"><label>IVAt cheio para IVAeq (%)</label><input id="simIvatCheio" type="text" inputmode="decimal" value="26,5"></div>
+            <div class="field"><label>Alíquota média de ICMS em 2027 (%)</label><input id="simIcms2027" type="text" inputmode="decimal" value="18"></div>
+            <div class="field"><label>CBS (%)</label><input id="simCbsCheia" type="text" inputmode="decimal" value="8,8"></div>
+            <div class="field"><label>IBS cheio 2033 (%)</label><input id="simIbsCheio" type="text" inputmode="decimal" value="17,7"></div>
             <div class="note">Os valores são pré-preenchidos pelo tipo de obra e quartil, mas permanecem editáveis.</div>
           </div>
         </div>
@@ -589,6 +592,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       </aside>
 
       <section class="sim-output">
+        <div class="actions" style="margin:0 0 16px;padding:0;background:transparent;border:0">
+          <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizadoTopo" type="button">➕ Incluir BDI personalizado</button>
+        </div>
         <section class="hero-kpis">
           <div class="kpi good"><div class="l">BDI Simples</div><div class="v" id="simKpiBdi">—</div></div>
           <div class="kpi"><div class="l">Faixa</div><div class="v" id="simKpiFaixa">—</div></div>
@@ -596,9 +602,6 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
           <div class="kpi"><div class="l">IVA equivalente</div><div class="v" id="simKpiIvaeq">—</div></div>
           <div class="kpi price-kpi"><div class="l">Preço de venda</div><div class="v" id="simKpiPreco">—</div></div>
         </section>
-        <div class="actions" style="margin:0 0 16px;padding:0;background:transparent;border:0">
-          <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizadoTopo" type="button">➕ Incluir BDI personalizado</button>
-        </div>
 
         <section class="maincard sim-summary">
           <h2>Resumo automático</h2>
@@ -610,7 +613,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
             <div class="field"><label>T usado no BDI</label><div class="derived" id="simTDerivado">—</div></div>
             <div class="field"><label>K</label><div class="derived" id="simKDerivado">—</div></div>
             <div class="field"><label>Fator efetivo</label><div class="derived" id="simFDerivado">—</div></div>
-            <div class="field"><label>IVAt cheio para IVAeq</label><div class="derived" id="simIvatDerivado">—</div></div>
+            <div class="field"><label>IVAt anual para IVAeq</label><div class="derived" id="simIvatDerivado">—</div></div>
+            <div class="field"><label>ICMS residual do ano</label><div class="derived" id="simIcmsDerivado">—</div></div>
+            <div class="field"><label>%MATcd ajustado</label><div class="derived" id="simMatcdAjustadoDerivado">—</div></div>
           </div>
         </section>
 
@@ -644,8 +649,8 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
             <div class="box"><h3>Memória de cálculo</h3><div class="formula" id="simMemCompleta"></div></div>
           </div>
           <div class="actions">
-            <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizado" type="button">➕ Incluir BDI personalizado</button>
             <button class="btn green" id="simAplicarPrincipal">Aplicar IVAeq ao BDI principal</button>
+            <button class="btn btn-bdi-save" id="simSalvarBdiPersonalizado" type="button">➕ Incluir BDI personalizado</button>
             <button class="btn ghost" id="simExportCsv">Exportar Excel/CSV</button>
             <button class="btn ghost" id="simExportWord">Exportar Word</button>
             <button class="btn ghost" id="simExportPdf">Imprimir/PDF</button>
@@ -794,6 +799,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
           <div class="field"><div class="head"><label>% de materiais na obra — α</label><span class="help" data-tip="Parcela de materiais usada no ajuste do ISS no BDI: ISS_BDI = ISS × (1 − α).">?</span></div><div class="inp pct"><input id="alpha" type="text" inputmode="decimal"><span class="suffix">%</span></div></div>
           <div class="field"><div class="head"><label>Fator setorial f</label><span class="help" data-tip="Redução setorial sobre a alíquota IBS/CBS. Ex.: construção civil com redução de 50%.">?</span></div><div class="inp pct"><input id="f" type="text" inputmode="decimal"><span class="suffix">%</span></div></div>
           <div class="field"><div class="head"><label>Redutor de compras governamentais</label><span class="help" data-tip="Art. 349, III — redutor aplicado nas contratações públicas sobre o IBS/CBS.">?</span></div><div class="inp pct"><input id="redutor" type="text" inputmode="decimal"><span class="suffix">%</span></div></div>
+          <div class="field"><div class="head"><label>Alíquota média de ICMS em 2027</label><span class="help" data-tip="Parâmetro usado para reduzir a base creditável durante a transição. Mantém-se em 2028, cai gradualmente de 2029 a 2032 e zera a partir de 2033.">?</span></div><div class="inp pct"><input id="icms2027" type="text" inputmode="decimal"><span class="suffix">%</span></div></div>
           <div class="field"><div class="head"><label>CPRB</label><span class="help" data-tip="Contribuição previdenciária sobre a receita bruta, quando aplicável.">?</span></div><div class="inp pct"><input id="cprb" type="text" inputmode="decimal"><span class="suffix">%</span></div></div>
 
           <div class="field">
@@ -850,6 +856,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
         <button class="tab" data-panel="reequilibrio">Reequilíbrio</button>
         <button class="tab" data-panel="parametrica">Tabela paramétrica</button>
         <button class="tab" data-panel="transicao">Tabela anual</button>
+        <button class="tab" data-panel="curvaTributaria">Curva Tributária 2026–2033</button>
         <button class="tab" data-panel="referencias">Referências</button>
         <button class="tab" data-panel="formulas">Fórmulas</button>
       </div>
@@ -895,12 +902,22 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       <div id="parametrica" class="panel">
         <h2>Tabela paramétrica</h2>
         <p class="note">O %MATcd varia de 5% a 80%, reproduzindo a lógica paramétrica da planilha.</p>
-        <div class="tablewrap"><table><thead><tr><th>%MATcd</th><th>IVAeq</th><th>BDI</th></tr></thead><tbody id="tbodyParam"></tbody></table></div>
+        <div class="tablewrap"><table><thead><tr><th>%MATcd bruto</th><th>%MATcd ajustado</th><th>IVAeq</th><th>BDI</th></tr></thead><tbody id="tbodyParam"></tbody></table></div>
       </div>
 
       <div id="transicao" class="panel">
         <h2>Transição tributária 2026–2040</h2>
-        <div class="tablewrap"><table><thead><tr><th>Ano</th><th>IVA</th><th>CBS</th><th>IBS</th><th>PIS/COFINS</th><th>ISS</th></tr></thead><tbody id="tbodyTransicao"></tbody></table></div>
+        <div class="tablewrap"><table><thead><tr><th>Ano</th><th>ICMS residual</th><th>IVA</th><th>CBS</th><th>IBS</th><th>PIS/COFINS</th><th>ISS</th></tr></thead><tbody id="tbodyTransicao"></tbody></table></div>
+      </div>
+
+      <div id="curvaTributaria" class="panel">
+        <h2>Curva Tributária 2026–2033</h2>
+        <p class="note">Projeção ano a ano com a composição de custos, os parâmetros do BDI e as opções tributárias atualmente preenchidas pelo usuário.</p>
+        <div class="tablewrap"><table><thead><tr><th>Ano</th><th>IVAeq</th><th>BDI</th></tr></thead><tbody id="tbodyCurvaTributaria"></tbody></table></div>
+        <h3>Curva do IVAeq</h3>
+        <canvas id="graficoCurvaIvaeq" width="900" height="330"></canvas>
+        <h3>Curva do BDI</h3>
+        <canvas id="graficoCurvaBdi" width="900" height="330"></canvas>
       </div>
 
       <div id="referencias" class="panel">
@@ -915,9 +932,10 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
         <div class="formula"><b>ISS_BDI</b> = ISS municipal × (1 − α)</div>
         <div class="formula"><b>T</b> = ISS_BDI + CPRB + PIS/COFINS</div>
         <div class="formula"><b>%MATcd</b> = MAT/CD + 0,10 × MO/CD + %credEQ × EQ/CD + %Créd. BDI</div>
+        <div class="formula"><b>%MATcd ajustado</b> = %MATcd × (1 − ICMS residual)</div>
         <div class="formula"><b>f</b> = (1 − redutor setorial) × (1 − redutor governamental)</div>
         <div class="formula"><b>Alíquota efetiva IBS/CBS</b> = nominal × f</div>
-        <div class="formula"><b>IVAeq</b> = max(0; IVAt × (K × f − %MATcd) / K)</div>
+        <div class="formula"><b>IVAeq</b> = max(0; IVAt × (K × f − %MATcd ajustado) / K)</div>
         <div class="formula"><b>BDI</b> = K × (1 + IVAeq) / (1 − T) − 1</div>
         <div class="formula"><b>Fator de reequilíbrio</b> = ((1 + BDI) / (1 + BDI original)) − 1</div>
         <div class="formula"><b>Valor Reequilibrado</b> = Valor contratual × (1 + Fator de reequilíbrio)</div>
@@ -1001,6 +1019,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       <div class="field"><label>IVA nominal (CBS+IBS) %</label><input id="ivaCheia" type="text" inputmode="decimal" value="8,80"><span class="sub">Preenchido pelo ano, mas editável</span></div>
       <div class="field"><label>Fator setorial %</label><input id="fatorSetorial" type="text" inputmode="decimal" value="50"><span class="sub">Ex.: 50 = redução setorial de 50%</span></div>
       <div class="field"><label>Redutor compras governamentais %</label><input id="redutorGov" type="text" inputmode="decimal" value="0"><span class="sub">Art. 370 LC 214/2025</span></div>
+      <div class="field"><label>Alíquota média de ICMS em 2027 %</label><input id="icms2027Ex" type="text" inputmode="decimal" value="18"><span class="sub">Mantida em 2028; reduzida até 2032; zerada a partir de 2033.</span></div>
       <div class="field"><label>ISS municipal %</label><input id="iss" type="text" inputmode="decimal" value="5"></div>
       <div class="field"><label>Redução do ISS para BDI (α) %</label><input id="alphaEx" type="text" inputmode="decimal" value="40"><span class="sub">ISS_BDI = ISS × (1 - α)</span></div>
       <div class="field"><label>CPRB %</label><input id="cprbEx" type="text" inputmode="decimal" value="1,80"><span class="sub" id="cprbExNota"></span></div>
@@ -1067,7 +1086,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
         </tfoot>
       </table>
     </div>
-    <p class="notice">Tipos: Material, Equipamento, Mão de Obra. A geração de crédito e a alíquota de IVA são livres por linha: valor considerado para crédito = geração de crédito × custo parcial; crédito de IVA = valor considerado × alíquota IVA.</p>
+    <p class="notice">Tipos: Material, Equipamento, Mão de Obra. A geração de crédito e a alíquota de IVA são livres por linha. Durante a transição, o valor considerado para crédito é ajustado por ICMS residual: geração de crédito × custo parcial × (1 − ICMS residual); crédito de IVA = valor considerado × alíquota IVA.</p>
   </section>
 
   <!-- RESULTADOS -->
@@ -1084,8 +1103,9 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
       <div class="res hl"><div class="k">BDI <span id="bdiFlag"></span></div><div class="v" id="rBDIreal">—</div><div class="d" id="bdiRealDesc"></div></div>
       <div class="res blue"><div class="k">Preço de venda</div><div class="v" id="rPrecoVenda">—</div><div class="d">CD × (1 + BDI)</div></div>
       <div class="res"><div class="k">Valor Reequilibrado</div><div class="v" id="rPV">—</div><div class="d" id="valorAjustadoMem">Valor contratual × (1 + fator)</div></div>
-      <div class="res"><div class="k">%MATcd (base p/crédito)</div><div class="v" id="rMat">—</div><div class="d">Σ crédito de IVA / (IVA nominal × CD)</div></div>
-      <div class="res hl"><div class="k">IVA Equivalente</div><div class="v" id="rIVAeq">—</div><div class="d">máx(0; IVA × (K × f − %MATcd) / K)</div></div>
+      <div class="res"><div class="k">%MATcd</div><div class="v" id="rMat">—</div><div class="d">base creditável / CD</div></div>
+      <div class="res"><div class="k">%MATcd ajustado</div><div class="v" id="rMatAjustado">—</div><div class="d">%MATcd × (1 − ICMS residual)</div></div>
+      <div class="res hl"><div class="k">IVA Equivalente</div><div class="v" id="rIVAeq">—</div><div class="d">máx(0; IVA × (K × f − %MATcd ajustado) / K)</div></div>
       <div class="res"><div class="k">Fator de reequilíbrio</div><div class="v" id="rIVArec">—</div><div class="d">((1 + BDI) / (1 + BDI origem)) − 1</div></div>
     </div>
     <div id="bdiBreakdownExato">
@@ -1099,7 +1119,7 @@ body{background:#04183a;font-family:'Segoe UI',system-ui,Arial,sans-serif}
     </div>
     <div class="eqbox" style="margin-top:18px">
       <strong>Lógica (conforme planilha):</strong><br>
-      <code>Preço de venda = CD · (1 + BDI)</code> &nbsp;|&nbsp; <code>Valor reequilibrado = Valor contratual · (1 + fator de reequilíbrio)</code> &nbsp;|&nbsp; <code>IVAeq = máx(0; IVA nominal · (K · f − %MATcd) / K)</code>
+      <code>Preço de venda = CD · (1 + BDI)</code> &nbsp;|&nbsp; <code>Valor reequilibrado = Valor contratual · (1 + fator de reequilíbrio)</code> &nbsp;|&nbsp; <code>IVAeq = máx(0; IVA nominal · (K · f − %MATcd ajustado) / K)</code>
     </div>
   </section>
 
@@ -1220,7 +1240,7 @@ const TabelasTributarias = {
     2033:{pisCofins:false,cbs:.088,ibs:.177,issFator:0,cprb:0,obs:'Regime sem ISS; CBS e IBS em regime definitivo.'},
     2034:{pisCofins:false,cbs:.088,ibs:.177,issFator:0,cprb:0,obs:'Regime definitivo.'}
   },
-  bdi: {defaults: {ac:.0401, r:.0056, sg:.0040, df:.0111, lucro:.0730, matcd:.4023, fatorSetorial:.50, redutorGov:0}}
+  bdi: {defaults: {ac:.0401, r:.0056, sg:.0040, df:.0111, lucro:.0730, matcd:.4023, fatorSetorial:.50, redutorGov:0, icms2027:.18}}
 };
 window.TabelasTributarias = TabelasTributarias;
 let ultimoResultadoSimples = null;
@@ -1233,7 +1253,38 @@ function simNum(v,d=2){return Number.isFinite(v)?v.toLocaleString('pt-BR',{minim
 function simEsc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function faixaSimples(anexo,rbt){const lista=TabelasTributarias.simples.anexos[anexo].faixas;return lista.find(f=>rbt>=f.de&&rbt<=f.ate)||lista[lista.length-1]}
 function cronSimples(ano){return TabelasTributarias.reforma[Number(ano)]||TabelasTributarias.reforma[2034]}
-function lerSimples(){return {modelo:$sim('simModelo')?.value||'das',anexo:$sim('simAnexo')?.value||'IV',tipoObra:$sim('simTipoObra')?.value||'edificios',quartilBdi:$sim('simQuartilBdi')?.value||'medio',rbt12:parseSimNum($sim('simRbt12')?.value),ano:Number($sim('simAno')?.value||2027),cprbOpt:($sim('simCprbOpt')?.value||'sim')==='sim',custoDireto:parseSimNum($sim('simCustoDireto')?.value),matcd:parseSimPct($sim('simMatcd')?.value),fatorSetorial:parseSimPct($sim('simFatorSetorial')?.value),redutorGov:parseSimPct($sim('simRedutorGov')?.value),ivatCheio:parseSimPct($sim('simIvatCheio')?.value||'26,5'),ac:parseSimPct($sim('simAc')?.value),r:parseSimPct($sim('simRisco')?.value),sg:parseSimPct($sim('simSg')?.value),df:parseSimPct($sim('simDf')?.value),lucro:parseSimPct($sim('simLucro')?.value)}}
+function icmsResidualPorAno(ano,icms2027){
+  const base=Math.max(0,Number(icms2027)||0),y=Number(ano)||0;
+  if(y===2027||y===2028)return base;
+  if(y===2029)return base*.90;
+  if(y===2030)return base*.80;
+  if(y===2031)return base*.70;
+  if(y===2032)return base*.60;
+  return 0;
+}
+function matcdAjustadoPorIcms(matcd,ano,icms2027){return Math.max(0,Number(matcd||0)*(1-icmsResidualPorAno(ano,icms2027)))}
+function ibsParaIvaeqSimplesPorAno(ano,ibsCheio2033){
+  const cheio=Math.max(0,Number(ibsCheio2033)||0),y=Number(ano)||0;
+  if(y===2027||y===2028)return .001;
+  if(y===2029)return cheio*.10;
+  if(y===2030)return cheio*.20;
+  if(y===2031)return cheio*.30;
+  if(y===2032)return cheio*.40;
+  if(y>=2033)return cheio;
+  return 0;
+}
+function cbsParaIvaeqSimplesPorAno(ano,cbsCheia){
+  const y=Number(ano)||0;
+  return y>=2027?Math.max(0,Number(cbsCheia)||0):0;
+}
+function ivatParaIvaeqSimplesPorAno(ano,cbsCheia,ibsCheio2033){
+  return cbsParaIvaeqSimplesPorAno(ano,cbsCheia)+ibsParaIvaeqSimplesPorAno(ano,ibsCheio2033);
+}
+window.icmsResidualPorAno = icmsResidualPorAno;
+window.matcdAjustadoPorIcms = matcdAjustadoPorIcms;
+window.ibsParaIvaeqSimplesPorAno = ibsParaIvaeqSimplesPorAno;
+window.ivatParaIvaeqSimplesPorAno = ivatParaIvaeqSimplesPorAno;
+function lerSimples(){return {modelo:$sim('simModelo')?.value||'das',anexo:$sim('simAnexo')?.value||'IV',tipoObra:$sim('simTipoObra')?.value||'edificios',quartilBdi:$sim('simQuartilBdi')?.value||'medio',rbt12:parseSimNum($sim('simRbt12')?.value),ano:Number($sim('simAno')?.value||2027),cprbOpt:($sim('simCprbOpt')?.value||'sim')==='sim',custoDireto:parseSimNum($sim('simCustoDireto')?.value),matcd:parseSimPct($sim('simMatcd')?.value),fatorSetorial:parseSimPct($sim('simFatorSetorial')?.value),redutorGov:parseSimPct($sim('simRedutorGov')?.value),icms2027:parseSimPct($sim('simIcms2027')?.value||'18'),cbsCheia:parseSimPct($sim('simCbsCheia')?.value||'8,8'),ibsCheio:parseSimPct($sim('simIbsCheio')?.value||'17,7'),ac:parseSimPct($sim('simAc')?.value),r:parseSimPct($sim('simRisco')?.value),sg:parseSimPct($sim('simSg')?.value),df:parseSimPct($sim('simDf')?.value),lucro:parseSimPct($sim('simLucro')?.value)}}
 function aplicaTransicaoSimples(trib,ano){const y=Number(ano),pisCofins=(trib.pis||0)+(trib.cofins||0),issOriginal=trib.iss||0;trib.pis=trib.pis||0;trib.cofins=trib.cofins||0;trib.cbs=0;trib.ibs=0;if(y===2026){return trib}if(y<=2028){const total=.088;trib.cbs=pisCofins*(.087/total);trib.ibs=pisCofins*(.001/total);trib.pis=0;trib.cofins=0;return trib}trib.pis=0;trib.cofins=0;trib.cbs=pisCofins;if(y===2029){trib.iss=issOriginal*.90;trib.ibs=issOriginal*.10}else if(y===2030){trib.iss=issOriginal*.80;trib.ibs=issOriginal*.20}else if(y===2031){trib.iss=issOriginal*.70;trib.ibs=issOriginal*.30}else if(y===2032){trib.iss=issOriginal*.60;trib.ibs=issOriginal*.40}else{trib.iss=0;trib.ibs=issOriginal}return trib}
 function decomporDasSimples(base,faixa,aliqEf){
   const rep=faixa.rep;
@@ -1277,10 +1328,11 @@ function tBdiSimples(tributos,ivaNominalEfetivo=0){
   return Math.max(0,(tributos.pis||0)+(tributos.cofins||0)+(tributos.iss||0)+(tributos.cpp||0)+(tributos.cprb||0)+ivaNominalEfetivo);
 }
 function calculaBdiSimples(base){
-  const dec=calculaDecomposicaoSimples(base),K=(1+base.ac+base.r+base.sg)*(1+base.df)*(1+base.lucro),f=(1-base.fatorSetorial)*(1-base.redutorGov),ivaNominalEfetivo=(dec.tributos.cbs||0)+(dec.tributos.ibs||0),ivatCheio=Number.isFinite(base.ivatCheio)?base.ivatCheio:.265,modelo=base.modelo||'das';
+  const dec=calculaDecomposicaoSimples(base),K=(1+base.ac+base.r+base.sg)*(1+base.df)*(1+base.lucro),f=(1-base.fatorSetorial)*(1-base.redutorGov),ivaNominalEfetivo=(dec.tributos.cbs||0)+(dec.tributos.ibs||0),cbsCheia=Number.isFinite(base.cbsCheia)?base.cbsCheia:.088,ibsCheio=Number.isFinite(base.ibsCheio)?base.ibsCheio:.177,ibsIvaeq=ibsParaIvaeqSimplesPorAno(base.ano,ibsCheio),cbsIvaeq=cbsParaIvaeqSimplesPorAno(base.ano,cbsCheia),ivatCheio=ivatParaIvaeqSimplesPorAno(base.ano,cbsCheia,ibsCheio),modelo=base.modelo||'das';
+  const icmsResidual=icmsResidualPorAno(base.ano,base.icms2027),matcdAjustado=matcdAjustadoPorIcms(base.matcd,base.ano,base.icms2027);
   let ivaeq=0,T=0,bdi=0;
   if(modelo==='hibrido'){
-    ivaeq=base.ano===2026?0:Math.max(0,ivatCheio*((K*f-base.matcd)/K));
+    ivaeq=base.ano===2026?0:Math.max(0,ivatCheio*((K*f-matcdAjustado)/K));
     T=Math.max(0,tBdiSimples(dec.tributos,0));
     bdi=K*(1+ivaeq)/(1-T)-1
   }else{
@@ -1289,27 +1341,30 @@ function calculaBdiSimples(base){
     bdi=K/(1-T)-1
   }
   const precoVenda=base.custoDireto*(1+bdi);
-  const resultado={...base,...dec,K,f,ivaNominalEfetivo,ivatCheio,ivaeq,T,bdi,precoVenda,modelo};
+  const resultado={...base,...dec,K,f,icmsResidual,matcdAjustado,ivaNominalEfetivo,cbsCheia,ibsCheio,cbsIvaeq,ibsIvaeq,ivatCheio,ivaeq,T,bdi,precoVenda,modelo};
   ultimoResultadoSimples=resultado;
   window.__SimplesBDIResult={ano:base.ano,ivaeq,bdi,totalTribEfetivo:T,origem:'Simples Nacional',detalhe:resultado};
   return resultado
 }
-function calculaRegimeComparado(nome,base){const cron=cronSimples(base.ano),pisCofins=cron.pisCofins?(nome==='Lucro Real'?.0925:.0365):0,iss=.05*cron.issFator,cprb=base.cprbOpt?cron.cprb:0,ivaNom=(cron.cbs||0)+(cron.ibs||0),K=(1+base.ac+base.r+base.sg)*(1+base.df)*(1+base.lucro),f=(1-base.fatorSetorial)*(1-base.redutorGov),ivaeq=base.ano===2026?0:Math.max(0,ivaNom*((K*f-base.matcd)/K)),T=pisCofins+iss+cprb,bdi=K*(1+ivaeq)/(1-T)-1;return {regime:nome,T,ivaeq,bdi,precoVenda:base.custoDireto*(1+bdi)}}
+function calculaRegimeComparado(nome,base){const cron=cronSimples(base.ano),pisCofins=cron.pisCofins?(nome==='Lucro Real'?.0925:.0365):0,iss=.05*cron.issFator,cprb=base.cprbOpt?cron.cprb:0,ivaNom=(cron.cbs||0)+(cron.ibs||0),K=(1+base.ac+base.r+base.sg)*(1+base.df)*(1+base.lucro),f=(1-base.fatorSetorial)*(1-base.redutorGov),matcdAjustado=matcdAjustadoPorIcms(base.matcd,base.ano,base.icms2027),ivaeq=base.ano===2026?0:Math.max(0,ivaNom*((K*f-matcdAjustado)/K)),T=pisCofins+iss+cprb,bdi=K*(1+ivaeq)/(1-T)-1;return {regime:nome,T,ivaeq,bdi,precoVenda:base.custoDireto*(1+bdi)}}
 function tributosSimples(res){return [['IRPJ - incluído no lucro bruto',res.tributos.irpj],['CSLL - incluída no lucro bruto',res.tributos.csll],['PIS',res.tributos.pis],['Cofins',res.tributos.cofins],['CBS',res.tributos.cbs],['IBS',res.tributos.ibs],['ISS',res.tributos.iss],['CPRB',res.tributos.cprb],['CPP embutida no DAS',res.tributos.cpp]]}
-function renderKpisSimples(res){$sim('simKpiBdi').textContent=simPct(res.bdi);$sim('simKpiFaixa').textContent='Faixa '+res.faixa.faixa;$sim('simKpiAliqEfetiva').textContent=simPct(res.aliqEf);$sim('simKpiIvaeq').textContent=simPct(res.ivaeq);$sim('simKpiPreco').textContent=simMoeda(res.precoVenda);$sim('simModeloDerivado').textContent=res.modelo==='hibrido'?'Híbrido — IBS/CBS por fora':'DAS unificado';$sim('simFaixaDerivada').textContent=`Faixa ${res.faixa.faixa} (${simMoeda(res.faixa.de)} a ${simMoeda(res.faixa.ate)})`;$sim('simAliqNomDerivada').textContent=simPct(res.faixa.aliquota);$sim('simDeduzirDerivada').textContent=simMoeda(res.faixa.deduzir);$sim('simTDerivado').textContent=simPct(res.T);$sim('simKDerivado').textContent=simNum(res.K,6);$sim('simFDerivado').textContent=simPct(res.f);$sim('simIvatDerivado').textContent=res.modelo==='hibrido'?simPct(res.ivatCheio):'Não aplicável';const alerta=$sim('simAlertaLimite');if(alerta){alerta.style.display=res.rbt12>TabelasTributarias.simples.limite?'block':'none';alerta.textContent='A Receita Bruta informada supera o limite da Faixa 6 do Simples Nacional. Avalie Lucro Presumido ou Lucro Real.'}}
+function renderKpisSimples(res){$sim('simKpiBdi').textContent=simPct(res.bdi);$sim('simKpiFaixa').textContent='Faixa '+res.faixa.faixa;$sim('simKpiAliqEfetiva').textContent=simPct(res.aliqEf);$sim('simKpiIvaeq').textContent=simPct(res.ivaeq);$sim('simKpiPreco').textContent=simMoeda(res.precoVenda);$sim('simModeloDerivado').textContent=res.modelo==='hibrido'?'Híbrido — IBS/CBS por fora':'DAS unificado';$sim('simFaixaDerivada').textContent=`Faixa ${res.faixa.faixa} (${simMoeda(res.faixa.de)} a ${simMoeda(res.faixa.ate)})`;$sim('simAliqNomDerivada').textContent=simPct(res.faixa.aliquota);$sim('simDeduzirDerivada').textContent=simMoeda(res.faixa.deduzir);$sim('simTDerivado').textContent=simPct(res.T);$sim('simKDerivado').textContent=simNum(res.K,6);$sim('simFDerivado').textContent=simPct(res.f);$sim('simIvatDerivado').textContent=res.modelo==='hibrido'?`${simPct(res.cbsIvaeq)} CBS + ${simPct(res.ibsIvaeq)} IBS = ${simPct(res.ivatCheio)}`:'Não aplicável';if($sim('simIcmsDerivado'))$sim('simIcmsDerivado').textContent=res.modelo==='hibrido'?simPct(res.icmsResidual):'Não aplicável';if($sim('simMatcdAjustadoDerivado'))$sim('simMatcdAjustadoDerivado').textContent=res.modelo==='hibrido'?simPct(res.matcdAjustado):'Não aplicável';const alerta=$sim('simAlertaLimite');if(alerta){alerta.style.display=res.rbt12>TabelasTributarias.simples.limite?'block':'none';alerta.textContent='A Receita Bruta informada supera o limite da Faixa 6 do Simples Nacional. Avalie Lucro Presumido ou Lucro Real.'}}
 function renderFaixasSimples(res){const rows=TabelasTributarias.simples.anexos[res.anexo].faixas.map(f=>`<tr${f.faixa===res.faixa.faixa?' style="background:#eef9f2;font-weight:800"':''}><td>Faixa ${f.faixa}</td><td>${simMoeda(f.de)}</td><td>${simMoeda(f.ate)}</td><td>${simPct(f.aliquota)}</td><td>${simMoeda(f.deduzir)}</td></tr>`).join('');$sim('simTabelaFaixas').innerHTML=`<table><thead><tr><th>Faixa</th><th>Limite inferior</th><th>Limite superior</th><th>Alíquota nominal</th><th>Parcela a deduzir</th></tr></thead><tbody>${rows}</tbody></table>`}
 function renderAliquotaSimples(res){$sim('simMemAliquota').innerHTML=[['Receita Bruta dos últimos 12 meses',simMoeda(res.rbt12)],['Anexo selecionado',TabelasTributarias.simples.anexos[res.anexo].nome],['Faixa identificada','Faixa '+res.faixa.faixa],['Alíquota nominal',simPct(res.faixa.aliquota)],['Parcela a deduzir',simMoeda(res.faixa.deduzir)],['Fórmula','(RBT12 × Alíquota nominal − Parcela a deduzir) / RBT12'],['Cálculo',`(${simMoeda(res.rbt12)} × ${simPct(res.faixa.aliquota)} − ${simMoeda(res.faixa.deduzir)}) / ${simMoeda(res.rbt12)}`],['Alíquota efetiva',simPct(res.aliqEf)]].map(r=>`<p><b>${r[0]}:</b> ${r[1]}</p>`).join('')}
 function notaAjusteIssSimples(res){return res.ajusteIss?`Na 5ª faixa dos anexos com ISS, o ISS efetivo foi limitado a ${simPct(res.ajusteIss.teto)}; o excedente de ${simPct(res.ajusteIss.excesso)} foi redistribuído entre IRPJ, CSLL, PIS e Cofins antes da transição anual.`:''}
 function renderDecompSimples(res){const rows=tributosSimples(res).map(([n,v])=>`<tr><td>${n}</td><td>${simPct(v)}</td><td>${simMoeda(res.custoDireto*v)}</td></tr>`).join('');const tLabel=res.modelo==='hibrido'?'T usado no BDI (demais tributos do DAS, sem IRPJ/CSLL e sem CBS/IBS, + CPRB)':'T usado no BDI (DAS sem IRPJ/CSLL + CPRB quando aplicável)';const notaAnexo=res.anexo==='IV'?'No Anexo IV, a CPRB é apresentada separadamente quando aplicável.':'Nos Anexos III e V, a contribuição previdenciária patronal permanece embutida no DAS.';$sim('simTabelaDecomp').innerHTML=`<table><thead><tr><th>Tributo</th><th>Carga efetiva</th><th>Valor estimado</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>Total tributário efetivo</td><td>${simPct(res.total)}</td><td>${simMoeda(res.custoDireto*res.total)}</td></tr><tr><td>${tLabel}</td><td>${simPct(res.T)}</td><td>${simMoeda(res.custoDireto*res.T)}</td></tr></tfoot></table><div class="note">${simEsc(res.cron.obs)} ${notaAjusteIssSimples(res)} IRPJ e CSLL são exibidos para transparência, mas não integram o termo T do BDI; podem ser considerados pelo usuário na taxa de lucro bruto. ${notaAnexo} ${res.modelo==='hibrido'?'No modelo híbrido, CBS e IBS são tratados por fora e entram no IVA equivalente.':'No DAS unificado, não há IVA equivalente: o termo T usa apenas os tributos do DAS que entram no BDI.'}</div>`;const anos=[2026,2027,2028,2029,2030,2031,2032,2033,2034];$sim('simTabelaCronologica').innerHTML=`<table><thead><tr><th>Ano</th><th>Regra de transição aplicada ao DAS</th><th>CPRB Anexo IV</th><th>Observação</th></tr></thead><tbody>${anos.map(a=>{const c=cronSimples(a);const regra=a===2026?'PIS/Cofins e ISS integral':a<=2028?'PIS/Cofins convertidos em CBS/IBS; ISS integral':a===2029?'CBS; 10% do ISS migra ao IBS':a===2030?'CBS; 20% do ISS migra ao IBS':a===2031?'CBS; 30% do ISS migra ao IBS':a===2032?'CBS; 40% do ISS migra ao IBS':'CBS; ISS extinto e substituído pelo IBS';return `<tr><td>${a===2034?'2034+':a}</td><td>${regra}</td><td>${simPct(c.cprb||0)}</td><td>${simEsc(c.obs)}</td></tr>`}).join('')}</tbody></table>`;drawPieSimples($sim('simChartPizza'),tributosSimples(res).filter(x=>x[1]>0))}
 function renderBdiSimples(res){const linhas=[['Administração Central (AC)',res.ac],['Seguros e Garantias (S+G)',res.sg],['Risco (R)',res.r],['Despesas Financeiras (DF)',res.df],['Lucro Bruto (L)',res.lucro],['IRPJ - incluído no lucro bruto',res.tributos.irpj],['CSLL - incluída no lucro bruto',res.tributos.csll],['PIS',res.tributos.pis],['Cofins',res.tributos.cofins],['CBS',res.tributos.cbs],['IBS',res.tributos.ibs],['ISS',res.tributos.iss],['CPRB',res.tributos.cprb],['CPP embutida no DAS',res.tributos.cpp],['IVA equivalente',res.ivaeq]];$sim('simTabelaBdi').innerHTML=`<table><thead><tr><th>Discriminação</th><th>Taxa (%)</th></tr></thead><tbody>${linhas.map(([n,v])=>`<tr><td>${n}</td><td>${simPct(v)}</td></tr>`).join('')}</tbody><tfoot><tr><td>BDI (%)</td><td>${simPct(res.bdi)}</td></tr></tfoot></table>`;const eq=res.modelo==='hibrido'?`K = (1+AC+R+S+G) × (1+DF) × (1+L) = ${simNum(res.K,6)}
 f = (1-redutor setorial) × (1-redutor governamental) = ${simPct(res.f)}
-IVAeq = max(0; IVAt cheio × (K × f - %MATcd) / K) = ${simPct(res.ivaeq)}
+ICMS residual = ${simPct(res.icmsResidual)}
+%MATcd ajustado = %MATcd × (1 - ICMS residual) = ${simPct(res.matcdAjustado)}
+IVAt anual = CBS informada + IBS do ano = ${simPct(res.cbsIvaeq)} + ${simPct(res.ibsIvaeq)} = ${simPct(res.ivatCheio)}
+IVAeq = max(0; IVAt anual × (K × f - %MATcd ajustado) / K) = ${simPct(res.ivaeq)}
 T = demais tributos do DAS, sem IRPJ/CSLL e sem CBS/IBS, + CPRB = ${simPct(res.T)}
 BDI = K × (1 + IVAeq) / (1 - T) - 1 = ${simPct(res.bdi)}`:`K = (1+AC+R+S+G) × (1+DF) × (1+L) = ${simNum(res.K,6)}
 T Simples = DAS sem IRPJ/CSLL + CPRB aplicável = ${simPct(res.T)}
 IVAeq = 0,00% no modelo DAS unificado
 BDI Simples = K / (1 - T Simples) - 1 = ${simPct(res.bdi)}`;$sim('simEquacaoBdi').textContent=eq;$sim('simMemCompleta').innerHTML=memoriaSimplesHtml(res)}
-function memoriaSimplesHtml(res){const obra=tabelaBdi?.[res.tipoObra]?.nome||res.tipoObra,quartil=res.quartilBdi==='q1'?'Primeiro Quartil':res.quartilBdi==='q3'?'Terceiro Quartil':'Média',dados=[['Modelo',res.modelo==='hibrido'?'Híbrido — IBS/CBS por fora':'DAS unificado'],['Tipo de obra',obra],['Quartil do BDI',quartil],['Receita Bruta',simMoeda(res.rbt12)],['Faixa',`Faixa ${res.faixa.faixa}`],['Alíquota nominal',simPct(res.faixa.aliquota)],['Parcela a deduzir',simMoeda(res.faixa.deduzir)],['Alíquota efetiva',simPct(res.aliqEf)],['IRPJ - incluído no lucro bruto',simPct(res.tributos.irpj)],['CSLL - incluída no lucro bruto',simPct(res.tributos.csll)],['PIS',simPct(res.tributos.pis)],['Cofins',simPct(res.tributos.cofins)],['CBS',simPct(res.tributos.cbs)],['IBS',simPct(res.tributos.ibs)],['ISS',simPct(res.tributos.iss)],['CPRB efetiva',simPct(res.tributos.cprb)],['T usado no BDI, sem IRPJ/CSLL',simPct(res.T)],['Total tributário efetivo',simPct(res.total)],['IVAt cheio usado no IVAeq',simPct(res.ivatCheio)],['IVAeq',simPct(res.ivaeq)],['BDI',simPct(res.bdi)],['Preço de venda / valor final',simMoeda(res.precoVenda)]];return `<table><tbody>${dados.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</tbody></table>`}
+function memoriaSimplesHtml(res){const obra=tabelaBdi?.[res.tipoObra]?.nome||res.tipoObra,quartil=res.quartilBdi==='q1'?'Primeiro Quartil':res.quartilBdi==='q3'?'Terceiro Quartil':'Média',dados=[['Modelo',res.modelo==='hibrido'?'Híbrido — IBS/CBS por fora':'DAS unificado'],['Tipo de obra',obra],['Quartil do BDI',quartil],['Receita Bruta',simMoeda(res.rbt12)],['Faixa',`Faixa ${res.faixa.faixa}`],['Alíquota nominal',simPct(res.faixa.aliquota)],['Parcela a deduzir',simMoeda(res.faixa.deduzir)],['Alíquota efetiva',simPct(res.aliqEf)],['IRPJ - incluído no lucro bruto',simPct(res.tributos.irpj)],['CSLL - incluída no lucro bruto',simPct(res.tributos.csll)],['PIS',simPct(res.tributos.pis)],['Cofins',simPct(res.tributos.cofins)],['CBS',simPct(res.tributos.cbs)],['IBS',simPct(res.tributos.ibs)],['ISS',simPct(res.tributos.iss)],['CPRB efetiva',simPct(res.tributos.cprb)],['T usado no BDI, sem IRPJ/CSLL',simPct(res.T)],['Total tributário efetivo',simPct(res.total)],['CBS informada para IVAeq',res.modelo==='hibrido'?simPct(res.cbsCheia):'Não aplicável'],['IBS cheio 2033 informado',res.modelo==='hibrido'?simPct(res.ibsCheio):'Não aplicável'],['IBS do ano usado no IVAeq',res.modelo==='hibrido'?simPct(res.ibsIvaeq):'Não aplicável'],['IVAt anual usado no IVAeq',res.modelo==='hibrido'?simPct(res.ivatCheio):'Não aplicável'],['ICMS residual aplicado ao ano',res.modelo==='hibrido'?simPct(res.icmsResidual):'Não aplicável'],['%MATcd bruto',simPct(res.matcd)],['%MATcd ajustado = %MATcd × (1 − ICMS residual)',res.modelo==='hibrido'?simPct(res.matcdAjustado):'Não aplicável'],['IVAeq',simPct(res.ivaeq)],['BDI',simPct(res.bdi)],['Preço de venda / valor final',simMoeda(res.precoVenda)]];return `<table><tbody>${dados.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</tbody></table>`}
 function renderComparacaoSimples(res){const lp=calculaRegimeComparado('Lucro Presumido',res),lr=calculaRegimeComparado('Lucro Real',res),sn={regime:'Simples Nacional',T:res.T,ivaeq:res.ivaeq,bdi:res.bdi,precoVenda:res.precoVenda},regimes=[lr,lp,sn];$sim('simTabelaComparacao').innerHTML=`<table><thead><tr><th>Regime</th><th>Tributação</th><th>IVAeq</th><th>BDI</th><th>Preço de venda</th><th>Diferença vs. Simples</th></tr></thead><tbody>${regimes.map(r=>`<tr><td>${r.regime}</td><td>${simPct(r.T)}</td><td>${simPct(r.ivaeq)}</td><td>${simPct(r.bdi)}</td><td>${simMoeda(r.precoVenda)}</td><td>${simMoeda(r.precoVenda-sn.precoVenda)}</td></tr>`).join('')}</tbody></table>`;drawBarsSimples($sim('simChartBarras'),regimes.map(r=>[r.regime,r.bdi]));const atual=ultimoResultadoSimples;const pts=[2026,2027,2028,2029,2030,2031,2032,2033,2034].map(ano=>[String(ano),calculaBdiSimples({...res,ano}).bdi]);ultimoResultadoSimples=atual||res;drawLineSimples($sim('simChartLinha'),pts);const rbtC=parseSimNum($sim('simCenarioRbt12')?.value)||res.rbt12,anexoC=$sim('simCenarioAnexo')?.value||res.anexo;let cenario;if(anexoC==='LP')cenario={...lp,anexo:'Lucro Presumido',rbt12:rbtC,faixa:{faixa:'—'},aliqEf:NaN};else if(anexoC==='LR')cenario={...lr,anexo:'Lucro Real',rbt12:rbtC,faixa:{faixa:'—'},aliqEf:NaN};else cenario=calculaBdiSimples({...res,rbt12:rbtC,anexo:anexoC});ultimoResultadoSimples=res;$sim('simTabelaCenarios').innerHTML=`<table><thead><tr><th>Cenário</th><th>Regime/Anexo</th><th>RBT12</th><th>Faixa</th><th>Alíquota efetiva</th><th>BDI</th><th>Preço</th><th>Impacto</th></tr></thead><tbody><tr><td>Atual</td><td>Simples Anexo ${res.anexo}</td><td>${simMoeda(res.rbt12)}</td><td>${res.faixa.faixa}</td><td>${simPct(res.aliqEf)}</td><td>${simPct(res.bdi)}</td><td>${simMoeda(res.precoVenda)}</td><td>—</td></tr><tr><td>Simulado</td><td>${cenario.anexo&&String(cenario.anexo).startsWith('Lucro')?cenario.anexo:'Simples Anexo '+cenario.anexo}</td><td>${simMoeda(cenario.rbt12)}</td><td>${cenario.faixa.faixa}</td><td>${simPct(cenario.aliqEf)}</td><td>${simPct(cenario.bdi)}</td><td>${simMoeda(cenario.precoVenda)}</td><td>${simMoeda(cenario.precoVenda-res.precoVenda)}</td></tr><tr><td>Saída do Simples</td><td>Lucro Presumido</td><td>—</td><td>—</td><td>—</td><td>${simPct(lp.bdi)}</td><td>${simMoeda(lp.precoVenda)}</td><td>${simMoeda(lp.precoVenda-res.precoVenda)}</td></tr></tbody></table>`}
 function recalcularSimples(){const res=calculaBdiSimples(lerSimples());renderKpisSimples(res);renderFaixasSimples(res);renderAliquotaSimples(res);renderDecompSimples(res);renderBdiSimples(res);renderComparacaoSimples(res);ultimoResultadoSimples=res;window.__SimplesBDIResult={ano:res.ano,ivaeq:res.ivaeq,bdi:res.bdi,totalTribEfetivo:res.T,origem:'Simples Nacional',detalhe:res}}
 function simWritePct(id,val){const el=$sim(id);if(el&&Number.isFinite(val))el.value=(val*100).toLocaleString('pt-BR',{maximumFractionDigits:4})}
@@ -1321,12 +1376,11 @@ function drawBarsSimples(canvas,rows){if(!canvas)return;const ctx=canvas.getCont
 function drawLineSimples(canvas,pts){if(!canvas)return;const ctx=canvas.getContext('2d'),cw=canvas.clientWidth||500,ch=270;canvas.width=cw*devicePixelRatio;canvas.height=ch*devicePixelRatio;ctx.scale(devicePixelRatio,devicePixelRatio);ctx.clearRect(0,0,cw,ch);const vals=pts.map(p=>p[1]),min=Math.min(...vals)*.95,max=Math.max(...vals)*1.05,ml=46,mr=18,mt=20,mb=42;ctx.strokeStyle='#e2e8f0';ctx.lineWidth=1;for(let i=0;i<=4;i++){let y=mt+i*(ch-mt-mb)/4;ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(cw-mr,y);ctx.stroke()}const x=i=>ml+i*(cw-ml-mr)/(pts.length-1),y=v=>mt+(max-v)*(ch-mt-mb)/(max-min||1);ctx.strokeStyle='#1f6f9f';ctx.lineWidth=3;ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(x(i),y(p[1])):ctx.moveTo(x(i),y(p[1])));ctx.stroke();ctx.fillStyle='#0f1b2d';ctx.font='11px Segoe UI';pts.forEach((p,i)=>{ctx.fillText(p[0],x(i)-12,ch-18);ctx.fillText(simPct(p[1]),x(i)-18,y(p[1])-8)})}
 function relatorioSimplesHtml(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>BDI Simples Nacional</title><style>body{font-family:Arial,sans-serif;color:#0f1b2d;margin:32px}h1{color:#15527a}h2{border-bottom:2px solid #1f6f9f;color:#15527a;padding-bottom:4px}table{border-collapse:collapse;width:100%;font-size:12px;margin:10px 0 18px}td,th{border:1px solid #dbe7f1;padding:7px;text-align:right}td:first-child,th:first-child{text-align:left}th{background:#e6f2fb}</style></head><body><h1>Relatório Técnico - BDI Simples Nacional</h1><p>Memória de cálculo, decomposição tributária e parecer comparativo gerados pelo BDIPro.</p><h2>Dados da empresa</h2><p><b>Razão Social:</b> ${simEsc($sim('simRazao')?.value)}<br><b>CNPJ:</b> ${simEsc($sim('simCnpj')?.value)}<br><b>CNAE principal:</b> ${simEsc($sim('simCnaePrincipal')?.value)}<br><b>Município/UF:</b> ${simEsc($sim('simMunicipio')?.value)}/${simEsc($sim('simEstado')?.value)}</p><h2>Memória da alíquota efetiva</h2>${$sim('simMemAliquota')?.innerHTML||''}<h2>Decomposição dos tributos</h2>${$sim('simTabelaDecomp')?.innerHTML||''}<h2>Cálculo do BDI</h2>${$sim('simTabelaBdi')?.innerHTML||''}<h2>Comparação de regimes</h2>${$sim('simTabelaComparacao')?.innerHTML||''}<h2>Parecer tributário</h2><p>O resultado considera a faixa do Simples Nacional identificada pela RBT12, a decomposição interna do DAS, a cronologia da Reforma Tributária e a metodologia de BDI parametrizada no BDIPro. A adoção do resultado depende da comprovação documental e da aderência do enquadramento tributário da empresa.</p></body></html>`}
 function baixarSimples(nome,tipo,texto){const blob=new Blob([texto],{type:tipo});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nome;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),600)}
-function exportarCsvSimples(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples()),rows=[['Seção','Campo','Valor'],['Empresa','Razão Social',$sim('simRazao')?.value||''],['Empresa','CNPJ',$sim('simCnpj')?.value||''],['Alíquota','RBT12',simMoeda(res.rbt12)],['Alíquota','Faixa','Faixa '+res.faixa.faixa],['Alíquota','Alíquota efetiva',simPct(res.aliqEf)],['BDI','IVAeq',simPct(res.ivaeq)],['BDI','BDI',simPct(res.bdi)],['BDI','Preço',simMoeda(res.precoVenda)]];tributosSimples(res).forEach(([n,v])=>rows.push(['Tributo',n,simPct(v)]));baixarSimples('bdipro_simples_nacional.csv','text/csv;charset=utf-8','\ufeff'+rows.map(r=>r.join(';')).join('\n'))}
+function exportarCsvSimples(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples()),rows=[['Seção','Campo','Valor'],['Empresa','Razão Social',$sim('simRazao')?.value||''],['Empresa','CNPJ',$sim('simCnpj')?.value||''],['Alíquota','RBT12',simMoeda(res.rbt12)],['Alíquota','Faixa','Faixa '+res.faixa.faixa],['Alíquota','Alíquota efetiva',simPct(res.aliqEf)],['BDI','CBS informada para IVAeq',res.modelo==='hibrido'?simPct(res.cbsCheia):'Não aplicável'],['BDI','IBS cheio 2033 informado',res.modelo==='hibrido'?simPct(res.ibsCheio):'Não aplicável'],['BDI','IBS do ano usado no IVAeq',res.modelo==='hibrido'?simPct(res.ibsIvaeq):'Não aplicável'],['BDI','IVAt anual usado no IVAeq',res.modelo==='hibrido'?simPct(res.ivatCheio):'Não aplicável'],['BDI','ICMS residual do ano',res.modelo==='hibrido'?simPct(res.icmsResidual):'Não aplicável'],['BDI','%MATcd bruto',simPct(res.matcd)],['BDI','%MATcd ajustado',res.modelo==='hibrido'?simPct(res.matcdAjustado):'Não aplicável'],['BDI','IVAeq',simPct(res.ivaeq)],['BDI','BDI',simPct(res.bdi)],['BDI','Preço',simMoeda(res.precoVenda)]];tributosSimples(res).forEach(([n,v])=>rows.push(['Tributo',n,simPct(v)]));baixarSimples('bdipro_simples_nacional.csv','text/csv;charset=utf-8','\ufeff'+rows.map(r=>r.join(';')).join('\n'))}
 function exportarWordSimples(){baixarSimples('relatorio_bdipro_simples.doc','application/msword;charset=utf-8',relatorioSimplesHtml())}
 function exportarPdfSimples(){const w=window.open('','_blank');if(w){w.document.write(relatorioSimplesHtml()+`<script>setTimeout(()=>print(),300)<\/script>`);w.document.close()}}
 function aplicarSimplesNoPrincipal(){const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());window.__SimplesBDIResult={ano:res.ano,ivaeq:res.ivaeq,bdi:res.bdi,totalTribEfetivo:res.T,origem:'Simples Nacional',detalhe:res};alert('IVA equivalente do Simples Nacional aplicado ao cálculo paramétrico do BDIPro.');showScreen('param')}
-document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('#screenSimples input,#screenSimples select,#screenSimples textarea').forEach(el=>{el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){if(el.id==='simTipoObra'||el.id==='simQuartilBdi')aplicarParametrosBdiSimples();recalcularSimples()})});document.querySelectorAll('#screenSimples .sim-tab').forEach(btn=>{btn.addEventListener('click',function(){document.querySelectorAll('#screenSimples .sim-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('#screenSimples .tab-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');const panel=$sim('simTab_'+btn.dataset.tab);if(panel)panel.classList.add('active');recalcularSimples()})});$sim('simExportCsv')?.addEventListener('click',exportarCsvSimples);$sim('simExportWord')?.addEventListener('click',exportarWordSimples);$sim('simExportPdf')?.addEventListener('click',exportarPdfSimples);$sim('simAplicarPrincipal')?.addEventListener('click',aplicarSimplesNoPrincipal);$sim('simSalvarBdiPersonalizado')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
-document.addEventListener('DOMContentLoaded',function(){$sim('simSalvarBdiPersonalizadoTopo')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
+document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('#screenSimples input,#screenSimples select,#screenSimples textarea').forEach(el=>{el.addEventListener(el.tagName==='SELECT'?'change':'input',function(){if(el.id==='simTipoObra'||el.id==='simQuartilBdi')aplicarParametrosBdiSimples();recalcularSimples()})});document.querySelectorAll('#screenSimples .sim-tab').forEach(btn=>{btn.addEventListener('click',function(){document.querySelectorAll('#screenSimples .sim-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('#screenSimples .tab-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');const panel=$sim('simTab_'+btn.dataset.tab);if(panel)panel.classList.add('active');recalcularSimples()})});$sim('simExportCsv')?.addEventListener('click',exportarCsvSimples);$sim('simExportWord')?.addEventListener('click',exportarWordSimples);$sim('simExportPdf')?.addEventListener('click',exportarPdfSimples);$sim('simAplicarPrincipal')?.addEventListener('click',aplicarSimplesNoPrincipal);$sim('simSalvarBdiPersonalizado')?.addEventListener('click',cadastrarBdiPersonalizadoSimples);$sim('simSalvarBdiPersonalizadoTopo')?.addEventListener('click',cadastrarBdiPersonalizadoSimples)});
 window.initSimples=initSimples;
 
 const transicao=[
@@ -1355,17 +1409,17 @@ const tabelaBdi={
  portuarias:{nome:'Obras Portuárias',q1:{ac:.0400,sg:.0081,r:.0146,df:.0094,lucro:.0714},medio:{ac:.0552,sg:.0122,r:.0232,df:.0102,lucro:.0840},q3:{ac:.0785,sg:.0199,r:.0316,df:.0133,lucro:.1043}},
  bdi_materiais:{nome:'BDI reduzido para fornecimento de materiais',q1:{ac:.0150,sg:.0030,r:.0056,df:.0085,lucro:.0350},medio:{ac:.0345,sg:.0048,r:.0085,df:.0085,lucro:.0511},q3:{ac:.0449,sg:.0082,r:.0089,df:.0111,lucro:.0622}}
 };
-const defaults={ano:2027,anoOrigem:2026,ivatManual:.088,usarIvatManual:0,f:.5,redutor:0,tipoObra:'edificios',quartilBdi:'medio',ac:.04,r:.0127,sg:.008,df:.0123,lucro:.074,alpha:.4,issManual:.05,usarIssManual:0,cprb:.018,valorContrato:1000000,bdiOriginalManual:.25,usarBdiOriginal:0,matcd:.4,mocd:.4,eqcd:.2,credeq:.4,credBdi:0,tipoRefCredito:'Rodoviária'};
+const defaults={ano:2027,anoOrigem:2026,ivatManual:.088,usarIvatManual:0,f:.5,redutor:0,icms2027:.18,tipoObra:'edificios',quartilBdi:'medio',ac:.04,r:.0127,sg:.008,df:.0123,lucro:.074,alpha:.4,issManual:.05,usarIssManual:0,cprb:.018,valorContrato:1000000,bdiOriginalManual:.25,usarBdiOriginal:0,matcd:.4,mocd:.4,eqcd:.2,credeq:.4,credBdi:0,tipoRefCredito:'Rodoviária'};
 window.__BDIProData={transicao,tabelaBdi};
 
 /* ===================== HELPERS DE INTERFACE ===================== */
 const ids=Object.keys(defaults);
-const percentIds=new Set(['ivatManual','f','redutor','ac','r','sg','df','lucro','alpha','issManual','cprb','bdiOriginalManual','matcd','mocd','eqcd','credeq','credBdi']);
+const percentIds=new Set(['ivatManual','f','redutor','icms2027','ac','r','sg','df','lucro','alpha','issManual','cprb','bdiOriginalManual','matcd','mocd','eqcd','credeq','credBdi']);
 const selectIds=new Set(['tipoObra','quartilBdi','tipoRefCredito']);
 const intIds=new Set(['ano','anoOrigem']);
 const boolIds=new Set(['usarIvatManual','usarIssManual','usarBdiOriginal']);
 // limite superior (em %) de cada slider acoplado
-const sliderMax={ac:20,r:20,sg:20,df:20,lucro:25,alpha:100,f:100,redutor:100,cprb:10,issManual:10,ivatManual:30,bdiOriginalManual:50,matcd:100,mocd:100,eqcd:100,credeq:100,credBdi:100};
+const sliderMax={ac:20,r:20,sg:20,df:20,lucro:25,alpha:100,f:100,redutor:100,icms2027:30,cprb:10,issManual:10,ivatManual:30,bdiOriginalManual:50,matcd:100,mocd:100,eqcd:100,credeq:100,credBdi:100};
 
 const pct=x=>Number.isFinite(x)?(x*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'-';
 const num=x=>Number.isFinite(x)?x.toLocaleString('pt-BR',{minimumFractionDigits:6,maximumFractionDigits:6}):'-';
@@ -1449,9 +1503,11 @@ function computeFor(matcd,o){
   const issPleno=transicao[0].iss||0.05,issFator=issPleno?((Number(a.iss)||0)/issPleno):0;
   const iss=o.usarIssManual?o.issManual*issFator:Number(a.iss)||0,issBdi=iss*(1-o.alpha),pisCofins=Number(a.pis)||0;
   const T=issBdi+cprbEfetiva+pisCofins,K=(1+o.ac+o.r+o.sg)*(1+o.df)*(1+o.lucro),fatorEfetivo=(1-o.f)*(1-o.redutor),ivatEfetivo=ivat*fatorEfetivo;
-  const mat=matcd;
+  const icmsResidual=icmsResidualPorAno(anoAtual,o.icms2027);
+  const matcdAjustado=matcdAjustadoPorIcms(matcd,anoAtual,o.icms2027);
+  const mat=matcdAjustado;
   const creditoBdi=o.credBdi||0;
-  const ivaeqBase=teste2026?0:Math.max(0,ivat*((K*fatorEfetivo-matcd)/K));
+  const ivaeqBase=teste2026?0:Math.max(0,ivat*((K*fatorEfetivo-matcdAjustado)/K));
   const simplesAplicado=window.__SimplesBDIResult&&Number(window.__SimplesBDIResult.ano)===anoAtual?Number(window.__SimplesBDIResult.ivaeq):NaN;
   const ivaeq=Number.isFinite(simplesAplicado)?simplesAplicado:ivaeqBase,delta=0,bdi=K*(1+ivaeq)/(1-T)-1,comp=0,bdiFinal=bdi,bdiClassico=K/(1-T)-1;
   let bdiOriginal,origemBdiOriginal;
@@ -1459,7 +1515,7 @@ function computeFor(matcd,o){
   else if(anoOrigem && anoOrigem<anoAtual){let ref=computeFor(matcd,{...o,ano:anoOrigem,usarBdiOriginal:1,bdiOriginalManual:0});bdiOriginal=ref.erro?bdi:ref.bdi;origemBdiOriginal='Ano '+anoOrigem}
   else {bdiOriginal=bdi;origemBdiOriginal='Sem ano anterior válido'}
   const fatorReeq=((1+bdi)/(1+bdiOriginal))-1,valorBase=o.valorContrato||0,valorAjustado=valorBase*(1+fatorReeq),diferencaReeq=valorAjustado-valorBase;
-  return {matcd,mat,creditoBdi,ivaeq,delta,bdi,comp,bdiFinal,bdiClassico,bdiOriginal,origemBdiOriginal,fatorReeq,valorBase,valorAjustado,diferencaReeq,K,T,issBdi,pisCofins,cprbEfetiva,ivat,ivatNominal,iss,issFator,fatorEfetivo,ivatEfetivo,teste2026}
+  return {matcd,mat,matcdAjustado,icmsResidual,creditoBdi,ivaeq,delta,bdi,comp,bdiFinal,bdiClassico,bdiOriginal,origemBdiOriginal,fatorReeq,valorBase,valorAjustado,diferencaReeq,K,T,issBdi,pisCofins,cprbEfetiva,ivat,ivatNominal,iss,issFator,fatorEfetivo,ivatEfetivo,teste2026}
 }
 function pctBdi(v){return Number.isFinite(v)?(v*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—'}
 function bdiEquationHtml(ano){
@@ -1521,6 +1577,35 @@ function drawSeries(canvasId,series,yKey='bdi'){
   let lx=m.l;series.forEach(s=>{ctx.fillStyle=s.color;ctx.fillRect(lx,9,16,4);ctx.fillStyle='#0f1b2d';ctx.font='bold 12px Segoe UI,Arial';ctx.fillText(s.label,lx+20,14);lx+=20+ctx.measureText(s.label).width+24});
 }
 
+function drawAnnualSeries(canvasId,points,yKey,color,label){
+  const c=document.getElementById(canvasId);if(!c)return;
+  const ctx=c.getContext('2d'),w=c.width,h=c.height,m={l:65,r:24,t:34,b:45};
+  ctx.clearRect(0,0,w,h);ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
+  if(!points.length){ctx.fillStyle='#94a3b8';ctx.font='14px Segoe UI,Arial';ctx.fillText('Sem dados para exibir.',m.l,h/2);return}
+  const values=points.map(p=>p[yKey]),rawMin=Math.min(...values),rawMax=Math.max(...values),padding=Math.max((rawMax-rawMin)*.12,.005);
+  const ymin=Math.max(0,rawMin-padding),ymax=rawMax+padding;
+  const x=i=>m.l+i*(w-m.l-m.r)/Math.max(1,points.length-1);
+  const y=value=>h-m.b-(value-ymin)/Math.max(.000001,ymax-ymin)*(h-m.t-m.b);
+  ctx.strokeStyle='#e2e8f0';ctx.lineWidth=1;ctx.font='12px Segoe UI,Arial';ctx.fillStyle='#64748b';
+  for(let i=0;i<=5;i++){const yy=m.t+i*(h-m.t-m.b)/5,val=ymax-(ymax-ymin)*i/5;ctx.beginPath();ctx.moveTo(m.l,yy);ctx.lineTo(w-m.r,yy);ctx.stroke();ctx.fillText(pct(val),8,yy+4)}
+  points.forEach((p,i)=>{const xx=x(i);ctx.fillText(String(p.ano),xx-14,h-17)});
+  ctx.strokeStyle=color;ctx.lineWidth=3;ctx.lineJoin='round';ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(x(i),y(p[yKey])):ctx.moveTo(x(i),y(p[yKey])));ctx.stroke();
+  points.forEach((p,i)=>{ctx.beginPath();ctx.arc(x(i),y(p[yKey]),4,0,Math.PI*2);ctx.fillStyle=color;ctx.fill()});
+  ctx.fillStyle=color;ctx.fillRect(m.l,12,16,4);ctx.fillStyle='#0f1b2d';ctx.font='bold 12px Segoe UI,Arial';ctx.fillText(label,m.l+22,17);
+}
+
+function renderCurvaTributaria(o,matcdTotal){
+  const points=[];
+  for(let ano=2026;ano<=2033;ano++){
+    const resultado=computeFor(matcdTotal,{...o,ano,usarBdiOriginal:1,bdiOriginalManual:0});
+    if(!resultado.erro)points.push({ano,ivaeq:resultado.ivaeq,bdi:resultado.bdi});
+  }
+  const tbody=document.getElementById('tbodyCurvaTributaria');
+  if(tbody)tbody.innerHTML=points.map(p=>`<tr><td>${p.ano}</td><td>${pct(p.ivaeq)}</td><td><b>${pct(p.bdi)}</b></td></tr>`).join('');
+  drawAnnualSeries('graficoCurvaIvaeq',points,'ivaeq','#0f9f7a','IVAeq');
+  drawAnnualSeries('graficoCurvaBdi',points,'bdi','#1f6f9f','BDI');
+}
+
 function update(){
   const err=document.getElementById('erro');err.style.display='none';
   atualizaRegraCprbParam();
@@ -1533,24 +1618,28 @@ function update(){
   document.getElementById('heroIva').textContent=pct(res.ivaeq);
   document.getElementById('heroReeq').textContent=pct(res.fatorReeq);
   const obs2026=document.getElementById('obsIvaTeste2026');if(obs2026)obs2026.style.display=res.teste2026?'block':'none';
-  const mem=[['Ano',o.ano],['Tipo de obra',tabelaBdi[o.tipoObra]?.nome||o.tipoObra],['Quartil do BDI',document.getElementById('quartilBdi').selectedOptions[0]?.textContent||o.quartilBdi],['Referência creditável',o.tipoRefCredito],['IVAt nominal',pct(res.ivatNominal)],['IVAt efetivo para cálculo',pct(res.ivat)],['Fator efetivo (f) = (1−redutor setorial)×(1−redutor governamental)',pct(res.fatorEfetivo)],['IVAt × f',pct(res.ivatEfetivo)],['ISS municipal aplicado',pct(res.iss)],['Redução de ISS pela transição (ano)',pct(1-res.issFator)],['ISS_BDI = ISS×(1−α)',pct(res.issBdi)],['PIS/COFINS (tabela anual)',pct(res.pisCofins)],['CPRB efetiva',pct(res.cprbEfetiva)],['T = ISS_BDI + CPRB + PIS/COFINS',pct(res.T)],['K',num(res.K)],['MAT/CD',pct(o.matcd)],['MO/CD',pct(o.mocd)],['EQ/CD',pct(o.eqcd)],['% Crédito no BDI',pct(res.creditoBdi)],['%MATcd calculado',pct(res.matcd)],['IVAeq = max(0; IVAt × (K × f − %MATcd) / K)',pct(res.ivaeq)],['BDI clássico sem IVAeq',pct(res.bdiClassico)],['BDI pós-reforma',pct(res.bdi)]];
+  const mem=[['Ano',o.ano],['Tipo de obra',tabelaBdi[o.tipoObra]?.nome||o.tipoObra],['Quartil do BDI',document.getElementById('quartilBdi').selectedOptions[0]?.textContent||o.quartilBdi],['Referência creditável',o.tipoRefCredito],['IVAt nominal',pct(res.ivatNominal)],['IVAt efetivo para cálculo',pct(res.ivat)],['Fator efetivo (f) = (1−redutor setorial)×(1−redutor governamental)',pct(res.fatorEfetivo)],['IVAt × f',pct(res.ivatEfetivo)],['ISS municipal aplicado',pct(res.iss)],['Redução de ISS pela transição (ano)',pct(1-res.issFator)],['ISS_BDI = ISS×(1−α)',pct(res.issBdi)],['PIS/COFINS (tabela anual)',pct(res.pisCofins)],['CPRB efetiva',pct(res.cprbEfetiva)],['T = ISS_BDI + CPRB + PIS/COFINS',pct(res.T)],['K',num(res.K)],['MAT/CD',pct(o.matcd)],['MO/CD',pct(o.mocd)],['EQ/CD',pct(o.eqcd)],['% Crédito no BDI',pct(res.creditoBdi)],['Alíquota média de ICMS em 2027',pct(o.icms2027)],['ICMS residual aplicado ao ano',pct(res.icmsResidual)],['%MATcd bruto',pct(res.matcd)],['%MATcd ajustado = %MATcd × (1 − ICMS residual)',pct(res.matcdAjustado)],['IVAeq = max(0; IVAt × (K × f − %MATcd ajustado) / K)',pct(res.ivaeq)],['BDI clássico sem IVAeq',pct(res.bdiClassico)],['BDI pós-reforma',pct(res.bdi)]];
   document.getElementById('memoria').innerHTML=mem.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td></tr>`).join('');
   renderBdiBreakdown('bdiBreakdownParam',{ano:o.ano,ac:o.ac,r:o.r,sg:o.sg,df:o.df,lucro:o.lucro,T:res.T,issBdi:res.issBdi,pisCofins:res.pisCofins,cprbEfetiva:res.cprbEfetiva,ivaeq:res.ivaeq,bdi:res.bdi});
   const memReeq=[['Valor contratual/remanescente',moeda(res.valorBase)],['BDI de origem',pct(res.bdiOriginal)],['Origem do BDI',res.origemBdiOriginal],['BDI pós-reforma',pct(res.bdi)],['Fator de reequilíbrio',pct(res.fatorReeq)],['Valor reequilibrado estimado',moeda(res.valorAjustado)],['Diferença estimada',moeda(res.diferencaReeq)],['Interpretação',res.fatorReeq>0?'Acréscimo estimado para recomposição.':(res.fatorReeq<0?'Redução estimada em favor da Administração.':'Neutralidade econômica.')]];
   document.getElementById('memoriaReeq').innerHTML=memReeq.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td></tr>`).join('');
-  document.getElementById('tbodyParam').innerHTML=pts.map(p=>`<tr><td>${pct(p.matcd)}</td><td>${pct(p.ivaeq)}</td><td><b>${pct(p.bdi)}</b></td></tr>`).join('');
+  document.getElementById('tbodyParam').innerHTML=pts.map(p=>`<tr><td>${pct(p.matcd)}</td><td>${pct(p.matcdAjustado)}</td><td>${pct(p.ivaeq)}</td><td><b>${pct(p.bdi)}</b></td></tr>`).join('');
   if(pts.length){
     drawSeries('grafico',[{points:pts,color:'#1f6f9f',label:'Cenário atual'}]);
     drawSeries('graficoIvaeq',[{points:pts,color:'#0f9f7a',label:'IVAeq'}],'ivaeq');
   }
+  renderTransicao();
+  renderCurvaTributaria(o,matcdTotal);
   syncSliders();
 }
 window.updateParametricoBDI=update;
 function renderTransicao(){
   const anoSel=document.getElementById('ano'), origemSel=document.getElementById('anoOrigem');
-  if(anoSel)anoSel.innerHTML=transicao.map(x=>`<option value="${x.ano}">${x.ano}</option>`).join('');
+  const anoAtual=anoSel?.value;
+  if(anoSel){anoSel.innerHTML=transicao.map(x=>`<option value="${x.ano}">${x.ano}</option>`).join('');if(anoAtual)anoSel.value=anoAtual;}
   if(origemSel)atualizaAnoOrigem();
-  document.getElementById('tbodyTransicao').innerHTML=transicao.map(x=>`<tr><td>${x.ano}</td><td>${typeof x.iva==='number'?pct(x.iva):x.iva}</td><td>${typeof x.cbs==='number'?pct(x.cbs):x.cbs}</td><td>${typeof x.ibs==='number'?pct(x.ibs):x.ibs}</td><td>${typeof x.pis==='number'?pct(x.pis):x.pis}</td><td>${typeof x.iss==='number'?pct(x.iss):x.iss}</td></tr>`).join('')
+  const icmsBase=Number.isFinite(readField('icms2027'))?readField('icms2027'):defaults.icms2027;
+  document.getElementById('tbodyTransicao').innerHTML=transicao.map(x=>`<tr><td>${x.ano}</td><td>${pct(icmsResidualPorAno(x.ano,icmsBase))}</td><td>${typeof x.iva==='number'?pct(x.iva):x.iva}</td><td>${typeof x.cbs==='number'?pct(x.cbs):x.cbs}</td><td>${typeof x.ibs==='number'?pct(x.ibs):x.ibs}</td><td>${typeof x.pis==='number'?pct(x.pis):x.pis}</td><td>${typeof x.iss==='number'?pct(x.iss):x.iss}</td></tr>`).join('')
 }
 function atualizaAnoOrigem(){
   const sel=document.getElementById('anoOrigem');if(!sel)return;
@@ -1586,7 +1675,8 @@ const cmpRows=[
   ['BDI',r=>r.res.bdi,pct],
   ['IVA equivalente',r=>r.res.ivaeq,pct],
   ['T (tributos)',r=>r.res.T,pct],
-  ['%MATcd',r=>r.matcdTotal,pct],
+  ['%MATcd bruto',r=>r.matcdTotal,pct],
+  ['%MATcd ajustado',r=>r.res.matcdAjustado,pct],
   ['Fator de reequilíbrio',r=>r.res.fatorReeq,pct],
   ['Valor Reequilibrado',r=>r.valorComparado,moeda],
   ['Diferença estimada',r=>r.diferencaComparada,moeda]
@@ -1639,7 +1729,7 @@ function printRelatorio(){
   setTimeout(()=>{try{w.print()}catch(e){}},350);
 }
 
-/* ===================== INTEGRAÇÃO COM O MÓDULO BDI ===================== */
+/* ===================== INTEGRAÇÃO ORÇASMART ===================== */
 function bdiProPercent(v){const n=Number(v);return Number.isFinite(n)?n*100:0}
 function bdiProQuartilLabel(v){return v==='q1'?'Primeiro quartil':(v==='q3'?'Terceiro quartil':'Personalizado')}
 function bdiProTipoObraModulo(tipo){
@@ -1654,128 +1744,83 @@ function bdiProTipoObraModulo(tipo){
   };
   return mapa[tipo]||nome||'Outro';
 }
-function bdiProIvaPorAno(ano, ivaNominalManual){
+function bdiProIvaPorAno(ano,ivaNominalManual){
   const anualRt=(transicao.find(x=>Number(x.ano)===Number(ano))||transicao[transicao.length-1]||{});
   if(Number.isFinite(Number(ivaNominalManual))){
     return {cbs:bdiProPercent(Number(ivaNominalManual)),ibs:0,iva:bdiProPercent(Number(ivaNominalManual))};
   }
   return {cbs:bdiProPercent(Number(anualRt.cbs||0)),ibs:bdiProPercent(Number(anualRt.ibs||0)),iva:bdiProPercent(Number(anualRt.iva||0))};
 }
-function bdiProCprbPadraoModulo(ano){
-  const a=Number(ano);
-  if(a===2026)return 0.027;
-  if(a===2027)return 0.018;
-  return 0;
-}
+function bdiProCprbPadraoModulo(ano){const a=Number(ano);return a===2026?.027:(a===2027?.018:0)}
 function bdiProTributacaoPerfil(ano,res){
-  const cprb=Number(res.cprbEfetiva||0);
-  const cprbPadrao=bdiProCprbPadraoModulo(ano);
-  const usaCprbPadrao=cprb>0&&Math.abs(cprb-cprbPadrao)<0.000001;
+  const cprb=Number(res.cprbEfetiva||res.tributos?.cprb||0),cprbPadrao=bdiProCprbPadraoModulo(ano);
+  const usaCprbPadrao=cprb>0&&Math.abs(cprb-cprbPadrao)<.000001;
   const issManual=Math.max(0,Number(res.T||0)-Number(res.pisCofins||0)-(usaCprbPadrao?cprbPadrao:0));
-  return {
-    regime_previdenciario:usaCprbPadrao?'Desonerado':'Onerado',
-    iss_percentual_manual:bdiProPercent(issManual)
-  };
+  return {regime_previdenciario:usaCprbPadrao?'Desonerado':'Onerado',iss_percentual_manual:bdiProPercent(issManual)};
 }
 function bdiProComponentes(base){
   return [
     {grupo:'AC',codigo:'AC1',descricao:'Administração Central',percentual:bdiProPercent(base.ac),incide_sobre:'CD',ordem:1},
-    {grupo:'S', codigo:'S1', descricao:'Seguros e Garantias',percentual:bdiProPercent(base.sg),incide_sobre:'CD',ordem:2},
-    {grupo:'R', codigo:'R1', descricao:'Riscos',percentual:bdiProPercent(base.r),incide_sobre:'CD',ordem:3},
+    {grupo:'S',codigo:'S1',descricao:'Seguros e Garantias',percentual:bdiProPercent(base.sg),incide_sobre:'CD',ordem:2},
+    {grupo:'R',codigo:'R1',descricao:'Riscos',percentual:bdiProPercent(base.r),incide_sobre:'CD',ordem:3},
     {grupo:'DF',codigo:'DF1',descricao:'Despesas Financeiras',percentual:bdiProPercent(base.df),incide_sobre:'CD',ordem:4},
-    {grupo:'L', codigo:'L1', descricao:'Lucro Bruto',percentual:bdiProPercent(base.lucro),incide_sobre:'CD',ordem:5},
-    {grupo:'T', codigo:'T1', descricao:'Tributos calculados pela Reforma Tributária',percentual:bdiProPercent(base.T),incide_sobre:'PV',ordem:6}
+    {grupo:'L',codigo:'L1',descricao:'Lucro Bruto',percentual:bdiProPercent(base.lucro),incide_sobre:'CD',ordem:5},
+    {grupo:'T',codigo:'T1',descricao:'Tributos calculados pela Reforma Tributária',percentual:bdiProPercent(base.T),incide_sobre:'PV',ordem:6}
   ];
 }
-function bdiProNome(origem, ano, tipo){
-  const data=new Date().toLocaleDateString('pt-BR');
-  return `BDI personalizado - ${origem} - ${bdiProTipoObraModulo(tipo)} - ${ano} - ${data}`;
-}
+function bdiProNome(origem,ano,tipo){return `BDI personalizado - ${origem} - ${bdiProTipoObraModulo(tipo)} - ${ano} - ${new Date().toLocaleDateString('pt-BR')}`}
 function bdiProEmitirCadastro(payload){
-  if(!window.parent||window.parent===window){
-    alert('Para incluir o BDI personalizado, abra esta calculadora dentro do módulo Reforma Tributária do OrçaPro.');
-    return;
-  }
+  if(!window.parent||window.parent===window){alert('Para incluir o BDI personalizado, abra esta calculadora dentro do módulo Reforma Tributária do OrçaPro.');return}
   const requestId=`bdi-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   window.parent.postMessage({type:'orcasmart:bdi-personalizado',requestId,payload},window.location.origin);
   toast('Enviando BDI personalizado ao módulo BDI...');
 }
 function bdiProPayloadComum(origem,o,res,extra={}){
-  const iva=bdiProIvaPorAno(o.ano, o.usarIvatManual?o.ivatManual:undefined);
-  const tributacao=bdiProTributacaoPerfil(o.ano,res);
+  const iva=bdiProIvaPorAno(o.ano,o.usarIvatManual?o.ivatManual:undefined),tributacao=bdiProTributacaoPerfil(o.ano,res);
   return {
     origem,
     perfil:{
-      nome_perfil:bdiProNome(origem,o.ano,o.tipoObra),
-      tipo_obra:bdiProTipoObraModulo(o.tipoObra),
-      regime_tributario:'Normal',
-      regime_previdenciario:tributacao.regime_previdenciario,
-      quartil:'Personalizado',
-      ano_orcamento:Number(o.ano)||new Date().getFullYear(),
-      vigencia:String(o.ano||''),
-      situacao:'Ativo',
-      usa_reforma_tributaria:Number(o.ano)>=2027,
-      cbs_percentual:iva.cbs,
-      ibs_percentual:iva.ibs,
-      usa_iva_manual:1,
-      redutor_setorial_ivaeq:Number(o.f||0),
-      redutor_governamental_ivaeq:Number(o.redutor||0),
-      fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),
-      percentual_mat_ivaeq:Number(res.matcd||0),
-      credito_bdi_ivaeq:Number(res.creditoBdi||0),
-      ivaeq_percentual:bdiProPercent(res.ivaeq),
-      iss_percentual_manual:tributacao.iss_percentual_manual,
+      nome_perfil:bdiProNome(origem,o.ano,o.tipoObra),tipo_obra:bdiProTipoObraModulo(o.tipoObra),regime_tributario:'Normal',
+      regime_previdenciario:tributacao.regime_previdenciario,quartil:'Personalizado',ano_orcamento:Number(o.ano)||new Date().getFullYear(),
+      vigencia:String(o.ano||''),situacao:'Ativo',usa_reforma_tributaria:Number(o.ano)>=2027,cbs_percentual:iva.cbs,ibs_percentual:iva.ibs,
+      usa_iva_manual:1,redutor_setorial_ivaeq:Number(o.f||0),redutor_governamental_ivaeq:Number(o.redutor||0),
+      fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),percentual_mat_ivaeq:Number(res.matcd||0),credito_bdi_ivaeq:Number(res.creditoBdi||0),
+      icms_2027_percentual:bdiProPercent(o.icms2027??.18),ivaeq_percentual:bdiProPercent(res.ivaeq),iss_percentual_manual:tributacao.iss_percentual_manual,
       descricao:`BDI personalizado importado do módulo Reforma Tributária (${origem}).`,
-      observacoes:`BDI calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+      observacoes:`BDI calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}. ICMS residual: ${bdiProPercent(res.icmsResidual||0).toLocaleString('pt-BR')}%; %MATcd ajustado: ${bdiProPercent(res.matcdAjustado??res.matcd).toLocaleString('pt-BR')}%.`
     },
     componentes:bdiProComponentes({ac:o.ac,r:o.r,sg:o.sg,df:o.df,lucro:o.lucro,T:res.T}),
-    memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),...extra}
+    memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),icmsResidual:bdiProPercent(res.icmsResidual),matcdAjustado:bdiProPercent(res.matcdAjustado),...extra}
   };
 }
 function cadastrarBdiPersonalizadoParametrico(){
-  const o=vals();
-  const {res}=computeFromVals(o);
-  if(res.erro){toast('Corrija o cenário antes de cadastrar o BDI.');return;}
+  const o=vals(),{res}=computeFromVals(o);
+  if(res.erro){toast('Corrija o cenário antes de cadastrar o BDI.');return}
   bdiProEmitirCadastro(bdiProPayloadComum('Cálculo paramétrico',o,res,{tipoRefCredito:o.tipoRefCredito}));
 }
 function cadastrarBdiPersonalizadoSimples(){
-  const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples());
-  const tipo=res.tipoObra||($sim('simTipoObra')?.value)||'rodovias';
-  const quartil=res.quartilBdi||($sim('simQuartilBdi')?.value)||'Personalizado';
+  const res=ultimoResultadoSimples||calculaBdiSimples(lerSimples()),tipo=res.tipoObra||$sim('simTipoObra')?.value||'rodovias';
+  const hibrido=res.modelo==='hibrido',tributacao=bdiProTributacaoPerfil(res.ano,res);
   const perfil={
-    nome_perfil:bdiProNome('Simples Nacional',res.ano,tipo),
-    tipo_obra:bdiProTipoObraModulo(tipo),
-    regime_tributario:'Simples Nacional',
-    regime_previdenciario:Number(res.tributos?.cprb||0)>0?'Desonerado':'Onerado',
-    quartil:'Personalizado',
-    ano_orcamento:Number(res.ano)||new Date().getFullYear(),
-    vigencia:String(res.ano||''),
-    situacao:'Ativo',
-    usa_reforma_tributaria:Number(res.ano)>=2027,
-    cbs_percentual:bdiProPercent(res.tributos?.cbs||0),
-    ibs_percentual:bdiProPercent(res.tributos?.ibs||0),
-    percentual_mat_ivaeq:Number(res.matcd||0),
-    ivaeq_percentual:bdiProPercent(res.ivaeq||0),
-    simples_rbt12:Number(res.rbt12||0),
-    simples_faixa:Number(res.faixa?.faixa||res.faixa||0)||null,
-    simples_aliquota_efetiva:bdiProPercent(res.aliqEf||0),
-    usa_simples_efetiva_manual:1,
+    nome_perfil:bdiProNome('Simples Nacional',res.ano,tipo),tipo_obra:bdiProTipoObraModulo(tipo),regime_tributario:'Simples Nacional',
+    regime_previdenciario:Number(res.tributos?.cprb||0)>0?'Desonerado':'Onerado',quartil:'Personalizado',ano_orcamento:Number(res.ano)||new Date().getFullYear(),
+    vigencia:String(res.ano||''),situacao:'Ativo',usa_reforma_tributaria:Number(res.ano)>=2027,
+    cbs_percentual:bdiProPercent(hibrido?res.cbsIvaeq:(res.tributos?.cbs||0)),ibs_percentual:bdiProPercent(hibrido?res.ibsIvaeq:(res.tributos?.ibs||0)),
+    usa_iva_manual:hibrido?1:0,redutor_setorial_ivaeq:Number(res.fatorSetorial||0),redutor_governamental_ivaeq:Number(res.redutorGov||0),
+    fator_efetivo_ivaeq:Number(res.f||0),percentual_mat_ivaeq:Number(res.matcd||0),icms_2027_percentual:bdiProPercent(res.icms2027??.18),
+    ivaeq_percentual:bdiProPercent(res.ivaeq||0),simples_modelo_bdi:res.modelo||'das',simples_anexo:res.anexo||'IV',
+    simples_rbt12:Number(res.rbt12||0),simples_faixa:Number(res.faixa?.faixa||res.faixa||0)||null,
+    simples_aliquota_efetiva:bdiProPercent(res.aliqEf||0),usa_simples_efetiva_manual:1,
+    iss_percentual_manual:tributacao.iss_percentual_manual,
     descricao:'BDI personalizado importado do módulo Reforma Tributária (Simples Nacional).',
-    observacoes:`BDI Simples calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+    observacoes:`BDI Simples (${hibrido?'híbrido':'DAS unificado'}, Anexo ${res.anexo}) calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
   };
-  bdiProEmitirCadastro({
-    origem:'Simples Nacional',
-    perfil,
-    componentes:bdiProComponentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),
-    memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),quartil}
-  });
+  bdiProEmitirCadastro({origem:'Simples Nacional',perfil,componentes:bdiProComponentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),memoria:{bdi:bdiProPercent(res.bdi),ivaeq:bdiProPercent(res.ivaeq),K:res.K,T:bdiProPercent(res.T),modelo:res.modelo,anexo:res.anexo,icmsResidual:bdiProPercent(res.icmsResidual),matcdAjustado:bdiProPercent(res.matcdAjustado)}});
 }
 window.addEventListener('message',function(event){
   if(event.origin!==window.location.origin)return;
   const data=event.data||{};
-  if(data.type==='orcasmart:bdi-personalizado:result'){
-    toast(data.ok?'BDI personalizado incluído no módulo BDI.':(data.error||'Não foi possível incluir o BDI personalizado.'));
-  }
+  if(data.type==='orcasmart:bdi-personalizado:result')toast(data.ok?'BDI personalizado incluído no módulo BDI.':(data.error||'Não foi possível incluir o BDI personalizado.'));
 });
 window.BDIProPersonalizado={emitir:bdiProEmitirCadastro,percent:bdiProPercent,tipoObra:bdiProTipoObraModulo,quartil:bdiProQuartilLabel,componentes:bdiProComponentes,nome:bdiProNome,tributacao:bdiProTributacaoPerfil};
 
@@ -1809,7 +1854,7 @@ document.getElementById('pdf').onclick=printRelatorio;
 document.getElementById('salvar').onclick=()=>{localStorage.setItem('cenarioBDIReformaV2',JSON.stringify(vals()));toast('Cenário salvo no navegador.')};
 document.getElementById('carregar').onclick=()=>{const s=localStorage.getItem('cenarioBDIReformaV2');if(s){setVals(JSON.parse(s));atualizaInfoRefCredito();update();toast('Cenário carregado.')}else toast('Não há cenário salvo.')};
 document.getElementById('padrao').onclick=()=>{setVals(defaults);aplicaRefCredito(true);update();toast('Padrão restaurado.')};
-document.getElementById('exportar').onclick=()=>{const rows=[['%MATcd','IVAeq','BDI']];document.querySelectorAll('#tbodyParam tr').forEach(tr=>rows.push([...tr.children].map(td=>td.textContent.replace('%',''))));const csv=rows.map(r=>r.join(';')).join('\n');const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='tabela_bdi_reforma_tributaria.csv';a.click();URL.revokeObjectURL(a.href);toast('CSV exportado.')};
+document.getElementById('exportar').onclick=()=>{const rows=[['%MATcd bruto','%MATcd ajustado','IVAeq','BDI']];document.querySelectorAll('#tbodyParam tr').forEach(tr=>rows.push([...tr.children].map(td=>td.textContent.replace('%',''))));const csv=rows.map(r=>r.join(';')).join('\n');const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='tabela_bdi_reforma_tributaria.csv';a.click();URL.revokeObjectURL(a.href);toast('CSV exportado.')};
 
 /* ===================== INICIALIZAÇÃO ===================== */
 renderTransicao();renderRefsCredito();buildSliders();setVals(defaults);aplicaRefCredito(true);sincronizaManuais();update();renderCompare();
@@ -1852,6 +1897,21 @@ const ANOS_EXATO=[{ano:2026,iva:.0100},{ano:2027,iva:.0880},{ano:2028,iva:.0880}
 const DADOS_EXATO=window.__BDIProData||{};
 const TRANSICAO_EXATO=DADOS_EXATO.transicao||ANOS_EXATO.map(x=>({...x,pis:0,iss:.05}));
 const TABELA_BDI_EXATO=DADOS_EXATO.tabelaBdi||{};
+
+function icmsResidualExatoPorAno(ano,icms2027){
+  if(typeof window.icmsResidualPorAno === 'function') return window.icmsResidualPorAno(ano,icms2027);
+  const base=Math.max(0,Number(icms2027)||0),y=Number(ano)||0;
+  if(y===2027||y===2028)return base;
+  if(y===2029)return base*.90;
+  if(y===2030)return base*.80;
+  if(y===2031)return base*.70;
+  if(y===2032)return base*.60;
+  return 0;
+}
+function matcdAjustadoExatoPorIcms(matcd,ano,icms2027){
+  if(typeof window.matcdAjustadoPorIcms === 'function') return window.matcdAjustadoPorIcms(matcd,ano,icms2027);
+  return Math.max(0,Number(matcd||0)*(1-icmsResidualExatoPorAno(ano,icms2027)));
+}
 
 /* ====== Utilidades ====== */
 const $ = id => document.getElementById(id);
@@ -2018,11 +2078,12 @@ function atualizarRegraCprbExato(){
   el.title=bloqueia?'A CPRB é considerada zero a partir de 2028.':'CPRB editável para anos anteriores a 2028.';
   if(nota)nota.textContent=bloqueia?'CPRB zerada automaticamente a partir de 2028.':'';
 }
-function computeBdiExatoPorAno(ano, matPct, K, f, rg, issMunicipal, alpha, cprb){
+function computeBdiExatoPorAno(ano, matPct, K, f, rg, icms2027, issMunicipal, alpha, cprb){
   const a=anualExato(ano), teste2026=Number(ano)===2026;
   const ivaNominal=teste2026?0:Number(a.iva||0);
   const fatorEfetivo=(1-f)*(1-rg);
-  const ivaeq=teste2026?0:Math.max(0, ivaNominal*((K*fatorEfetivo-matPct)/K));
+  const matPctAjustado=matcdAjustadoExatoPorIcms(matPct,ano,icms2027);
+  const ivaeq=teste2026?0:Math.max(0, ivaNominal*((K*fatorEfetivo-matPctAjustado)/K));
   const issBdi=(Number(a.iss||issMunicipal))* (1-alpha);
   const cprbEfetiva=cprbEfetivaPorAnoExato(ano,cprb);
   const T=issBdi+cprbEfetiva+Number(a.pis||0);
@@ -2073,6 +2134,8 @@ function recalc(){
   const a=anualExato(anoExato);
   const ivaCheiaNominal = pctInput('ivaCheia');
   const ivaCheia = teste2026?0:ivaCheiaNominal;
+  const icms2027 = pctInput('icms2027Ex');
+  const icmsResidual = icmsResidualExatoPorAno(anoExato,icms2027);
   const fs = pctInput('fatorSetorial');
   const rg = pctInput('redutorGov');
   const fatorEfetivo=(1-fs)*(1-rg);
@@ -2086,20 +2149,22 @@ function recalc(){
   const K = (1+ac+R+sg)*(1+df)*(1+L);
   $('fatorK').textContent = K.toFixed(6);
 
-  let CD=0, baseCredTotal=0, matBaseEquiv=0, Cr=0;
+  let CD=0, baseCredTotal=0, matBaseEquiv=0, matBaseEquivBruto=0, Cr=0;
   rows.forEach(r=>{
     const custo=Number(r.custo||0), ger=Number(r.ger||0), aliq=Number(r.iva??ivaCheia);
     CD += custo;
-    const baseCreditoLinha = ger*custo;
+    const baseCreditoBruta = ger*custo;
+    const baseCreditoLinha = baseCreditoBruta*(1-icmsResidual);
     const creditoLinha = baseCreditoLinha*aliq;
     Cr += creditoLinha;
     baseCredTotal += baseCreditoLinha;
+    matBaseEquivBruto += ivaCheiaNominal>0 ? (baseCreditoBruta*aliq)/ivaCheiaNominal : baseCreditoBruta;
     matBaseEquiv += ivaCheiaNominal>0 ? creditoLinha/ivaCheiaNominal : baseCreditoLinha;
   });
 
   rows.forEach((r,i)=>{
     const pct = CD>0? r.custo/CD : 0;
-    const baseCreditoLinha = r.ger*r.custo;
+    const baseCreditoLinha = r.ger*r.custo*(1-icmsResidual);
     const crLinha = baseCreditoLinha*Number(r.iva??ivaCheia);
     const cellPct=document.querySelector(`[data-pct="${i}"]`);
     const cellBase=document.querySelector(`[data-base-credito="${i}"]`);
@@ -2115,15 +2180,17 @@ function recalc(){
   $('totCr').textContent = fmtBRL(Cr);
 
   const crCD = CD>0? Cr/CD : 0;
+  const matPctBruto = CD>0? matBaseEquivBruto/CD : 0;
   const matPct = CD>0? matBaseEquiv/CD : 0;
-  const IVAeq = teste2026?0:Math.max(0, ivaCheia*((K*fatorEfetivo-matPct)/K));
+  const matPctAjustado = Math.max(0, matPct * (1 - icmsResidual));
+  const IVAeq = teste2026?0:Math.max(0, ivaCheia*((K*fatorEfetivo-matPctAjustado)/K));
   const T=issBdi+cprbEfetiva+Number(a.pis||0);
   const BDIclassico = K/(1-T)-1;
   const BDIreal = K*(1+IVAeq)/(1-T)-1;
   const valorBase = num($('valorContratoEx')?.value||0);
   let bdiOrigem;
   if(Number($('usarBdiOriginalEx')?.value||0)) bdiOrigem=pctInput('bdiOriginalManualEx');
-  else bdiOrigem=computeBdiExatoPorAno(Number($('anoOrigemEx')?.value||anoExato), matPct, K, fs, rg, issMunicipal, alpha, cprb);
+  else bdiOrigem=computeBdiExatoPorAno(Number($('anoOrigemEx')?.value||anoExato), matPct, K, fs, rg, icms2027, issMunicipal, alpha, cprb);
   const fatorReeq=(1+BDIreal)/(1+bdiOrigem)-1;
   const valorAjustado=valorBase*(1+fatorReeq);
   const precoVenda=CD*(1+BDIreal);
@@ -2136,6 +2203,7 @@ function recalc(){
   const precoVendaEl=$('rPrecoVenda'); if(precoVendaEl)precoVendaEl.textContent=fmtBRL(precoVenda);
   $('rPV').textContent = fmtBRL(valorAjustado);
   $('rMat').textContent = fmtPct(matPct);
+  const rMatAjustado=$('rMatAjustado'); if(rMatAjustado) rMatAjustado.textContent = fmtPct(matPctAjustado);
   $('rIVAeq').textContent = fmtPct(IVAeq);
   $('rIVArec').textContent = fmtPct(fatorReeq);
   renderBdiBreakdownExato({ano:anoExato,ac,r:R,sg,df,lucro:L,T,issBdi,pisCofins:Number(a.pis||0),cprbEfetiva,ivaeq:IVAeq,bdi:BDIreal});
@@ -2146,11 +2214,10 @@ function recalc(){
   if(memValor)memValor.textContent=`${fmtBRL(valorBase)} × (1 ${fatorReeq>=0?'+':'-'} ${fmtPct(Math.abs(fatorReeq))})`;
   const anualSelecionado=anualExato(anoExato);
   window.__BDIProUltimoExato={
-    ano:anoExato,
-    tipoObra:$('tipoObraEx')?.value||'rodovias',
-    quartilBdi:$('quartilBdiEx')?.value||'medio',
+    ano:anoExato,tipoObra:$('tipoObraEx')?.value||'rodovias',quartilBdi:$('quartilBdiEx')?.value||'medio',
     ac,r:R,sg,df,lucro:L,K,T,issBdi,pisCofins:Number(a.pis||0),cprbEfetiva,
-    ivaeq:IVAeq,bdi:BDIreal,matcd:matPct,fatorEfetivo,redutorSetorial:fs,redutorGovernamental:rg,
+    ivaeq:IVAeq,bdi:BDIreal,matcd:matPct,matcdBruto:matPctBruto,matcdAjustado:matPctAjustado,
+    icms2027,icmsResidual,fatorEfetivo,redutorSetorial:fs,redutorGovernamental:rg,
     ivaNominal:ivaCheiaNominal,cbs:Number(anualSelecionado.cbs||0),ibs:Number(anualSelecionado.ibs||0),
     CD,Cr,crCD,precoVenda
   };
@@ -2158,40 +2225,22 @@ function recalc(){
 
 function cadastrarBdiPersonalizadoExato(){
   recalc();
-  const res=window.__BDIProUltimoExato;
-  const helper=window.BDIProPersonalizado;
-  if(!res||!helper){alert('Resultado do BDI ainda não está disponível.');return;}
-  const cbsIbsPadrao=Number(res.cbs||0)+Number(res.ibs||0);
-  const usarIvaTotalManual=Math.abs(cbsIbsPadrao-Number(res.ivaNominal||0))>0.000001;
+  const res=window.__BDIProUltimoExato,helper=window.BDIProPersonalizado;
+  if(!res||!helper){alert('Resultado do BDI ainda não está disponível.');return}
+  const cbsIbsPadrao=Number(res.cbs||0)+Number(res.ibs||0),usarIvaTotalManual=Math.abs(cbsIbsPadrao-Number(res.ivaNominal||0))>.000001;
   const tributacao=helper.tributacao?helper.tributacao(res.ano,res):{regime_previdenciario:Number(res.cprbEfetiva||0)>0?'Desonerado':'Onerado',iss_percentual_manual:helper.percent(res.issBdi)};
   const perfil={
-    nome_perfil:helper.nome('Cálculo exato',res.ano,res.tipoObra),
-    tipo_obra:helper.tipoObra(res.tipoObra),
-    regime_tributario:'Normal',
-    regime_previdenciario:tributacao.regime_previdenciario,
-    quartil:'Personalizado',
-    ano_orcamento:Number(res.ano)||new Date().getFullYear(),
-    vigencia:String(res.ano||''),
-    situacao:'Ativo',
-    usa_reforma_tributaria:Number(res.ano)>=2027,
-    cbs_percentual:helper.percent(usarIvaTotalManual?res.ivaNominal:res.cbs),
-    ibs_percentual:helper.percent(usarIvaTotalManual?0:res.ibs),
-    usa_iva_manual:1,
-    redutor_setorial_ivaeq:Number(res.redutorSetorial||0),
-    redutor_governamental_ivaeq:Number(res.redutorGovernamental||0),
-    fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),
-    percentual_mat_ivaeq:Number(res.matcd||0),
-    ivaeq_percentual:helper.percent(res.ivaeq),
-    iss_percentual_manual:tributacao.iss_percentual_manual,
+    nome_perfil:helper.nome('Cálculo exato',res.ano,res.tipoObra),tipo_obra:helper.tipoObra(res.tipoObra),regime_tributario:'Normal',
+    regime_previdenciario:tributacao.regime_previdenciario,quartil:'Personalizado',ano_orcamento:Number(res.ano)||new Date().getFullYear(),
+    vigencia:String(res.ano||''),situacao:'Ativo',usa_reforma_tributaria:Number(res.ano)>=2027,
+    cbs_percentual:helper.percent(usarIvaTotalManual?res.ivaNominal:res.cbs),ibs_percentual:helper.percent(usarIvaTotalManual?0:res.ibs),usa_iva_manual:1,
+    redutor_setorial_ivaeq:Number(res.redutorSetorial||0),redutor_governamental_ivaeq:Number(res.redutorGovernamental||0),
+    fator_efetivo_ivaeq:Number(res.fatorEfetivo||0),percentual_mat_ivaeq:Number(res.matcd||0),icms_2027_percentual:helper.percent(res.icms2027??.18),
+    ivaeq_percentual:helper.percent(res.ivaeq),iss_percentual_manual:tributacao.iss_percentual_manual,
     descricao:'BDI personalizado importado do módulo Reforma Tributária (cálculo exato).',
-    observacoes:`BDI exato calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}.`
+    observacoes:`BDI exato calculado no BDIPro em ${new Date().toLocaleString('pt-BR')}. ICMS residual: ${helper.percent(res.icmsResidual).toLocaleString('pt-BR')}%.`
   };
-  helper.emitir({
-    origem:'Cálculo exato',
-    perfil,
-    componentes:helper.componentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),
-    memoria:{bdi:helper.percent(res.bdi),ivaeq:helper.percent(res.ivaeq),K:res.K,T:helper.percent(res.T),CD:res.CD,Cr:res.Cr,crCD:helper.percent(res.crCD)}
-  });
+  helper.emitir({origem:'Cálculo exato',perfil,componentes:helper.componentes({ac:res.ac,r:res.r,sg:res.sg,df:res.df,lucro:res.lucro,T:res.T}),memoria:{bdi:helper.percent(res.bdi),ivaeq:helper.percent(res.ivaeq),K:res.K,T:helper.percent(res.T),CD:res.CD,Cr:res.Cr,crCD:helper.percent(res.crCD),icmsResidual:helper.percent(res.icmsResidual),matcdBruto:helper.percent(res.matcdBruto),matcdAjustado:helper.percent(res.matcdAjustado)}});
 }
 
 /* ====== Importação ====== */
@@ -2256,10 +2305,11 @@ function parseImported(arr){
 /* ====== Exportação CSV ====== */
 function exportCSV(){
   const ivaCheia=Number($('anoExato')?.value||0)===2026?0:pctInput('ivaCheia');
+  const icmsResidual=icmsResidualExatoPorAno(Number($('anoExato')?.value||2027),pctInput('icms2027Ex'));
   const head=['Descrição','Unidade','Quantidade','Custo Parcial','Tipo de Insumo','Geração de crédito','Valor considerado para crédito','Alíquota IVA','Crédito de IVA'];
   const lines=[head.join(';')];
   rows.forEach(r=>{
-    const baseCredito=r.ger*r.custo;
+    const baseCredito=r.ger*r.custo*(1-icmsResidual);
     const aliqIva=Number(r.iva??ivaCheia);
     const credito=baseCredito*aliqIva;
     lines.push([
@@ -2274,8 +2324,8 @@ function exportCSV(){
 }
 
 /* ====== Listeners de parâmetros ====== */
-['ivaCheia','fatorSetorial','redutorGov','iss','alphaEx','cprbEx','acEx','dfEx','sgEx','lucroEx','risco','valorContratoEx','bdiOriginalManualEx','usarBdiOriginalEx','anoOrigemEx']
-  .forEach(id=>{const el=$(id); if(el){const fn=()=>{if(id==='ivaCheia'){sincronizarAliquotasIvaLinhas(); if(rows.length){renderTable();return;}}recalc();};el.addEventListener('input',fn); el.addEventListener('change',fn);}});
+['ivaCheia','fatorSetorial','redutorGov','icms2027Ex','iss','alphaEx','cprbEx','acEx','dfEx','sgEx','lucroEx','risco','valorContratoEx','bdiOriginalManualEx','usarBdiOriginalEx','anoOrigemEx']
+  .forEach(id=>{const el=$(id); if(el){const fn=()=>{if(id==='ivaCheia'){sincronizarAliquotasIvaLinhas(); if(rows.length){renderTable();return;}}if(id==='icms2027Ex'&&rows.length){renderTable();return;}recalc();};el.addEventListener('input',fn); el.addEventListener('change',fn);}});
 if($('anoExato')){$('anoExato').addEventListener('change',()=>{aplicarAnoExato(); if(rows.length)renderTable(); else recalc();});}
 if($('tipoObraEx')){$('tipoObraEx').addEventListener('change',()=>{aplicarParametrosBdiExato();recalc();});}
 if($('quartilBdiEx')){$('quartilBdiEx').addEventListener('change',()=>{aplicarParametrosBdiExato();recalc();});}
