@@ -346,9 +346,9 @@ async function listGrupos(db, query = {}) {
     ORDER BY g.nome_grupo`, params);
 }
 
-async function stats(db) {
+async function stats(db, options = {}) {
   if (typeof db.withConnection === 'function') {
-    return db.withConnection(conn => stats(conn));
+    return db.withConnection(conn => stats(conn, options));
   }
   if (await useTenantCatalogRead(db)) {
     const hasOverrides = await hasActiveComposicaoOverrides(db);
@@ -378,9 +378,13 @@ async function stats(db) {
           ))
         )
       GROUP BY c.fonte`) : [];
-    const catalogFormato = await all(db, 'SELECT formato, COUNT(*) AS total FROM catalog.composicoes GROUP BY formato');
-    const tenantFormato = await all(db, "SELECT formato, COUNT(*) AS total FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active' GROUP BY formato");
-    const hiddenFormato = hasOverrides ? await all(db, `
+    const catalogFormato = options.includeFormato === false
+      ? []
+      : await all(db, 'SELECT formato, COUNT(*) AS total FROM catalog.composicoes GROUP BY formato');
+    const tenantFormato = options.includeFormato === false
+      ? []
+      : await all(db, "SELECT formato, COUNT(*) AS total FROM tenant_composicoes WHERE COALESCE(tenant_override_status,'active')='active' GROUP BY formato");
+    const hiddenFormato = options.includeFormato !== false && hasOverrides ? await all(db, `
       SELECT c.formato, COUNT(DISTINCT r.catalog_id) AS total
       FROM tenant_referential_overrides r
       JOIN catalog.composicoes c ON c.id_composicao=r.catalog_id
@@ -404,7 +408,9 @@ async function stats(db) {
   }
 
   const porFonte = await all(db, 'SELECT fonte, COUNT(*) AS total FROM composicoes GROUP BY fonte ORDER BY fonte');
-  const porFormato = await all(db, 'SELECT formato, COUNT(*) AS total FROM composicoes GROUP BY formato ORDER BY formato');
+  const porFormato = options.includeFormato === false
+    ? []
+    : await all(db, 'SELECT formato, COUNT(*) AS total FROM composicoes GROUP BY formato ORDER BY formato');
   return {
     total: porFonte.reduce((sum, row) => sum + Number(row.total || 0), 0),
     por_fonte: porFonte,

@@ -15,6 +15,7 @@
         "test:insumos": "node tests/insumosMysqlNoRuntimeDdl.test.js && node tests/insumosTenantRevision.test.js && node tests/insumosTributos2026.test.js && node tests/sinapiEncargosInsumos.test.js && node tests/pesquisaMercadoOpenAI.test.js && node tests/comprasGovService.test.js",
         "backfill:insumos-tributos-2026": "node scripts/backfillInsumosTributos2026.js",
         "test:eventogramas": "node tests/eventogramas.test.js",
+        "test:dashboard": "node tests/dashboardIndicadores.test.js",
         "test:fontes": "node tests/fontesConsolidacao.test.js && node tests/seopImportService.test.js && node tests/seopFilterIntegration.test.js && node tests/emopCatalogBootstrap.test.js",
         "test:composicoes": "node tests/composicoesRecalculo.test.js && node tests/composicoesSicroDetalhe.test.js && node tests/composicoesSicroEdicao.test.js && node tests/composicoesRegimesImport.test.js && node tests/sicroInsumosRegimes.test.js && node tests/composicoesPerformance.test.js",
         "test:pem": "node tests/pemPerformance.test.js",
