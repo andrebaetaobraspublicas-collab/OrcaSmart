@@ -28,6 +28,25 @@ function searchText(value) {
   return normText(value).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+const SEARCH_STOP_WORDS = new Set(['a', 'as', 'o', 'os', 'de', 'da', 'das', 'do', 'dos', 'e', 'em', 'para', 'por', 'com']);
+
+function searchTokens(value) {
+  const tokens = searchText(value).split(' ').filter(Boolean);
+  const meaningful = tokens.filter(token => !SEARCH_STOP_WORDS.has(token));
+  return meaningful.length ? meaningful : tokens;
+}
+
+function tokenCoverage(value, query) {
+  const haystack = searchText(value);
+  const tokens = searchTokens(query);
+  if (!haystack || !tokens.length) return 0;
+  return tokens.filter(token => haystack.includes(token)).length / tokens.length;
+}
+
+function matchesSearch(value, query) {
+  return tokenCoverage(value, query) === 1;
+}
+
 function dateParts(value) {
   const txt = String(value || '').trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(txt)) {
@@ -152,11 +171,14 @@ function rankMaterialPdm(row, termo) {
   const name = searchText(row.nomePdm);
   const className = searchText(row.nomeClasse);
   const groupName = searchText(row.nomeGrupo);
+  const combined = [name, className, groupName].join(' ');
   if (!query) return 0;
   if (name === query) return 100;
   if (name.startsWith(`${query} `)) return 85;
   if (name.includes(` ${query} `) || name.endsWith(` ${query}`)) return 75;
   if (name.includes(query)) return 65;
+  if (matchesSearch(name, termo)) return 60;
+  if (matchesSearch(combined, termo)) return 45;
   if (className.includes(query)) return 35;
   if (groupName.includes(query)) return 20;
   return 0;
@@ -198,7 +220,8 @@ async function searchMaterialCatalog(termo, limite) {
         const pdm = searchText(row.nomePdm);
         const description = searchText(row.descricaoItem);
         return (pdm === query ? 100 : pdm.includes(query) ? 70 : 0)
-          + (description.startsWith(query) ? 30 : description.includes(query) ? 15 : 0);
+          + (matchesSearch(pdm, termo) ? 50 : Math.round(tokenCoverage(pdm, termo) * 20))
+          + (description.startsWith(query) ? 30 : description.includes(query) ? 15 : matchesSearch(description, termo) ? 20 : 0);
       };
       return score(b) - score(a) || Number(b.codigoItem) - Number(a.codigoItem);
     })
@@ -268,12 +291,11 @@ async function searchComprasGov({ termo, tipo, uf, data_inicio, data_fim, limite
     warnings.push('Para servicos, informe o codigo CATSER quando disponivel; a busca textual publica ainda nao retorna catalogo de servicos de forma consistente.');
   }
 
-  const termNorm = normText(cleanTerm);
   const seen = new Set();
   const filtered = [];
   for (const row of results) {
-    const hay = normText([row.descricao, row.descricao_detalhada, row.objeto_compra, row.fornecedor, row.orgao].join(' '));
-    if (termNorm && !hay.includes(termNorm) && !String(row.codigo_catalogo || '').startsWith(cleanTerm)) continue;
+    const hay = [row.descricao, row.descricao_detalhada, row.objeto_compra, row.fornecedor, row.orgao].join(' ');
+    if (!matchesSearch(hay, cleanTerm) && !String(row.codigo_catalogo || '').startsWith(cleanTerm)) continue;
     const key = row.id || `${row.codigo_catalogo}-${row.preco}-${row.fornecedor}-${row.data_resultado}`;
     if (seen.has(key)) continue;
     seen.add(key);
