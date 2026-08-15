@@ -131,7 +131,7 @@ Router.register('bdi', async () => {
 
   function ivaeqCalculadoPerfil(p, K=1) {
     const ano = anoPerfil(p);
-    if (ano === 2026 || isSimples(p)) return 0;
+    if (ano === 2026 || (isSimples(p) && p.simples_modelo_bdi !== 'hibrido')) return 0;
     const padrao = parametrosAno(ano);
     const manual = Number(p.usa_iva_manual) === 1 || p.usa_iva_manual === true;
     const ivaNominal = manual
@@ -141,7 +141,11 @@ Router.register('bdi', async () => {
     const redGov = parseFloat(p.redutor_governamental_ivaeq ?? 0) || 0;
     const f = (1-redSetorial)*(1-redGov);
     const matcd = parseFloat(p.percentual_mat_ivaeq ?? 0.4) || 0;
-    return Math.max(0, (ivaNominal/100)*((K*f-matcd)/K))*100;
+    const icmsBase = Math.max(0, parseFloat(p.icms_2027_percentual ?? 18) || 0) / 100;
+    const fatorIcms = ano === 2027 || ano === 2028 ? 1
+      : ano === 2029 ? .9 : ano === 2030 ? .8 : ano === 2031 ? .7 : ano === 2032 ? .6 : 0;
+    const matcdAjustado = matcd * (1 - icmsBase * fatorIcms);
+    return Math.max(0, (ivaNominal/100)*((K*f-matcdAjustado)/K))*100;
   }
 
   async function carregar() {
@@ -387,6 +391,19 @@ Router.register('bdi', async () => {
               ${BDI_SIMPLES_FAIXAS.map(fx=>`<option value="${fx.id}" ${String(p.simples_faixa||'')===String(fx.id)?'selected':''}>${fx.label}</option>`).join('')}
             </select>
           </div>
+          <div class="form-group">
+            <label class="form-label">Modelo do BDI no Simples</label>
+            <select class="form-control js-ivaeq-param" id="fp_simples_modelo">
+              <option value="das" ${p.simples_modelo_bdi!=='hibrido'?'selected':''}>DAS unificado</option>
+              <option value="hibrido" ${p.simples_modelo_bdi==='hibrido'?'selected':''}>Híbrido — IBS/CBS por fora</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Anexo do Simples</label>
+            <select class="form-control" id="fp_simples_anexo">
+              ${['III','IV','V'].map(a=>`<option value="${a}" ${(p.simples_anexo||'IV')===a?'selected':''}>Anexo ${a}</option>`).join('')}
+            </select>
+          </div>
           <div class="form-group span-2">
             <label class="form-label">Vigência</label>
             <input class="form-control" id="fp_vig" value="${Utils.esc(p.vigencia||'')}" placeholder="MM/AAAA">
@@ -427,6 +444,11 @@ Router.register('bdi', async () => {
             <label class="form-label">%MATcd — base creditável equivalente</label>
             <input class="form-control js-ivaeq-param" id="fp_percentual_mat" type="number" min="0" max="1" step="0.0001"
               value="${p.percentual_mat_ivaeq ?? 0.4}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Alíquota média de ICMS em 2027 (%)</label>
+            <input class="form-control js-ivaeq-param" id="fp_icms_2027" type="number" min="0" max="100" step="0.0001"
+              value="${p.icms_2027_percentual ?? 18}">
           </div>
           <div class="form-group">
             <input type="checkbox" id="fp_iva_manual" ${ivaManualForm?'checked':''} style="width:16px;height:16px">
@@ -510,12 +532,14 @@ Router.register('bdi', async () => {
         redutor_setorial_ivaeq: document.getElementById('fp_redutor_setorial')?.value,
         redutor_governamental_ivaeq: document.getElementById('fp_redutor_governamental')?.value,
         percentual_mat_ivaeq: document.getElementById('fp_percentual_mat')?.value,
+        icms_2027_percentual: document.getElementById('fp_icms_2027')?.value,
+        simples_modelo_bdi: document.getElementById('fp_simples_modelo')?.value,
       };
       const K = fatorKComponentes(componentesForm);
       const calc = ivaeqCalculadoPerfil(pcalc, K);
       const f = (1-(parseFloat(pcalc.redutor_setorial_ivaeq)||0)) * (1-(parseFloat(pcalc.redutor_governamental_ivaeq)||0));
       document.getElementById('fp_ivaeq').value = calc.toFixed(4);
-      document.getElementById('fp_ivaeq_hint').textContent = `K ${Utils.num(K,6)} · f ${Utils.num(f,6)} · %MATcd ${Utils.num((parseFloat(pcalc.percentual_mat_ivaeq)||0)*100,4)}%`;
+      document.getElementById('fp_ivaeq_hint').textContent = `K ${Utils.num(K,6)} · f ${Utils.num(f,6)} · %MATcd bruto ${Utils.num((parseFloat(pcalc.percentual_mat_ivaeq)||0)*100,4)}% · ICMS 2027 ${Utils.num(parseFloat(pcalc.icms_2027_percentual)||0,4)}%`;
     };
     const atualizarSimplesEfetivaForm = () => {
       const input = document.getElementById('fp_simples_efetiva');
@@ -566,6 +590,8 @@ Router.register('bdi', async () => {
       simples_aliquota_efetiva: parseFloat(document.getElementById('fp_simples_efetiva').value) || 0,
       usa_simples_efetiva_manual: document.getElementById('fp_simples_efetiva')?.dataset.manual === '1',
       simples_rbt12:         parseFloat(document.getElementById('fp_simples_rbt12').value) || 0,
+      simples_modelo_bdi:    document.getElementById('fp_simples_modelo').value,
+      simples_anexo:         document.getElementById('fp_simples_anexo').value,
       vigencia:              document.getElementById('fp_vig').value.trim() || null,
       ano_orcamento:         parseInt(document.getElementById('fp_ano').value) || null,
       quartil:               document.getElementById('fp_quartil').value || null,
@@ -576,6 +602,7 @@ Router.register('bdi', async () => {
       fator_efetivo_ivaeq:   (1-(parseFloat(document.getElementById('fp_redutor_setorial').value)||0)) * (1-(parseFloat(document.getElementById('fp_redutor_governamental').value)||0)),
       usa_iva_manual:        document.getElementById('fp_iva_manual').checked,
       percentual_mat_ivaeq:  parseFloat(document.getElementById('fp_percentual_mat').value) || 0,
+      icms_2027_percentual:  parseFloat(document.getElementById('fp_icms_2027').value) || 0,
       credito_bdi_ivaeq:     0,
       ivaeq_percentual:      parseFloat(document.getElementById('fp_ivaeq').value) || 0,
       iss_percentual_manual: document.getElementById('fp_iss').value === '' ? null : (parseFloat(document.getElementById('fp_iss').value) || 0),

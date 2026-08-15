@@ -31,8 +31,15 @@ async function testarRegras() {
   }, grupos);
   perto(ano2027.FATOR_EFETIVO, 60);
   perto(ano2027.T, 4.8);
-  const ivaEqEsperado = Math.max(0, 0.088 * ((K * 0.6 - 0.4) / K)) * 100;
+  const ivaEqEsperado = Math.max(0, 0.088 * ((K * 0.6 - (0.4 * 0.82)) / K)) * 100;
   perto(ano2027.IVAeq, ivaEqEsperado);
+  perto(ano2027.ICMS_RESIDUAL, 18);
+  perto(ano2027.PERCENTUAL_MATCD_AJUSTADO, 32.8);
+
+  const residualEsperado = { 2026: 0, 2027: 18, 2028: 18, 2029: 16.2, 2030: 14.4, 2031: 12.6, 2032: 10.8, 2033: 0 };
+  for (const [ano, esperado] of Object.entries(residualEsperado)) {
+    perto(rules.icmsResidualPorAno(Number(ano), 18) * 100, esperado);
+  }
 
   const ignoraManual = rules.calcularBdi({
     ano_orcamento: 2029,
@@ -131,6 +138,25 @@ async function testarRegras() {
   }, grupos);
   perto(simplesManual.simples.aliquota_efetiva, 12.34);
   assert.strictEqual(simplesManual.simples.manual, true);
+
+  const simplesHibrido = rules.calcularBdi({
+    ano_orcamento: 2029,
+    regime_tributario: 'Simples Nacional',
+    regime_previdenciario: 'Onerado',
+    simples_modelo_bdi: 'hibrido',
+    simples_anexo: 'III',
+    simples_rbt12: 1000000,
+    cbs_percentual: 8.8,
+    ibs_percentual: 1.77,
+    usa_iva_manual: 1,
+    percentual_mat_ivaeq: 0.4,
+    redutor_setorial_ivaeq: 0.5,
+    icms_2027_percentual: 18,
+  }, grupos);
+  assert.strictEqual(simplesHibrido.regime_calculo, 'simples_hibrido');
+  assert.strictEqual(simplesHibrido.simples.anexo, 'III');
+  assert.ok(simplesHibrido.IVAeq > 0);
+  perto(simplesHibrido.ICMS_RESIDUAL, 16.2);
 }
 
 async function testarPersistenciaRepository() {
@@ -146,7 +172,8 @@ async function testarPersistenciaRepository() {
       simples_faixa_label TEXT, simples_receita_limite REAL, simples_aliquota_efetiva REAL,
       simples_irpj_percentual REAL, simples_csll_percentual REAL, redutor_setorial_ivaeq REAL,
       redutor_governamental_ivaeq REAL, usa_iva_manual INTEGER, simples_rbt12 REAL,
-      usa_simples_efetiva_manual INTEGER
+      usa_simples_efetiva_manual INTEGER, icms_2027_percentual REAL,
+      simples_modelo_bdi TEXT, simples_anexo TEXT
     )`);
     await run(db, `CREATE TABLE componentes_bdi (
       id_componente INTEGER PRIMARY KEY AUTOINCREMENT, id_perfil_bdi INTEGER, grupo TEXT,
@@ -229,7 +256,8 @@ async function testarPersistenciaTenant() {
       regime_previdenciario TEXT, simples_faixa INTEGER, simples_faixa_label TEXT,
       simples_receita_limite REAL, simples_aliquota_efetiva REAL, simples_irpj_percentual REAL,
       simples_csll_percentual REAL, redutor_setorial_ivaeq REAL, redutor_governamental_ivaeq REAL,
-      usa_iva_manual INTEGER, simples_rbt12 REAL, usa_simples_efetiva_manual INTEGER, tenant_catalog_id INTEGER,
+      usa_iva_manual INTEGER, simples_rbt12 REAL, usa_simples_efetiva_manual INTEGER,
+      icms_2027_percentual REAL, simples_modelo_bdi TEXT, simples_anexo TEXT, tenant_catalog_id INTEGER,
       tenant_override_action TEXT, tenant_override_status TEXT, tenant_created_at TEXT, tenant_updated_at TEXT
     )`);
     await run(db, `CREATE TABLE tenant_componentes_bdi (

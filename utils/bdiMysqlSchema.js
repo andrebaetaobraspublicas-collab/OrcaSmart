@@ -7,6 +7,9 @@ const BDI_COLUMNS = Object.freeze({
   usa_iva_manual: 'BIGINT NULL DEFAULT 0',
   simples_rbt12: 'DECIMAL(20,8) NULL DEFAULT 0.0',
   usa_simples_efetiva_manual: 'BIGINT NULL DEFAULT 0',
+  icms_2027_percentual: 'DECIMAL(20,8) NULL DEFAULT 18.0',
+  simples_modelo_bdi: "VARCHAR(32) NULL DEFAULT 'das'",
+  simples_anexo: "VARCHAR(8) NULL DEFAULT 'IV'",
 });
 
 async function ensureTableColumns(connection, table) {
