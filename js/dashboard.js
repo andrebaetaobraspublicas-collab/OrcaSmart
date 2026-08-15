@@ -45,24 +45,16 @@ Router.register('dashboard', async () => {
       </div>
     </div>
 
-    <!-- Linha 1: KPIs principais -->
-    <div class="cards-grid">
+    <!-- Indicadores: duas linhas de seis cards em telas largas -->
+    <div class="cards-grid dashboard-kpis">
       ${kpi(totalObras,      'Obras Cadastradas',  ICON_OBRA,   'blue')}
       ${kpi(totalOrcamentos, 'Orçamentos',         ICON_ORC,    'green')}
       ${kpi(totalInsumos,    'Insumos',            ICON_INSUMO, 'yellow')}
       ${kpi(totalComposicoes,'Total Composições',  ICON_COMP,   'red')}
-    </div>
-
-    <!-- Linha 2: KPIs de composições por fonte -->
-    <div class="cards-grid" style="margin-top:0">
       ${kpi(totalCompSINAPI,  'Composições SINAPI',  ICON_SINAPI, 'blue')}
       ${kpi(totalCompSICRO,   'Composições SICRO',   ICON_SICRO,  'green')}
       ${kpi(totalCompOutrasReferencias, 'Outras Referências', ICON_OUTRAS, 'yellow')}
       ${kpi(totalCompUsuario, 'Composições Usuário', ICON_USER, 'red')}
-    </div>
-
-    <!-- Linha 3: cadastros de apoio e análises -->
-    <div class="cards-grid" style="margin-top:0">
       ${kpi(totalBdis, 'Perfis de BDI', ICON_BDI, 'blue')}
       ${kpi(totalEncargosSociais, 'Encargos Sociais', ICON_ENC, 'green')}
       ${kpi(totalAnalisesRisco, 'Análises de Riscos', ICON_RISCO, 'yellow')}

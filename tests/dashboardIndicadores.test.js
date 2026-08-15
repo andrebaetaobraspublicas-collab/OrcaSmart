@@ -66,6 +66,9 @@ function fakeDb(values) {
     for (const label of ['Outras Referências', 'Perfis de BDI', 'Encargos Sociais', 'Análises de Riscos']) {
       assert(frontend.includes(label), `dashboard deve exibir o indicador ${label}`);
     }
+    assert(frontend.includes('cards-grid dashboard-kpis'), 'dashboard deve reunir os indicadores na grade compacta');
+    const layout = fs.readFileSync(path.join(__dirname, '..', 'css', 'layout.css'), 'utf8');
+    assert(layout.includes('repeat(6, minmax(0, 1fr))'), 'grade larga deve usar seis colunas e duas linhas');
     console.log('dashboardIndicadores.test.js: OK');
   } finally {
     composicoesRepository.stats = originalStats;
