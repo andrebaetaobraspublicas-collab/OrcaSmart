@@ -951,10 +951,12 @@ Router.register('insumos', async () => {
     // Pré-selecionar data-base pelo mes+ano do preço atual
     const dbPreSel = datasBase.find(d => d.mes == ins.preco_mes && d.ano == ins.preco_ano);
     const dbAtual = dbPreSel ? `${String(dbPreSel.mes).padStart(2, '0')}/${dbPreSel.ano}` : '';
-    const dbOpts = datasBase
+    const dbOpts = `<option value="">Sem data-base</option>` + datasBase
       .slice().sort((a,b) => b.ano - a.ano || b.mes - a.mes)
-      .map(d => `<option value="${String(d.mes).padStart(2, '0')}/${d.ano}" label="${Utils.nomeMes(d.mes)}/${d.ano}"></option>`)
-      .join('');
+      .map(d => {
+        const ref = `${String(d.mes).padStart(2, '0')}/${d.ano}`;
+        return `<option value="${ref}" ${ref===dbAtual?'selected':''}>${Utils.nomeMes(d.mes)}/${d.ano}</option>`;
+      }).join('') + `<option value="__nova__">Digitar nova data-base...</option>`;
 
     Modal.open({
       title: id ? 'Editar Insumo' : 'Novo Insumo',
@@ -1048,11 +1050,10 @@ Router.register('insumos', async () => {
             </div>
             <div class="form-group">
               <label class="form-label">Data-Base (Mês/Ano)</label>
-              <input class="form-control" id="fi_db" type="text" inputmode="numeric"
-                list="fi_db_opcoes" maxlength="7" placeholder="MM/AAAA"
-                pattern="(0[1-9]|1[0-2])/\\d{4}" value="${dbAtual}">
-              <datalist id="fi_db_opcoes">${dbOpts}</datalist>
-              <small class="text-3">Escolha uma referência existente ou digite uma nova no formato MM/AAAA.</small>
+              <select class="form-control" id="fi_db">${dbOpts}</select>
+              <input class="form-control" id="fi_db_nova" type="text" inputmode="numeric"
+                maxlength="7" placeholder="MM/AAAA" style="display:none;margin-top:6px">
+              <small class="text-3">Para outra referência, escolha “Digitar nova data-base”.</small>
             </div>
             <div class="form-group"></div>
           </div>
@@ -1108,14 +1109,27 @@ Router.register('insumos', async () => {
     });
 
     document.getElementById('btnSalvarIns').addEventListener('click', () => salvarInsumo(id));
+    document.getElementById('fi_db').addEventListener('change', e => {
+      const nova = document.getElementById('fi_db_nova');
+      nova.style.display = e.target.value === '__nova__' ? 'block' : 'none';
+      if (e.target.value === '__nova__') nova.focus();
+    });
     document.getElementById('fi_desc').addEventListener('keydown', e => { if(e.key==='Enter') salvarInsumo(id); });
     // Calcular IVA ao abrir (pré-preenchido)
     setTimeout(calcIVAForm, 50);
   }
 
   async function salvarInsumo(id) {
-    const campoDataBase = document.getElementById('fi_db');
-    const dataBase = campoDataBase?.value.trim() || '';
+    const seletorDataBase = document.getElementById('fi_db');
+    const campoNovaDataBase = document.getElementById('fi_db_nova');
+    const digitandoNovaData = seletorDataBase?.value === '__nova__';
+    const campoDataBase = digitandoNovaData ? campoNovaDataBase : seletorDataBase;
+    const dataBase = digitandoNovaData ? (campoNovaDataBase?.value.trim() || '') : (seletorDataBase?.value || '');
+    if (digitandoNovaData && !dataBase) {
+      Toast.warning('Digite a nova data-base no formato MM/AAAA.');
+      campoNovaDataBase.focus();
+      return;
+    }
     const dataBaseMatch = dataBase.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
     if (dataBase && (!dataBaseMatch || Number(dataBaseMatch[2]) < 1900 || Number(dataBaseMatch[2]) > 2100)) {
       Toast.warning('Data-base inválida. Informe um mês entre 01 e 12 e um ano entre 1900 e 2100, no formato MM/AAAA.');
