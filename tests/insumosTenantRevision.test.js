@@ -7,6 +7,10 @@ function exec(db, sql) {
   return new Promise((resolve, reject) => db.exec(sql, error => (error ? reject(error) : resolve())));
 }
 
+function one(db, sql, params = []) {
+  return new Promise((resolve, reject) => db.get(sql, params, (error, row) => (error ? reject(error) : resolve(row))));
+}
+
 async function validarChaveDePrecoNoMysql() {
   const engineAnterior = process.env.ORCASMART_DB_ENGINE;
   process.env.ORCASMART_DB_ENGINE = 'mysql';
@@ -72,7 +76,10 @@ async function main() {
         id_perfil_encargo_onerado INTEGER,
         id_perfil_encargo_desonerado INTEGER
       );
-      CREATE TABLE catalog.datas_base (id_data_base INTEGER PRIMARY KEY, mes INTEGER, ano INTEGER, descricao TEXT);
+      CREATE TABLE catalog.datas_base (
+        id_data_base INTEGER PRIMARY KEY, mes INTEGER, ano INTEGER,
+        data_referencia TEXT, descricao TEXT
+      );
       CREATE TABLE catalog.fontes_referencia (id_fonte INTEGER PRIMARY KEY, nome_fonte TEXT);
 
       CREATE TABLE tenant_insumos (
@@ -91,6 +98,12 @@ async function main() {
         encargos_sociais_desonerado_percentual REAL,
         id_perfil_encargo_onerado INTEGER,
         id_perfil_encargo_desonerado INTEGER,
+        tenant_override_action TEXT, tenant_override_status TEXT,
+        tenant_created_at TEXT, tenant_updated_at TEXT
+      );
+      CREATE TABLE tenant_datas_base (
+        id_data_base INTEGER PRIMARY KEY, mes INTEGER, ano INTEGER,
+        data_referencia TEXT, descricao TEXT, tenant_catalog_id INTEGER,
         tenant_override_action TEXT, tenant_override_status TEXT,
         tenant_created_at TEXT, tenant_updated_at TEXT
       );
@@ -148,6 +161,26 @@ async function main() {
     });
     assert.strictEqual(editada.descricao, 'REVISAO EDITADA NOVAMENTE');
     assert.strictEqual(editada.origem, 'USUARIO');
+
+    const comNovaDataBase = await service.updateInsumo(db, revisao.id_insumo, {
+      ...payload,
+      codigo_insumo: revisao.codigo_insumo,
+      descricao: 'REVISAO COM NOVA DATA-BASE',
+      preco_referencia: 99,
+      data_base: '08/2027',
+      modo_impacto: 'alterar_composicoes',
+    }, { readDb: db, forceUserOwned: true });
+    const novaDataBase = await one(db, 'SELECT * FROM tenant_datas_base WHERE mes=8 AND ano=2027');
+    const precoComNovaData = await one(db, 'SELECT * FROM tenant_precos_insumos WHERE id_insumo=?', [Number(String(comNovaDataBase.id_insumo).replace('tenant:', ''))]);
+    assert(novaDataBase, 'A data-base digitada deve ser cadastrada no escopo do usuario.');
+    assert.strictEqual(precoComNovaData.id_data_base, novaDataBase.id_data_base);
+
+    await assert.rejects(
+      () => service.updateInsumo(db, revisao.id_insumo, {
+        ...payload, descricao: 'DATA INVALIDA', data_base: '13/2027',
+      }, { readDb: db, forceUserOwned: true }),
+      error => error.status === 400 && /Data-base invalida/.test(error.message),
+    );
 
     const admin = await service.createInsumo(db, {
       codigo_insumo: 'ADM-1',

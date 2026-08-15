@@ -1,4 +1,5 @@
 const repo = require('../repositories/insumosRepository');
+const datasBaseService = require('./datasBaseService');
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -8,6 +9,28 @@ function httpError(status, message) {
 
 function assertDescricao(data = {}) {
   if (!String(data.descricao || '').trim()) throw httpError(400, 'Descricao e obrigatoria.');
+}
+
+function parseDataBaseReference(value) {
+  const reference = String(value || '').trim();
+  if (!reference) return null;
+  const match = reference.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+  if (!match) throw httpError(400, 'Data-base invalida. Use o formato MM/AAAA, com mes entre 01 e 12.');
+  const mes = Number(match[1]);
+  const ano = Number(match[2]);
+  if (ano < 1900 || ano > 2100) throw httpError(400, 'Ano da data-base deve estar entre 1900 e 2100.');
+  return { mes, ano };
+}
+
+async function resolveDataBase(db, data, readDb = db) {
+  if (!data.data_base) return data;
+  const reference = parseDataBaseReference(data.data_base);
+  if (!reference) return data;
+  const existing = (await datasBaseService.listDatasBase(readDb)).find(row => (
+    Number(row.mes) === reference.mes && Number(row.ano) === reference.ano
+  ));
+  const dataBase = existing || await datasBaseService.createDataBase(db, reference);
+  return { ...data, id_data_base: dataBase.id_data_base };
 }
 
 function trimImpacto(impacto) {
@@ -54,14 +77,16 @@ function asUserOwned(data, options = {}) {
 }
 
 async function createInsumo(db, data, options = {}) {
-  const ownedData = asUserOwned(data, options);
-  assertDescricao(ownedData);
+  const baseData = asUserOwned(data, options);
+  assertDescricao(baseData);
+  const ownedData = await resolveDataBase(db, baseData, options.readDb || db);
   return repo.createInsumo(db, ownedData);
 }
 
 async function updateInsumo(db, id, data, options = {}) {
-  const ownedData = asUserOwned(data, options);
-  assertDescricao(ownedData);
+  const baseData = asUserOwned(data, options);
+  assertDescricao(baseData);
+  const ownedData = await resolveDataBase(db, baseData, options.readDb || db);
   const readDb = options.readDb || db;
   const atual = await getInsumo(readDb, id);
   if (!atual) throw httpError(404, 'Insumo nao encontrado.');
