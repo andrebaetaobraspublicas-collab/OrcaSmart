@@ -10,6 +10,15 @@ function configValue(name, fallback = '') {
   return String(process.env[name] || fallback).trim();
 }
 
+function openAIModel() {
+  const raw = configValue('OPENAI_MODEL', 'gpt-5.4-nano').toLowerCase();
+  const aliases = {
+    'gpt-4o-mini': 'gpt-5.4-nano',
+    'gpt-4o': 'gpt-5.4-nano',
+  };
+  return aliases[raw] || raw;
+}
+
 function anthropicModel() {
   const raw = configValue('ANTHROPIC_MODEL', 'claude-sonnet-4-6').toLowerCase();
   const aliases = {
@@ -203,11 +212,11 @@ async function fetchWithTimeout(url, options, timeoutMs = 180000) {
   }
 }
 
-async function openAIRequest(body) {
+async function openAIRequest(body, apiKey) {
   const resp = await fetchWithTimeout('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${configValue('OPENAI_API_KEY')}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -217,9 +226,10 @@ async function openAIRequest(body) {
   return JSON.parse(text);
 }
 
-async function callOpenAIMarketResearch(termo, tipo, uf, mes, ano) {
-  if (!configValue('OPENAI_API_KEY')) throw new Error('OPENAI_API_KEY nao configurada no ambiente do servidor.');
-  const model = configValue('OPENAI_MODEL', 'gpt-4o-mini');
+async function callOpenAIMarketResearch(termo, tipo, uf, mes, ano, suppliedApiKey = '') {
+  const apiKey = String(suppliedApiKey || configValue('OPENAI_API_KEY')).trim();
+  if (!apiKey) throw new Error('Informe uma chave da API OpenAI para realizar a pesquisa.');
+  const model = openAIModel();
   const input = [
     { role: 'system', content: 'Voce e um pesquisador tecnico de precos para orcamento de obras publicas.' },
     { role: 'user', content: marketPrompt(termo, tipo, uf, mes, ano, true) },
@@ -227,14 +237,14 @@ async function callOpenAIMarketResearch(termo, tipo, uf, mes, ano) {
   let data;
   let web = true;
   try {
-    data = await openAIRequest({ model, input, tools: [{ type: 'web_search_preview' }] });
+    data = await openAIRequest({ model, input, tools: [{ type: 'web_search' }] }, apiKey);
   } catch (err) {
     if (!/HTTP (400|404)/.test(String(err.message))) throw err;
     web = false;
     data = await openAIRequest({
       model,
       input: [input[0], { role: 'user', content: marketPrompt(termo, tipo, uf, mes, ano, false) }],
-    });
+    }, apiKey);
   }
   const parsed = cleanJson(extractTextFromOpenAI(data));
   const resultados = Array.isArray(parsed?.resultados) ? parsed.resultados : [];
@@ -280,8 +290,8 @@ async function callAnthropicMarketResearch(termo, tipo, uf, mes, ano) {
   };
 }
 
-async function callMarketResearch(termo, tipo, uf, mes, ano) {
-  if (configValue('OPENAI_API_KEY')) return callOpenAIMarketResearch(termo, tipo, uf, mes, ano);
+async function callMarketResearch(termo, tipo, uf, mes, ano, apiKey = '') {
+  if (apiKey || configValue('OPENAI_API_KEY')) return callOpenAIMarketResearch(termo, tipo, uf, mes, ano, apiKey);
   if (configValue('ANTHROPIC_API_KEY')) return callAnthropicMarketResearch(termo, tipo, uf, mes, ano);
   throw new Error('Nenhuma chave de IA configurada. Defina OPENAI_API_KEY ou ANTHROPIC_API_KEY nas variaveis de ambiente do Hostinger.');
 }
@@ -289,11 +299,13 @@ async function callMarketResearch(termo, tipo, uf, mes, ano) {
 async function pesquisar(data = {}) {
   const termo = String(data.termo || '').trim();
   if (!termo) throw httpError(400, 'Informe o bem ou servico a pesquisar.');
+  const apiKey = String(data.api_key || '').trim();
+  if (apiKey.length > 500) throw httpError(400, 'Chave da API OpenAI invalida.');
   const now = new Date();
   const mes = Number(data.mes || now.getMonth() + 1);
   const ano = Number(data.ano || now.getFullYear());
   try {
-    return { termo, mes, ano, ...await callMarketResearch(termo, data.tipo || '', data.uf || '', mes, ano) };
+    return { termo, mes, ano, ...await callMarketResearch(termo, data.tipo || '', data.uf || '', mes, ano, apiKey) };
   } catch (err) {
     return {
       modo: 'manual',
