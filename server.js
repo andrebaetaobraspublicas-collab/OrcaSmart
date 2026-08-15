@@ -49,6 +49,7 @@ const { normalizarMysqlRegimesComposicoes } = require('./utils/composicoesRegime
 const { ensureMysqlComposicoesPerformance } = require('./utils/composicoesPerformanceMysql');
 const { normalizarMysqlTributosInsumos2026 } = require('./utils/insumosTributos2026');
 const { normalizarMysqlEncargosInsumosSinapi } = require('./utils/sinapiEncargosInsumos');
+const { ensureEmopCatalog } = require('./services/emopCatalogBootstrap');
 let sqlite3 = null;
 let Stripe = null;
 try {
@@ -115,6 +116,14 @@ const bootState = {
       finishedAt: null,
     },
     sinapiEncargosInsumos: {
+      status: 'pending',
+      progress: null,
+      resultado: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+    },
+    emopCatalog: {
       status: 'pending',
       progress: null,
       resultado: null,
@@ -860,6 +869,7 @@ function buildPhase4Status() {
     mysqlErrorAttempts: bootState.mysql.errorAttempts,
     insumosTributos2026: bootState.mysql.insumosTributos2026,
     sinapiEncargosInsumos: bootState.mysql.sinapiEncargosInsumos,
+    emopCatalog: bootState.mysql.emopCatalog,
     mysql: {
       host: bootState.mysql.config.host,
       port: bootState.mysql.config.port,
@@ -1227,6 +1237,31 @@ async function initializeMysqlPilot() {
     if (result.ok) {
       await ensureMysqlBdiSchema(mysqlConfig());
       await ensureMysqlRiscosSchema(mysqlConfig());
+      bootState.mysql.emopCatalog = {
+        status: 'running',
+        progress: null,
+        resultado: null,
+        error: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      };
+      try {
+        const emopResult = await ensureEmopCatalog(mysqlConfig(), {
+          onProgress: progress => {
+            bootState.mysql.emopCatalog.progress = progress;
+            console.log('[emop] Carga do catálogo:', JSON.stringify(progress));
+          },
+        });
+        bootState.mysql.emopCatalog.status = 'completed';
+        bootState.mysql.emopCatalog.resultado = emopResult;
+        bootState.mysql.emopCatalog.finishedAt = new Date().toISOString();
+        console.log('[emop] Catálogo EMOP-RJ:', JSON.stringify(emopResult));
+      } catch (err) {
+        bootState.mysql.emopCatalog.status = 'error';
+        bootState.mysql.emopCatalog.error = err.message || String(err);
+        bootState.mysql.emopCatalog.finishedAt = new Date().toISOString();
+        console.warn('[emop] Falha ao carregar catálogo EMOP-RJ:', err.message || err);
+      }
       setTimeout(() => {
         normalizarMysqlRegimesComposicoes(mysqlConfig())
           .then(regimesComposicoes => console.log(
