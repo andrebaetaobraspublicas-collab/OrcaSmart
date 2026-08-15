@@ -6,6 +6,7 @@ const vm = require('vm');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'embedded', 'bdipro.html'), 'utf8');
 const integracao = fs.readFileSync(path.join(root, 'js', 'reformaTributaria.js'), 'utf8');
+const bdiUi = fs.readFileSync(path.join(root, 'js', 'bdi.js'), 'utf8');
 
 for (const id of [
   'simIcms2027',
@@ -36,6 +37,8 @@ assert.ok(html.includes('#screenSimples .kpi.good{background:#e7f6ec'), 'card do
 assert.ok(html.includes('#screenExato .btn.btn-bdi-save'), 'botão do cálculo exato não recebeu o tema laranja');
 assert.ok(html.includes("btn.textContent='Incluindo BDI...'"), 'botão não informa o andamento do cadastro');
 assert.ok(integracao.includes('20260815-bdi-destaque-cadastro-rapido'), 'cache-buster do BDIPro não foi atualizado');
+assert.ok(bdiUi.includes('K × f - %MATcd ajustado'), 'memória do BDI não identifica o MATcd ajustado na fórmula');
+assert.ok(bdiUi.includes('tg.PERCENTUAL_MATCD_AJUSTADO||0'), 'memória do BDI não exibe o valor de MATcd efetivamente usado no IVAeq');
 
 const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
   .map(match => match[1])

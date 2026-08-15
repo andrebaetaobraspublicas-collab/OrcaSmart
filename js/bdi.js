@@ -985,7 +985,7 @@ Router.register('bdi', async () => {
           <div style="color:#64748b">── Substituindo ──────────────────────────────────────────────────</div>
           <div>K=${Utils.num(tg.K,8)} · AC=${Utils.num(tg.AC,4)}% · SG=${Utils.num(tg.S,4)}% · R=${Utils.num(tg.R,4)}% · DF=${Utils.num(tg.DF,4)}% · L=${Utils.num(tg.L,4)}%</div>
           <div>PIS=${Utils.num(tg.PIS||0,4)}% · Cofins=${Utils.num(tg.COFINS||0,4)}% · ISS=${Utils.num(tg.ISS||0,4)}% · CPRB=${Utils.num(tg.CPRB||0,4)}% · CBS=${Utils.num(tg.CBS||0,4)}% · IBS=${Utils.num(tg.IBS||0,4)}% · T=${Utils.num(tg.T,4)}%</div>
-          ${anoPerfil(p) >= 2027 && !isSimples(p) ? `<div style="color:#94a3b8">f = (1 - redutor setorial) × (1 - redutor governamental) = ${Utils.num((tg.FATOR_EFETIVO||0)/100,6)} · IVA aplicável ${Utils.num(tg.IVA_APLICAVEL||0,4)}%<br>IVAeq = max(0; IVA nominal × ((K × f - %MATcd) / K)) = ${Utils.num(tg.IVAeq||0,4)}% · %MATcd ${Utils.num(tg.PERCENTUAL_MATCD||0,4)}%</div>` : ''}
+          ${anoPerfil(p) >= 2027 && !isSimples(p) ? `<div style="color:#94a3b8">f = (1 - redutor setorial) × (1 - redutor governamental) = ${Utils.num((tg.FATOR_EFETIVO||0)/100,6)} · IVA aplicável ${Utils.num(tg.IVA_APLICAVEL||0,4)}%<br>IVAeq = max(0; IVA nominal × ((K × f - %MATcd ajustado) / K)) = ${Utils.num(tg.IVAeq||0,4)}% · %MATcd ajustado ${Utils.num(tg.PERCENTUAL_MATCD_AJUSTADO||0,4)}%</div>` : ''}
           <div style="color:#94a3b8">Ano ${f.ano || tg.ano || anoPerfil(p)} · T exclui IRPJ e CSLL.</div>
           <div>${Utils.esc(f.texto || '')}</div>
           <div style="color:#64748b">── Resultado ─────────────────────────────────────────────────────</div>
