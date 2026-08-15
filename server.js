@@ -1085,7 +1085,7 @@ app.use('/api/pavimentos', require('./routes/pavimentosRoutes')(tenantDbProxy));
 app.use('/api/estrutural', require('./routes/estruturalRoutes')(tenantDbProxy));
 app.use('/api/admin-canteiro', require('./routes/adminCanteiroRoutes')(tenantDbProxy));
 app.use('/api/pem', require('./routes/pemRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
-app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy));
+app.use('/api/dashboard', require('./routes/dashboardRoutes')(tenantDbProxy, { readDb: sharedCatalogReadProxy }));
 app.use('/api/sinapi', require('./routes/sinapiRoutes')(tenantDbProxy));
 app.use('/api/sicro', require('./routes/sicroRoutes')(tenantDbProxy));
 app.use('/api', require('./routes/referenceImportRoutes')(tenantDbProxy));

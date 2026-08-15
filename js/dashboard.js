@@ -7,8 +7,9 @@ Router.register('dashboard', async () => {
   const {
     totalObras = 0, totalOrcamentos = 0,
     totalInsumos = 0, totalComposicoes = 0,
-    totalCompSINAPI = 0, totalCompSICRO = 0, totalCompUsuario = 0,
-    totalEventogramas = 0,
+    totalCompSINAPI = 0, totalCompSICRO = 0, totalCompOutrasReferencias = 0,
+    totalCompUsuario = 0, totalBdis = 0, totalEncargosSociais = 0,
+    totalAnalisesRisco = 0, totalEventogramas = 0,
     ultimosOrcamentos = []
   } = data;
 
@@ -31,6 +32,10 @@ Router.register('dashboard', async () => {
   const ICON_SICRO   = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4l3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
   const ICON_USER    = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="1.8"/></svg>`;
   const ICON_EVT     = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M8 14h4M8 18h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+  const ICON_OUTRAS  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 4-8 4-8-4 8-4zM4 10l8 4 8-4M4 14l8 4 8-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const ICON_BDI     = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M8 15l8-6M9 9h.01M15 15h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  const ICON_ENC     = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const ICON_RISCO   = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3L2.5 20h19L12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
   document.getElementById('pageContent').innerHTML = `
     <div class="page-header">
@@ -52,7 +57,15 @@ Router.register('dashboard', async () => {
     <div class="cards-grid" style="margin-top:0">
       ${kpi(totalCompSINAPI,  'Composições SINAPI',  ICON_SINAPI, 'blue')}
       ${kpi(totalCompSICRO,   'Composições SICRO',   ICON_SICRO,  'green')}
-      ${kpi(totalCompUsuario, 'Composições Usuário', ICON_USER,   'yellow')}
+      ${kpi(totalCompOutrasReferencias, 'Outras Referências', ICON_OUTRAS, 'yellow')}
+      ${kpi(totalCompUsuario, 'Composições Usuário', ICON_USER, 'red')}
+    </div>
+
+    <!-- Linha 3: cadastros de apoio e análises -->
+    <div class="cards-grid" style="margin-top:0">
+      ${kpi(totalBdis, 'Perfis de BDI', ICON_BDI, 'blue')}
+      ${kpi(totalEncargosSociais, 'Encargos Sociais', ICON_ENC, 'green')}
+      ${kpi(totalAnalisesRisco, 'Análises de Riscos', ICON_RISCO, 'yellow')}
       ${kpi(totalEventogramas, 'Eventogramas', ICON_EVT, 'red')}
     </div>
 
