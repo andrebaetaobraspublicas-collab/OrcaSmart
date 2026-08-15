@@ -6,6 +6,8 @@ Object.assign(API, {
     orcamentos:  ()   => API.get('/orcamentos'),
     servicos:    (id) => API.get(`/orcamentos/${id}/curva-abc-servicos`),
     insumos:     (id) => API.get(`/orcamentos/${id}/curva-abc-insumos`),
+    iniciarInsumos: (id) => API.post(`/orcamentos/${id}/curva-abc-insumos/jobs`, {}),
+    statusInsumos: (id, jobId) => API.get(`/orcamentos/${id}/curva-abc-insumos/jobs/${encodeURIComponent(jobId)}`),
   },
 });
 
@@ -590,16 +592,45 @@ Router.register('curva-abc-insumos', async () => {
     return;
   }
 
-  document.getElementById('pageContent').innerHTML =
-    `<div class="loading-screen"><div class="spinner"></div>
-     <p>Calculando Curva ABC de Insumos…</p></div>`;
+  document.getElementById('pageContent').innerHTML = `
+    <div class="section-card" style="max-width:680px;margin:48px auto;padding:28px;text-align:center">
+      <div class="spinner" style="margin:0 auto 18px"></div>
+      <h2 style="margin-bottom:8px">Calculando Curva ABC de Insumos</h2>
+      <p class="text-2" id="abcInsumosFase" style="margin-bottom:18px">Preparando orçamento…</p>
+      <div style="height:14px;background:#e2e8f0;border-radius:999px;overflow:hidden" role="progressbar"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="1" id="abcInsumosProgress">
+        <div id="abcInsumosProgressBar" style="height:100%;width:1%;background:var(--c-primary);transition:width .3s ease"></div>
+      </div>
+      <div id="abcInsumosPercent" style="margin-top:8px;font-size:.85rem;font-weight:700;color:var(--c-primary)">1%</div>
+      <p class="text-xs text-3" id="abcInsumosMensagem" style="margin-top:12px">A varredura inclui todos os níveis de composições auxiliares.</p>
+    </div>`;
+
+  const atualizarProgresso = (job) => {
+    const percent = Math.max(0, Math.min(100, Number(job?.percent) || 0));
+    const progressEl = document.getElementById('abcInsumosProgress');
+    const bar = document.getElementById('abcInsumosProgressBar');
+    const label = document.getElementById('abcInsumosPercent');
+    const fase = document.getElementById('abcInsumosFase');
+    const mensagem = document.getElementById('abcInsumosMensagem');
+    if (progressEl) progressEl.setAttribute('aria-valuenow', String(percent));
+    if (bar) bar.style.width = `${percent}%`;
+    if (label) label.textContent = `${Math.round(percent)}%`;
+    if (fase) fase.textContent = job?.fase || 'Processando…';
+    if (mensagem) mensagem.textContent = job?.mensagem || 'Percorrendo as composições vinculadas.';
+  };
 
   let data;
   try {
-    data = await Promise.race([
-      API.abc.insumos(idOrc),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('A geração da Curva ABC de Insumos demorou demais. Tente novamente; se persistir, revise as composições auxiliares vinculadas.')), 120000)),
-    ]);
+    let job = await API.abc.iniciarInsumos(idOrc);
+    atualizarProgresso(job);
+    while (job.status === 'running') {
+      await new Promise(resolve => setTimeout(resolve, 900));
+      job = await API.abc.statusInsumos(idOrc, job.job_id);
+      atualizarProgresso(job);
+    }
+    if (job.status === 'error') throw new Error(job.erro || job.mensagem || 'Falha ao gerar a Curva ABC de Insumos.');
+    if (!job.result) throw new Error('A geração foi concluída sem retornar o resultado da Curva ABC de Insumos.');
+    data = job.result;
   }
   catch(e) {
     Toast.error(e.message);

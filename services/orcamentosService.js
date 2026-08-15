@@ -283,8 +283,8 @@ async function curvaAbcServicos(db, idOrcamento) {
   return result;
 }
 
-async function curvaAbcInsumos(db, idOrcamento) {
-  const result = await repo.curvaAbcInsumos(db, idOrcamento);
+async function curvaAbcInsumos(db, idOrcamento, options = {}) {
+  const result = await repo.curvaAbcInsumos(db, idOrcamento, options);
   if (!result) throw httpError(404, 'Orçamento não encontrado.');
   return result;
 }

@@ -7,6 +7,7 @@ const orcamentosService = require('../services/orcamentosService');
 const { catalogFallbackReadDb } = require('../utils/catalogFallbackReadDb');
 
 const RECALC_JOBS = new Map();
+const ABC_INSUMOS_JOBS = new Map();
 const RECALC_JOB_TTL = 60 * 60 * 1000;
 
 function cleanupRecalcJobs() {
@@ -14,9 +15,25 @@ function cleanupRecalcJobs() {
   for (const [id, job] of RECALC_JOBS.entries()) {
     if (job.updated_at_ms < limite) RECALC_JOBS.delete(id);
   }
+  for (const [id, job] of ABC_INSUMOS_JOBS.entries()) {
+    if (job.updated_at_ms < limite) ABC_INSUMOS_JOBS.delete(id);
+  }
 }
 
 function publicRecalcJob(job) {
+  return {
+    job_id: job.id,
+    id_orcamento: job.id_orcamento,
+    status: job.status,
+    percent: job.percent,
+    fase: job.fase,
+    mensagem: job.mensagem,
+    result: job.result,
+    erro: job.erro,
+  };
+}
+
+function publicAbcInsumosJob(job) {
   return {
     job_id: job.id,
     id_orcamento: job.id_orcamento,
@@ -224,6 +241,87 @@ module.exports = function(db) {
   router.get('/:id/curva-abc-servicos', asyncHandler(async (req, res) => {
     res.json(await orcamentosService.curvaAbcServicos(db, req.params.id));
   }));
+
+  router.post('/:id/curva-abc-insumos/jobs', asyncHandler(async (req, res) => {
+    cleanupRecalcJobs();
+    const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      return res.status(400).json({ erro: 'Tenant do usuário não identificado.' });
+    }
+    const idOrcamento = String(req.params.id);
+    const ativo = [...ABC_INSUMOS_JOBS.values()].find(job => (
+      job.tenant_id === tenantId
+      && job.id_orcamento === idOrcamento
+      && job.status === 'running'
+    ));
+    if (ativo) return res.status(202).json(publicAbcInsumosJob(ativo));
+
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+    const job = {
+      id,
+      tenant_id: tenantId,
+      id_orcamento: idOrcamento,
+      status: 'running',
+      percent: 1,
+      fase: 'Preparando orçamento',
+      mensagem: 'Iniciando a Curva ABC de Insumos.',
+      result: null,
+      erro: null,
+      updated_at_ms: Date.now(),
+    };
+    ABC_INSUMOS_JOBS.set(id, job);
+    const onProgress = ({ percent, fase, mensagem }) => Object.assign(job, {
+      percent: Math.max(job.percent, Math.min(99, Number(percent) || 0)),
+      fase: fase || job.fase,
+      mensagem: mensagem || job.mensagem,
+      updated_at_ms: Date.now(),
+    });
+    const processamento = db && typeof db.withConnection === 'function'
+      ? db.withConnection(conn => orcamentosService.curvaAbcInsumos(conn, idOrcamento, { onProgress }))
+      : orcamentosService.curvaAbcInsumos(db, idOrcamento, { onProgress });
+    Promise.resolve().then(async () => {
+      try {
+        const result = await processamento;
+        Object.assign(job, {
+          status: 'done',
+          percent: 100,
+          fase: 'Concluído',
+          mensagem: `${result.itens.length} insumo(s) consolidado(s).`,
+          result,
+          updated_at_ms: Date.now(),
+        });
+      } catch (err) {
+        console.error('Falha ao gerar Curva ABC de Insumos:', err);
+        Object.assign(job, {
+          status: 'error',
+          percent: 100,
+          fase: 'Erro',
+          mensagem: err.message || 'Falha ao gerar a Curva ABC de Insumos.',
+          erro: err.message || 'Falha ao gerar a Curva ABC de Insumos.',
+          updated_at_ms: Date.now(),
+        });
+      }
+    });
+    return res.status(202).json(publicAbcInsumosJob(job));
+  }));
+
+  router.get('/:id/curva-abc-insumos/jobs/:jobId', (req, res) => {
+    cleanupRecalcJobs();
+    const tenantId = Number(req.user?.id_tenant || req.user?.tenant_id);
+    const job = ABC_INSUMOS_JOBS.get(req.params.jobId);
+    if (!job || job.tenant_id !== tenantId || job.id_orcamento !== String(req.params.id)) {
+      return res.status(404).json({ erro: 'Geração da Curva ABC de Insumos não encontrada.' });
+    }
+    const payload = publicAbcInsumosJob(job);
+    if (job.status !== 'running') {
+      const finalVersion = job.updated_at_ms;
+      setTimeout(() => {
+        const atual = ABC_INSUMOS_JOBS.get(job.id);
+        if (atual?.updated_at_ms === finalVersion) ABC_INSUMOS_JOBS.delete(job.id);
+      }, 30000).unref?.();
+    }
+    return res.json(payload);
+  });
 
   router.get('/:id/curva-abc-insumos', asyncHandler(async (req, res) => {
     const workerDb = db.withConnection
