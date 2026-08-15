@@ -422,8 +422,15 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
     subParams.push(query.uf);
   }
   if (query.mes && query.ano) {
-    subWhere += ` AND id_data_base IN (SELECT id_data_base FROM ${lookupPrefix}datas_base WHERE mes = ? AND ano = ?)`;
+    subWhere += isTenant
+      ? ` AND id_data_base IN (
+          SELECT id_data_base FROM ${lookupPrefix}datas_base WHERE mes = ? AND ano = ?
+          UNION SELECT id_data_base FROM tenant_datas_base
+          WHERE mes = ? AND ano = ? AND COALESCE(tenant_override_status,'active')='active'
+        )`
+      : ` AND id_data_base IN (SELECT id_data_base FROM ${lookupPrefix}datas_base WHERE mes = ? AND ano = ?)`;
     subParams.push(Number(query.mes), Number(query.ano));
+    if (isTenant) subParams.push(Number(query.mes), Number(query.ano));
   }
   const regime = String(query.regime || '').toLowerCase();
   if (regime === 'onerado') subWhere += ' AND COALESCE(preco_nao_desonerado, 0) > 0';
@@ -433,8 +440,13 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
   if (regime === 'onerado') precoExpr = 'COALESCE(NULLIF(p.preco_nao_desonerado,0), p.preco_referencia)';
   if (regime === 'desonerado') precoExpr = 'COALESCE(NULLIF(p.preco_desonerado,0), p.preco_referencia)';
 
-  const columns = insumoColumns(idExpr, scopeExpr, catalogIdExpr, regime)
+  let columns = insumoColumns(idExpr, scopeExpr, catalogIdExpr, regime)
     .replace('p.preco_referencia AS preco_regime', `${precoExpr} AS preco_regime`);
+  if (isTenant) {
+    columns = columns
+      .replace('db2.mes AS preco_mes', 'COALESCE(tdb.mes, db2.mes) AS preco_mes')
+      .replace('db2.ano AS preco_ano', 'COALESCE(tdb.ano, db2.ano) AS preco_ano');
+  }
   let sql = `
     SELECT ${columns}
     FROM ${table} i
@@ -445,6 +457,7 @@ function buildTenantCatalogListSelect(query = {}, source = 'catalog', hasOverrid
       ${subWhere}
       ORDER BY ${isTenant ? tenantPrecoPk : 'id_preco'} DESC LIMIT 1
     )
+    ${isTenant ? "LEFT JOIN tenant_datas_base tdb ON p.id_data_base = tdb.id_data_base AND COALESCE(tdb.tenant_override_status,'active')='active'" : ''}
     LEFT JOIN ${lookupPrefix}datas_base db2 ON p.id_data_base = db2.id_data_base
     LEFT JOIN ${lookupPrefix}fontes_referencia fr ON p.id_fonte = fr.id_fonte
     WHERE 1=1`;
@@ -537,8 +550,15 @@ function buildTenantCatalogCandidateSelect(query = {}, source = 'catalog', hasOv
     if (isTenant) sql += " AND COALESCE(px.tenant_override_status,'active')='active'";
     if (query.uf) { sql += ' AND px.uf_referencia = ?'; params.push(query.uf); }
     if (query.mes && query.ano) {
-      sql += ' AND px.id_data_base IN (SELECT id_data_base FROM catalog.datas_base WHERE mes = ? AND ano = ?)';
+      sql += isTenant
+        ? ` AND px.id_data_base IN (
+            SELECT id_data_base FROM catalog.datas_base WHERE mes = ? AND ano = ?
+            UNION SELECT id_data_base FROM tenant_datas_base
+            WHERE mes = ? AND ano = ? AND COALESCE(tenant_override_status,'active')='active'
+          )`
+        : ' AND px.id_data_base IN (SELECT id_data_base FROM catalog.datas_base WHERE mes = ? AND ano = ?)';
       params.push(Number(query.mes), Number(query.ano));
+      if (isTenant) params.push(Number(query.mes), Number(query.ano));
     }
     const regime = String(query.regime || '').toLowerCase();
     if (regime === 'onerado') sql += ' AND COALESCE(px.preco_nao_desonerado, 0) > 0';
@@ -1068,10 +1088,13 @@ async function listPrecos(db, idInsumo) {
     const scoped = scopedInsumoId(idInsumo);
     if (scoped.scope === 'tenant') {
       return all(db, `
-        SELECT p.*, db2.mes, db2.ano, db2.descricao AS desc_data_base,
+        SELECT p.*, COALESCE(tdb.mes, db2.mes) AS mes, COALESCE(tdb.ano, db2.ano) AS ano,
+               COALESCE(tdb.descricao, db2.descricao) AS desc_data_base,
                fr.nome_fonte, um.sigla AS sigla_unidade,
                'tenant:' || p.rowid AS id_preco
         FROM tenant_precos_insumos p
+        LEFT JOIN tenant_datas_base tdb ON p.id_data_base = tdb.id_data_base
+          AND COALESCE(tdb.tenant_override_status,'active')='active'
         LEFT JOIN catalog.datas_base db2 ON p.id_data_base = db2.id_data_base
         LEFT JOIN catalog.fontes_referencia fr ON p.id_fonte = fr.id_fonte
         LEFT JOIN tenant_insumos i ON p.id_insumo = i.rowid

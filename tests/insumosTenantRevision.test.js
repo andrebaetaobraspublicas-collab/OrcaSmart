@@ -174,6 +174,10 @@ async function main() {
     const precoComNovaData = await one(db, 'SELECT * FROM tenant_precos_insumos WHERE id_insumo=?', [Number(String(comNovaDataBase.id_insumo).replace('tenant:', ''))]);
     assert(novaDataBase, 'A data-base digitada deve ser cadastrada no escopo do usuario.');
     assert.strictEqual(precoComNovaData.id_data_base, novaDataBase.id_data_base);
+    const recarregadoComNovaData = await service.getInsumo(db, comNovaDataBase.id_insumo);
+    assert.strictEqual(recarregadoComNovaData.preco_mes, 8,
+      'A leitura do insumo deve resolver datas-base criadas no escopo do usuario.');
+    assert.strictEqual(recarregadoComNovaData.preco_ano, 2027);
 
     await assert.rejects(
       () => service.updateInsumo(db, revisao.id_insumo, {
