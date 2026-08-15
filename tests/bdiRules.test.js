@@ -193,6 +193,7 @@ async function testarPersistenciaRepository() {
     const memoria = await repo.memoria(db, perfil.id_perfil_bdi);
     perto(memoria.totais_grupo.CBS, 8.8);
     perto(memoria.totais_grupo.IBS, 3.54);
+    perto(memoria.totais_grupo.PERCENTUAL_MATCD_AJUSTADO, 34.24);
     assert.ok(memoria.formula.expressao.includes('(1 - T)'));
     const ac = memoria.componentes.find(c => c.grupo === 'AC');
     assert.strictEqual(ac.descricao, 'Administração Central');
