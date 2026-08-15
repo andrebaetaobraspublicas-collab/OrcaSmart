@@ -23,19 +23,40 @@ async function getObra(db, idObra) {
   return one(db, 'SELECT * FROM obras WHERE id_obra = ?', [idObra]);
 }
 
-async function findComposicoesByWords(db, words) {
-  const selected = words.slice(0, 5);
+async function listCompositionSources(db) {
+  const rows = await all(db, `
+    SELECT fonte, COUNT(*) AS quantidade
+    FROM composicoes
+    WHERE fonte IS NOT NULL AND TRIM(fonte) <> ''
+    GROUP BY fonte
+    ORDER BY fonte`);
+  return rows.map(row => ({
+    fonte: String(row.fonte || '').trim(),
+    quantidade: Number(row.quantidade || 0),
+  })).filter(row => row.fonte);
+}
+
+async function findComposicoesByWords(db, words, fonte = '', limit = 30) {
+  const accentVariants = {
+    aco: ['aço'], eletrica: ['elétrica'], eletrico: ['elétrico'], fundacao: ['fundação'],
+    hidraulica: ['hidráulica'], hidraulico: ['hidráulico'], instalacao: ['instalação'],
+    metalica: ['metálica'], metalico: ['metálico'], protecao: ['proteção'],
+  };
+  const selected = [...new Set((words || [])
+    .map(word => String(word || '').trim().toLowerCase())
+    .filter(word => word.length >= 3)
+    .flatMap(word => [word, ...(accentVariants[word] || [])]))].slice(0, 14);
+  if (!selected.length || !String(fonte || '').trim()) return [];
   const where = selected.map(() => 'LOWER(descricao) LIKE ?').join(' OR ');
-  const params = selected.map(word => `%${word}%`);
+  const params = [String(fonte).trim(), ...selected.map(word => `%${word}%`)];
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 30));
   return all(
     db,
     `SELECT id_composicao, codigo, fonte, descricao, unidade, custo_unitario
      FROM composicoes
-     WHERE ${where}
-     ORDER BY
-       CASE WHEN fonte IN ('SINAPI','SICRO') THEN 0 ELSE 1 END,
-       custo_unitario DESC
-     LIMIT 3`,
+     WHERE LOWER(fonte)=LOWER(?) AND (${where})
+     ORDER BY descricao
+     LIMIT ${safeLimit}`,
     params,
   );
 }
@@ -79,7 +100,7 @@ async function insertItem(db, idOrcamento, data) {
       'item',
       1,
       data.ordem,
-      'composicao',
+      data.id_composicao ? 'composicao' : null,
       data.id_composicao || null,
       data.codigo || '',
       data.fonte || '',
@@ -93,6 +114,7 @@ async function insertItem(db, idOrcamento, data) {
 
 module.exports = {
   getObra,
+  listCompositionSources,
   findComposicoesByWords,
   createOrcamentoIa,
   insertSecao,
