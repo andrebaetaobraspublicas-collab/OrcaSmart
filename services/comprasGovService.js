@@ -1,6 +1,8 @@
 const repo = require('../repositories/comprasGovRepository');
 
 const COMPRAS_GOV_BASE = 'https://dadosabertos.compras.gov.br';
+const MATERIAL_PDM_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let materialPdmCache = { expiresAt: 0, rows: null, promise: null };
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -20,6 +22,10 @@ function normText(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+}
+
+function searchText(value) {
+  return normText(value).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function dateParts(value) {
@@ -104,24 +110,100 @@ async function searchPricesByCode(codigo, tipo, uf, dataInicio, dataFim, limite)
   const isServico = String(tipo || '').toLowerCase().startsWith('serv');
   const path = isServico ? '/modulo-pesquisa-preco/3_consultarServico' : '/modulo-pesquisa-preco/1_consultarMaterial';
   const tipoCatalogo = isServico ? 'CATSER' : 'CATMAT';
-  const data = await comprasGovGet(path, {
+  const commonParams = {
     pagina: 1,
     tamanhoPagina: Math.max(10, Math.min(100, Number(limite) || 20)),
-    codigoItemCatalogo: codigo,
     estado: String(uf || '').toUpperCase(),
     dataCompraInicio: dataInicio,
     dataCompraFim: dataFim,
-  });
+  };
+  const data = await comprasGovGet(path, isServico
+    ? { ...commonParams, codigoItemCatalogo: codigo }
+    : { ...commonParams, tipo: 'codigoItemCatalogo', codigo });
   return (data.resultado || []).map(row => normalizeResult(row, tipoCatalogo)).slice(0, limite);
 }
 
+async function loadMaterialPdmCatalog() {
+  const now = Date.now();
+  if (materialPdmCache.rows && materialPdmCache.expiresAt > now) return materialPdmCache.rows;
+  if (materialPdmCache.promise) return materialPdmCache.promise;
+
+  materialPdmCache.promise = (async () => {
+    const params = { pagina: 1, tamanhoPagina: 500, statusPdm: true };
+    const first = await comprasGovGet('/modulo-material/3_consultarPdmMaterial', params);
+    const pages = Math.max(1, Number(first.totalPaginas) || 1);
+    const remaining = await Promise.all(Array.from({ length: pages - 1 }, (_, index) =>
+      comprasGovGet('/modulo-material/3_consultarPdmMaterial', { ...params, pagina: index + 2 })));
+    const rows = [first, ...remaining].flatMap(page => page.resultado || []);
+    materialPdmCache = { rows, expiresAt: Date.now() + MATERIAL_PDM_CACHE_TTL_MS, promise: null };
+    return rows;
+  })();
+
+  try {
+    return await materialPdmCache.promise;
+  } catch (error) {
+    materialPdmCache.promise = null;
+    throw error;
+  }
+}
+
+function rankMaterialPdm(row, termo) {
+  const query = searchText(termo);
+  const name = searchText(row.nomePdm);
+  const className = searchText(row.nomeClasse);
+  const groupName = searchText(row.nomeGrupo);
+  if (!query) return 0;
+  if (name === query) return 100;
+  if (name.startsWith(`${query} `)) return 85;
+  if (name.includes(` ${query} `) || name.endsWith(` ${query}`)) return 75;
+  if (name.includes(query)) return 65;
+  if (className.includes(query)) return 35;
+  if (groupName.includes(query)) return 20;
+  return 0;
+}
+
 async function searchMaterialCatalog(termo, limite) {
-  const data = await comprasGovGet('/modulo-material/4_consultarItemMaterial', {
+  const direct = await comprasGovGet('/modulo-material/4_consultarItemMaterial', {
     pagina: 1,
     tamanhoPagina: Math.max(10, Math.min(100, Number(limite) || 12)),
     descricaoItem: termo,
   });
-  return (data.resultado || []).slice(0, limite).map(row => ({
+  const rows = [...(direct.resultado || [])];
+
+  if (rows.length < limite) {
+    const pdms = (await loadMaterialPdmCatalog())
+      .map(row => ({ row, score: rankMaterialPdm(row, termo) }))
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score || Number(b.row.codigoPdm) - Number(a.row.codigoPdm))
+      .slice(0, 6);
+    const pages = await Promise.all(pdms.map(item => comprasGovGet('/modulo-material/4_consultarItemMaterial', {
+      pagina: 1,
+      tamanhoPagina: 100,
+      codigoPdm: item.row.codigoPdm,
+      statusItem: true,
+    })));
+    rows.push(...pages.flatMap(page => page.resultado || []));
+  }
+
+  const query = searchText(termo);
+  const unique = new Map();
+  for (const row of rows) {
+    const code = String(row.codigoItem || '');
+    if (!code || unique.has(code)) continue;
+    unique.set(code, row);
+  }
+  return [...unique.values()]
+    .sort((a, b) => {
+      const score = row => {
+        const pdm = searchText(row.nomePdm);
+        const description = searchText(row.descricaoItem);
+        return (pdm === query ? 100 : pdm.includes(query) ? 70 : 0)
+          + (description.startsWith(query) ? 30 : description.includes(query) ? 15 : 0);
+      };
+      return score(b) - score(a) || Number(b.codigoItem) - Number(a.codigoItem);
+    })
+    .slice(0, limite)
+    .map(row => ({
     tipo_catalogo: 'CATMAT',
     codigo_catalogo: String(row.codigoItem || ''),
     descricao: row.descricaoItem || row.nomePdm || '',
@@ -168,14 +250,15 @@ async function searchComprasGov({ termo, tipo, uf, data_inicio, data_fim, limite
   if (!tipo || tipo === 'todos' || tipo === 'material') {
     try {
       const catalog = await searchMaterialCatalog(cleanTerm, Math.min(10, max));
-      for (const row of catalog) {
-        if (!row.codigo_catalogo) continue;
+      const resolved = await Promise.all(catalog.map(async row => {
+        if (!row.codigo_catalogo) return [];
         const prices = await searchPricesByCode(row.codigo_catalogo, 'material', uf, data_inicio, data_fim, 8).catch((err) => {
           warnings.push(err.message);
           return [];
         });
-        results.push(...(prices.length ? prices : [row]));
-      }
+        return prices.length ? prices : [row];
+      }));
+      results.push(...resolved.flat());
     } catch (err) {
       warnings.push(`Catalogo de materiais: ${err.message}`);
     }
