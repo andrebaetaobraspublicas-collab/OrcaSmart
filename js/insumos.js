@@ -37,8 +37,8 @@ Object.assign(API, {
 
 /* ─── Constantes ───────────────────────────────────────────────────────────── */
 const TIPOS_INSUMO  = ['Material','Mão de Obra','Equipamento','Serviço Auxiliar'];
-const ORIGENS_INS   = ['SINAPI','SICRO','SICOR','SEINFRA','SUDECAP','GOINFRA','CDHU','SEOP','USUARIO','Cotação','Própria','Outra'];
-const ORIGEM_LABEL  = { SICOR: 'Sicor/MG', SEOP: 'SEOP/PA' };
+const ORIGENS_INS   = ['SINAPI','SICRO','SICOR','SEINFRA','SUDECAP','GOINFRA','CDHU','SEOP','EMOP','USUARIO','Cotação','Própria','Outra'];
+const ORIGEM_LABEL  = { SICOR: 'Sicor/MG', SEOP: 'SEOP/PA', EMOP: 'EMOP/RJ' };
 const TIPO_ICONS    = {
   'Material':          '🧱',
   'Mão de Obra':       '👷',

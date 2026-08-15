@@ -30,6 +30,7 @@ const COR_FONTE = {
   SEINFRA: { badge:'badge-danger',  cor:'var(--c-danger)',   bg:'var(--c-danger-l)',   icon:'CE' },
   CDHU:    { badge:'badge-info',    cor:'var(--c-primary)',  bg:'var(--c-primary-l)',  icon:'SP' },
   SEOP:    { badge:'badge-info',    cor:'#1d4ed8',            bg:'#eff6ff',             icon:'PA' },
+  EMOP:    { badge:'badge-info',    cor:'#0369a1',            bg:'#f0f9ff',             icon:'RJ' },
   SINAPI:  { badge:'badge-info',    cor:'var(--c-primary)',  bg:'var(--c-primary-l)',  icon:'🏛️' },
   SICRO:   { badge:'badge-success', cor:'var(--c-success)',  bg:'var(--c-success-l)',  icon:'🚗' },
   SICOR:   { badge:'badge-success', cor:'#047857',            bg:'#ecfdf5',             icon:'MG' },
@@ -95,6 +96,7 @@ Router.register('composicoes', async () => {
       GOINFRA: 'GOINFRA/GO',
       CDHU: 'CDHU/SP',
       SEOP: 'SEOP/PA',
+      EMOP: 'EMOP/RJ',
     };
     if (porFonte[fonte]) return porFonte[fonte];
     return nome
@@ -233,8 +235,9 @@ Router.register('composicoes', async () => {
     const nGOINFRA = (sf.find(r=>r.fonte==='GOINFRA')?.total || 0);
     const nCDHU    = (sf.find(r=>r.fonte==='CDHU')?.total    || 0);
     const nSEOP    = (sf.find(r=>r.fonte==='SEOP')?.total    || 0);
+    const nEMOP    = (sf.find(r=>r.fonte==='EMOP')?.total    || 0);
     const nUSUARIO = (sf.find(r=>r.fonte==='USUARIO')?.total || 0);
-    const nTOTAL = nSINAPI + nSICRO + nSICOR + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nSEOP + nUSUARIO;
+    const nTOTAL = nSINAPI + nSICRO + nSICOR + nSEINFRA + nSUDECAP + nGOINFRA + nCDHU + nSEOP + nEMOP + nUSUARIO;
     document.getElementById('pageContent').innerHTML = `
       <div class="page-header">
         <div class="page-header-left">
@@ -266,6 +269,7 @@ Router.register('composicoes', async () => {
         ${mkCard('GOINFRA/GO', nGOINFRA, 'GO', 'blue', 'GOINFRA')}
         ${mkCard('CDHU/SP', nCDHU, 'SP', 'blue', 'CDHU')}
         ${mkCard('SEOP/PA', nSEOP, 'PA', 'blue', 'SEOP')}
+        ${mkCard('EMOP/RJ', nEMOP, 'RJ', 'blue', 'EMOP')}
         ${mkCard('Usuário', nUSUARIO, '👤', 'yellow', 'USUARIO')}
         ${mkCard('Total', nTOTAL, '📦', 'gray', 'TOTAL')}
       </div>
@@ -287,6 +291,7 @@ Router.register('composicoes', async () => {
             <option value="GOINFRA"  ${filtros.fonte==='GOINFRA'?'selected':''}>GO GOINFRA/GO</option>
             <option value="CDHU"     ${filtros.fonte==='CDHU'?'selected':''}>SP CDHU/SP</option>
             <option value="SEOP"     ${filtros.fonte==='SEOP'?'selected':''}>PA SEOP/PA</option>
+            <option value="EMOP"     ${filtros.fonte==='EMOP'?'selected':''}>RJ EMOP/RJ</option>
             <option value="USUARIO"  ${filtros.fonte==='USUARIO'?'selected':''}>👤 Usuário</option>
           </select>
           <select class="filter-select" id="ffmt">
@@ -336,7 +341,7 @@ Router.register('composicoes', async () => {
                   const fi = COR_FONTE[c.fonte] || COR_FONTE.USUARIO;
                   const fmt = c.formato === 'PRODUCAO_HORARIA' ? 'Prod. Horária' : 'Unitário';
                   return `<tr>
-                    <td class="text-xs text-3 fw-600">${Utils.esc(c.codigo?.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU|SEOP)\./,'')||'—')}</td>
+                    <td class="text-xs text-3 fw-600">${Utils.esc(c.codigo?.replace(/^(SINAPI|SICRO|SICOR|SEINFRA|SUDECAP|GOINFRA|CDHU|SEOP|EMOP)\./,'')||'—')}</td>
                     <td>
                       <div class="fw-500">${Utils.trunc(c.descricao,70)}</div>
                       ${c.situacao_ref?`<span class="badge badge-gray" style="font-size:.65rem">${c.situacao_ref}</span>`:''}
@@ -865,6 +870,7 @@ Router.register('composicoes', async () => {
                   <option value="GOINFRA">GOINFRA/GO</option>
                   <option value="CDHU">CDHU/SP</option>
                   <option value="SEOP">SEOP/PA</option>
+                  <option value="EMOP">EMOP/RJ</option>
                   <option value="USUARIO">Usuario</option>
                 </select>
                 <select class="form-control" id="fcSearchUf">${Utils.ufOptions(c.uf_referencia)}</select>
@@ -1951,6 +1957,7 @@ Router.register('composicoes', async () => {
               <option value="GOINFRA">GO GOINFRA/GO</option>
               <option value="CDHU">SP CDHU/SP</option>
               <option value="SEOP">PA SEOP/PA</option>
+              <option value="EMOP">RJ EMOP/RJ</option>
               <option value="USUARIO">👤 Usuário</option>
             </select>
           </div>
@@ -2073,7 +2080,7 @@ Router.register('composicoes', async () => {
   // ══════════════════════════════════════════════════════════════════════════
   async function iniciarEdicao(id, context = {}) {
     _editReturnContext = context || null;
-    const fontesReferencia = new Set(['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'SEOP']);
+    const fontesReferencia = new Set(['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'SEOP', 'EMOP']);
     let comp = context?.comp || null, impacto = null, usos = [], auxiliares = [];
     try {
       const fonteConhecida = String(comp?.fonte || context?.fonte || '').toUpperCase();

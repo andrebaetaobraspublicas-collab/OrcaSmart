@@ -182,7 +182,7 @@ function codigoVariantes(codigo) {
   const cod = String(codigo || '').trim();
   if (!cod) return [];
   const variantes = new Set([cod]);
-  const prefixes = ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.'];
+  const prefixes = ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'SEOP.', 'EMOP.', 'USUARIO.'];
   if (cod.includes('.')) variantes.add(cod.split('.').pop());
   for (const prefix of prefixes) {
     if (cod.startsWith(prefix)) variantes.add(cod.slice(prefix.length));
@@ -1736,7 +1736,7 @@ async function atualizarOrcamentosPorComposicoes(db, compIds = []) {
 
 function novoCodigoUsuario(baseCodigo) {
   let base = String(baseCodigo || 'COMP').trim();
-  for (const prefix of ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'USUARIO.']) {
+  for (const prefix of ['SINAPI.', 'SICRO.', 'SICOR.', 'SEINFRA.', 'SUDECAP.', 'GOINFRA.', 'CDHU.', 'SEOP.', 'EMOP.', 'USUARIO.']) {
     base = base.replace(prefix, '');
   }
   return `USUARIO.${base || 'COMP'}`;
@@ -2312,7 +2312,7 @@ async function editarComVinculo(db, idComposicao, {
     if (!compOrig) return null;
     const impacto = options.impacto || await impactoComposicao(readDb, idComposicao).catch(() => null);
     const temImpacto = (impacto?.composicoes_auxiliares || []).length > 0 || (impacto?.orcamentos || []).length > 0;
-    const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+    const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'SEOP', 'EMOP'];
     const scoped = scopedComposicaoId(idComposicao);
     const formatoOrigem = formatoNormalizado(compOrig.formato);
     const formatoDestino = formatoNormalizado(dados.formato || compOrig.formato);
@@ -2402,7 +2402,7 @@ async function editarComVinculo(db, idComposicao, {
   const impacto = await impactoComposicao(db, idComposicao);
   const parentIds = (impacto?.composicoes_auxiliares || []).map(row => row.id_composicao);
   const temImpacto = parentIds.length > 0 || (impacto?.orcamentos || []).length > 0;
-  const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU'];
+  const referenciais = ['SINAPI', 'SICRO', 'SICOR', 'SEINFRA', 'SUDECAP', 'GOINFRA', 'CDHU', 'SEOP', 'EMOP'];
   const criarNova = !!forcar_nova || referenciais.includes(compOrig.fonte) || (acao_orcamentos === 'manter' && temImpacto);
   let idResultado = Number(idComposicao);
   let codNovo = null;
