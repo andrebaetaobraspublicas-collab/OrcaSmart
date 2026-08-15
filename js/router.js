@@ -40,6 +40,7 @@ const Router = {
       'dimensionamento-pavimentos': 'Dimensionamento de Pavimentos',
       'administracao-canteiro': 'Calculadora de Administracao Local e Canteiro',
       'calculadora-estrutural': 'Calculadora Estrutural',
+      'rede-coletora-esgoto': 'Rede coletora de esgoto',
       'admin':                'Administracao SaaS',
     };
     document.getElementById('breadcrumb').textContent = labels[page] || page;
