@@ -3199,7 +3199,12 @@ async function resolverInsumoForAbc(db, item, contexto, insumoPriceCache = null)
   };
 }
 
-async function curvaAbcInsumos(db, idOrcamento) {
+async function curvaAbcInsumos(db, idOrcamento, options = {}) {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+  const progress = (percent, fase, mensagem) => {
+    if (onProgress) onProgress({ percent, fase, mensagem });
+  };
+  progress(3, 'Preparando orçamento', 'Carregando serviços e contexto da referência.');
   const orcamento = await one(db, `
     SELECT o.bdi_percentual, o.nome_orcamento, o.versao, o.status,
            ob.nome_obra
@@ -3215,6 +3220,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
     FROM orcamento_sintetico
     WHERE id_orcamento = ? AND tipo_linha = 'item'
     ORDER BY ordem`, [idOrcamento]);
+  progress(10, 'Mapeando composições', `${servicos.length} serviço(s) principal(is) identificado(s).`);
   // Percorre somente o grafo alcançável pelas linhas deste orçamento.
   const grafo = await buildGrafoComposicoesForAbc(db, servicos, contexto);
   const {
@@ -3239,6 +3245,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
     contexto,
     [...codigosInsumos].filter(Boolean),
   );
+  progress(42, 'Carregando insumos', `${codigosInsumos.size} código(s) alcançável(is) carregado(s) em lote.`);
 
   const grouped = new Map();
   const addInsumoAgrupado = (row, qtdInsumo, servico, preco, ibsPercentual, cbsPercentual) => {
@@ -3288,11 +3295,36 @@ async function curvaAbcInsumos(db, idOrcamento) {
 
   const agregarServicoReconciliado = (servico, entradas) => {
     if (!Array.isArray(entradas) || !entradas.length) return false;
+    // Uma mesma folha pode ser alcançada por vários ramos auxiliares. Consolidar
+    // por serviço antes de gerar as ocorrências mantém o valor exato e evita
+    // respostas enormes com linhas repetidas para o mesmo insumo.
+    const consolidadas = new Map();
+    entradas.forEach((entrada) => {
+      const codigo = String(entrada.row?.codigo || entrada.row?.codigo_item || '').trim().toUpperCase();
+      const descricao = String(entrada.row?.descricao || '').trim().toUpperCase();
+      const key = `${codigo || descricao}|${String(entrada.row?.unidade || '').toUpperCase()}|${String(entrada.row?.tipo_item || '')}`;
+      const qtd = toNum(entrada.qtdInsumo, 0);
+      const custo = qtd * toNum(entrada.preco, 0);
+      if (!consolidadas.has(key)) {
+        consolidadas.set(key, { ...entrada, qtdInsumo: 0, custo: 0, valorIbs: 0, valorCbs: 0 });
+      }
+      const atual = consolidadas.get(key);
+      atual.qtdInsumo += qtd;
+      atual.custo += custo;
+      atual.valorIbs += custo * toNum(entrada.ibsPercentual, 0) / 100;
+      atual.valorCbs += custo * toNum(entrada.cbsPercentual, 0) / 100;
+    });
+    const entradasUnicas = [...consolidadas.values()].map((entrada) => ({
+      ...entrada,
+      preco: entrada.qtdInsumo ? entrada.custo / entrada.qtdInsumo : 0,
+      ibsPercentual: entrada.custo ? entrada.valorIbs / entrada.custo * 100 : 0,
+      cbsPercentual: entrada.custo ? entrada.valorCbs / entrada.custo * 100 : 0,
+    }));
     const qtdServico = toNum(servico.qtd_servico, 0);
     const custoDiretoServico = qtdServico * toNum(servico.custo_unitario, 0);
-    const custoExpandido = entradas.reduce((sum, entrada) => sum + toNum(entrada.qtdInsumo, 0) * toNum(entrada.preco, 0), 0);
+    const custoExpandido = entradasUnicas.reduce((sum, entrada) => sum + toNum(entrada.qtdInsumo, 0) * toNum(entrada.preco, 0), 0);
     const fatorAjuste = custoDiretoServico > 0 && custoExpandido > 0 ? custoDiretoServico / custoExpandido : 1;
-    entradas.forEach((entrada) => {
+    entradasUnicas.forEach((entrada) => {
       addInsumoAgrupado(
         entrada.row,
         entrada.qtdInsumo,
@@ -3315,18 +3347,21 @@ async function curvaAbcInsumos(db, idOrcamento) {
     return true;
   };
 
-  async function expandirComposicao(idComposicao, fator, servico, visitados = new Set()) {
+  const expansionMemo = new Map();
+  async function calcularFolhasComposicao(idComposicao, visitados = new Set()) {
     const id = String(idComposicao || '').trim();
-    if (!id || visitados.has(id)) return false;
+    if (!id || visitados.has(id)) return { expanded: false, cyclic: true, entries: [] };
+    if (expansionMemo.has(id)) return expansionMemo.get(id);
     visitados.add(id);
     let itens = await getItensComposicaoForAbc(db, id, itensCompCache);
     if (!itens.length) itens = itensSecaoCompCache.get(id) || [];
-    if (!itens.length) return false;
+    if (!itens.length) return { expanded: false, cyclic: false, entries: [] };
     const composicaoPai = composicoesPorId.get(id);
+    const entries = [];
+    let cyclic = false;
     for (const item of itens) {
       const coef = toNum(item.coeficiente, 0);
-      const qtd = fator * coef;
-      if (!qtd) continue;
+      if (!coef) continue;
       if (isComposicaoItemRobusto(item)) {
         const contextoFilho = contextoAbcDaComposicao(composicaoPai, contexto);
         const sub = escolherComposicaoEstruturalParaAbc({
@@ -3337,32 +3372,77 @@ async function curvaAbcInsumos(db, idOrcamento) {
         }, contextoFilho, compCache);
         if (sub) {
           const subId = String(sub.id_composicao || '').trim();
-          // Uma aresta cíclica não é uma folha analítica e não deve reaparecer
-          // na curva como uma composição de custo zero.
-          if (visitados.has(subId)) continue;
-          if (await expandirComposicao(subId, qtd, servico, new Set(visitados))) continue;
+          if (visitados.has(subId)) {
+            cyclic = true;
+            continue;
+          }
+          const folhasFilho = await calcularFolhasComposicao(subId, new Set(visitados));
+          cyclic = cyclic || folhasFilho.cyclic;
+          if (folhasFilho.expanded) {
+            folhasFilho.entries.forEach(entrada => entries.push({
+              ...entrada,
+              qtdUnit: entrada.qtdUnit * coef,
+            }));
+            continue;
+          }
         }
         const resolvidoInsumo = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
         if (toNum(resolvidoInsumo.preco, 0) > 0) {
-          addInsumo(resolvidoInsumo, qtd, servico, resolvidoInsumo.preco, resolvidoInsumo.ibs_percentual, resolvidoInsumo.cbs_percentual);
+          entries.push({
+            row: resolvidoInsumo,
+            qtdUnit: coef,
+            preco: resolvidoInsumo.preco,
+            ibsPercentual: resolvidoInsumo.ibs_percentual,
+            cbsPercentual: resolvidoInsumo.cbs_percentual,
+          });
           continue;
         }
-        const resolvidoComp = {
-          codigo: item.codigo_item,
-          descricao: item.descricao,
-          unidade: item.unidade,
-          tipo_item: item.tipo_item || 'COMPOSICAO',
-        };
-        addInsumo(resolvidoComp, qtd, servico, toNum(item.preco_unitario, 0), 0, 0);
+        entries.push({
+          row: {
+            codigo: item.codigo_item,
+            descricao: item.descricao,
+            unidade: item.unidade,
+            tipo_item: item.tipo_item || 'COMPOSICAO',
+          },
+          qtdUnit: coef,
+          preco: toNum(item.preco_unitario, 0),
+          ibsPercentual: 0,
+          cbsPercentual: 0,
+        });
         continue;
       }
       const resolvido = await resolverInsumoForAbc(db, item, contexto, insumoPriceCache);
-      addInsumo(resolvido, qtd, servico, resolvido.preco, resolvido.ibs_percentual, resolvido.cbs_percentual);
+      entries.push({
+        row: resolvido,
+        qtdUnit: coef,
+        preco: resolvido.preco,
+        ibsPercentual: resolvido.ibs_percentual,
+        cbsPercentual: resolvido.cbs_percentual,
+      });
     }
+    const result = { expanded: true, cyclic, entries };
+    // O resultado de um ramo cíclico depende da pilha que o alcançou. Apenas
+    // subgrafos acíclicos são memorizados para preservar a detecção de ciclos.
+    if (!cyclic) expansionMemo.set(id, result);
+    return result;
+  }
+
+  async function expandirComposicao(idComposicao, fator, servico) {
+    const folhas = await calcularFolhasComposicao(idComposicao, new Set());
+    if (!folhas.expanded) return false;
+    folhas.entries.forEach(entrada => addInsumo(
+      entrada.row,
+      entrada.qtdUnit * fator,
+      servico,
+      entrada.preco,
+      entrada.ibsPercentual,
+      entrada.cbsPercentual,
+    ));
     return true;
   }
 
-  for (const servico of servicos) {
+  for (let servicoIndex = 0; servicoIndex < servicos.length; servicoIndex += 1) {
+    const servico = servicos[servicoIndex];
     const qtdServico = toNum(servico.qtd_servico, 0);
     const entradasServico = [];
     const servicoColetor = { ...servico, __abcCollector: entradasServico };
@@ -3374,6 +3454,13 @@ async function curvaAbcInsumos(db, idOrcamento) {
     if (!expanded) {
       const comp = escolherComposicaoEstritaParaItem(servico, contexto, compCache, []);
       if (comp) expanded = await expandirComposicao(comp.id_composicao, qtdServico, servicoColetor);
+    }
+    if (servicoIndex === servicos.length - 1 || servicoIndex % 10 === 0) {
+      const percent = 45 + Math.round(((servicoIndex + 1) / Math.max(servicos.length, 1)) * 48);
+      progress(percent, 'Expandindo composições', `${servicoIndex + 1} de ${servicos.length} serviço(s) processado(s).`);
+      // Libera o event loop periodicamente para que as consultas de progresso
+      // sejam atendidas mesmo durante uma expansão grande em memória.
+      await new Promise(resolve => setImmediate(resolve));
     }
     if (expanded && agregarServicoReconciliado(servico, entradasServico)) continue;
     if (!expanded) {
@@ -3414,7 +3501,7 @@ async function curvaAbcInsumos(db, idOrcamento) {
     it.classe = abcClasse(acumulado);
   });
 
-  return {
+  const resultado = {
     orcamento,
     itens,
     total_geral: Number(total.toFixed(2)),
@@ -3422,6 +3509,8 @@ async function curvaAbcInsumos(db, idOrcamento) {
     total_cbs: Number(totalCbs.toFixed(2)),
     resumo: abcResumo(itens, 'custo_total'),
   };
+  progress(100, 'Concluído', `${itens.length} insumo(s) consolidado(s) na Curva ABC.`);
+  return resultado;
 }
 
 module.exports = {

@@ -226,10 +226,22 @@ async function main() {
     `);
     const traceInicioLote = traces.length;
     const inicioLote = Date.now();
-    const curvaLote = await repo.curvaAbcInsumos(db, 4);
+    const progressos = [];
+    const curvaLote = await repo.curvaAbcInsumos(db, 4, {
+      onProgress: progresso => progressos.push(progresso),
+    });
     const duracaoLoteMs = Date.now() - inicioLote;
     const tracesLote = traces.slice(traceInicioLote);
     assert.strictEqual(curvaLote.total_geral, 35000);
+    assert.strictEqual(progressos.at(-1).percent, 100, 'o processamento deve informar conclusão em 100%');
+    assert(
+      progressos.some(progresso => progresso.percent > 45 && progresso.percent < 100),
+      'o processamento deve informar evolução durante a expansão dos serviços',
+    );
+    assert(
+      curvaLote.itens.every(item => item.ocorrencias.length <= 250),
+      'cada insumo deve gerar no máximo uma ocorrência consolidada por serviço',
+    );
     assert(
       tracesLote.filter(sql => /FROM catalog\.itens_composicao/i.test(sql)).length <= 3,
       'serviços repetidos devem compartilhar o mesmo grafo carregado em lote',
